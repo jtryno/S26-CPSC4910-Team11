@@ -93,30 +93,30 @@ const PasswordReset = () => {
   };
 
   return (
-    <div style={{ maxWidth: '500px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-      <h2>Reset Password</h2>
+    <div style={{ maxWidth: '480px', margin: '60px auto', padding: '40px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)' }}>
+      <h2 style={{ textAlign: 'center', color: '#1a1a1a', marginBottom: '30px', fontSize: '1.8em' }}>Reset Password</h2>
 
       {message && (
-        <div style={{ padding: '10px', marginBottom: '15px', background: '#d4edda', color: '#155724', borderRadius: '4px', border: '1px solid #c3e6cb' }}>
+        <div style={{ padding: '15px', marginBottom: '20px', background: '#ecfdf5', color: '#065f46', borderRadius: '6px', border: '1px solid #d1fae5', fontSize: '0.95em' }}>
           {message}
         </div>
       )}
 
       {error && (
-        <div style={{ padding: '10px', marginBottom: '15px', background: '#f8d7da', color: '#721c24', borderRadius: '4px', border: '1px solid #f5c6cb' }}>
+        <div style={{ padding: '15px', marginBottom: '20px', background: '#fef2f2', color: '#991b1b', borderRadius: '6px', border: '1px solid #fee2e2', fontSize: '0.95em' }}>
           {error}
         </div>
       )}
 
       {step === 1 ? (
         <form onSubmit={handleRequestToken}>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Email Address</label>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#1a1a1a', fontSize: '0.95em' }}>Email Address</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              style={{ width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #ddd' }}
+              style={{ width: '100%', padding: '12px', boxSizing: 'border-box', borderRadius: '6px', border: '1px solid #d0d0d0', fontSize: '1em', fontFamily: 'inherit' }}
               required
             />
           </div>
@@ -125,13 +125,16 @@ const PasswordReset = () => {
             disabled={loading}
             style={{
               width: '100%',
-              padding: '10px',
-              background: '#007bff',
+              padding: '12px',
+              background: '#0066cc',
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: '6px',
               cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.6 : 1
+              opacity: loading ? 0.7 : 1,
+              fontWeight: '600',
+              fontSize: '1em',
+              transition: 'background-color 0.2s'
             }}
           >
             {loading ? 'Requesting...' : 'Request Reset Token'}
@@ -141,13 +144,16 @@ const PasswordReset = () => {
             onClick={() => navigate('/')}
             style={{
               width: '100%',
-              padding: '10px',
+              padding: '12px',
               marginTop: '10px',
-              background: '#6c757d',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
+              background: '#f0f0f0',
+              color: '#333333',
+              border: '1px solid #d0d0d0',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '1em',
+              transition: 'background-color 0.2s'
             }}
           >
             Cancel
@@ -155,53 +161,56 @@ const PasswordReset = () => {
         </form>
       ) : (
         <form onSubmit={handleConfirmReset}>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Reset Token</label>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#1a1a1a', fontSize: '0.95em' }}>Reset Token</label>
             <input
               type="text"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              style={{ width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #ddd' }}
+              style={{ width: '100%', padding: '12px', boxSizing: 'border-box', borderRadius: '6px', border: '1px solid #d0d0d0', fontSize: '1em', fontFamily: 'inherit' }}
               required
             />
-            <small style={{ color: '#666' }}>Paste the token received from the previous step</small>
+            <small style={{ color: '#999999', display: 'block', marginTop: '6px', fontSize: '0.9em' }}>Paste the token received from the previous step</small>
           </div>
 
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>New Password</label>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#1a1a1a', fontSize: '0.95em' }}>New Password</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
+                style={{ flex: 1, padding: '12px', borderRadius: '6px', border: '1px solid #d0d0d0', fontSize: '1em', fontFamily: 'inherit' }}
                 required
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 style={{
-                  padding: '8px 12px',
-                  background: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
+                  padding: '10px 16px',
+                  background: '#f0f0f0',
+                  color: '#333333',
+                  border: '1px solid #d0d0d0',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '0.9em',
+                  transition: 'background-color 0.2s'
                 }}
               >
                 {showPassword ? 'Hide' : 'Show'}
               </button>
             </div>
-            <small style={{ color: '#666' }}>Min 8 chars, uppercase, number, special char (!@#$%^&*)</small>
+            <small style={{ color: '#999999', display: 'block', marginTop: '6px', fontSize: '0.9em' }}>Min 8 chars, uppercase, number, special char (!@#$%^&*)</small>
           </div>
 
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Confirm Password</label>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#1a1a1a', fontSize: '0.95em' }}>Confirm Password</label>
             <input
               type={showPassword ? 'text' : 'password'}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              style={{ width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #ddd' }}
+              style={{ width: '100%', padding: '12px', boxSizing: 'border-box', borderRadius: '6px', border: '1px solid #d0d0d0', fontSize: '1em', fontFamily: 'inherit' }}
               required
             />
           </div>
@@ -211,13 +220,16 @@ const PasswordReset = () => {
             disabled={loading}
             style={{
               width: '100%',
-              padding: '10px',
-              background: '#28a745',
+              padding: '12px',
+              background: '#0066cc',
               color: 'white',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: '6px',
               cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.6 : 1
+              opacity: loading ? 0.7 : 1,
+              fontWeight: '600',
+              fontSize: '1em',
+              transition: 'background-color 0.2s'
             }}
           >
             {loading ? 'Resetting...' : 'Confirm Password Reset'}
@@ -227,13 +239,16 @@ const PasswordReset = () => {
             onClick={() => setStep(1)}
             style={{
               width: '100%',
-              padding: '10px',
+              padding: '12px',
               marginTop: '10px',
-              background: '#6c757d',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
+              background: '#f0f0f0',
+              color: '#333333',
+              border: '1px solid #d0d0d0',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '1em',
+              transition: 'background-color 0.2s'
             }}
           >
             Back

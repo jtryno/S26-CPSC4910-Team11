@@ -11,7 +11,7 @@ const About = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/about')
+    fetch('http://localhost:5000/api/about')
       .then(res => res.json())
       .then(json => {
         setData(json);
@@ -23,26 +23,38 @@ const About = () => {
       });
   }, []);
 
-  if (loading) return <div style={{ padding: '20px' }}>Loading...</div>;
+  if (loading) return <div style={{ padding: '40px', textAlign: 'center', color: '#999999' }}>Loading project information...</div>;
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-      <h2 style={{ borderBottom: '2px solid #007bff', paddingBottom: '10px' }}>Project Information</h2>
+    <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+      <h1 style={{ color: '#1a1a1a', marginBottom: '10px' }}>Project Information</h1>
+      <p style={{ color: '#666666', marginBottom: '30px', fontSize: '1.05em' }}>Driver Incentive Program - Team 11</p>
       
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '20px' }}>
-        <div>
-          <p><strong>Product Name:</strong> {data.product_name}</p>
-          <p><strong>Team Number:</strong> {data.team_number}</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+        <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <p style={{ color: '#999999', fontSize: '0.9em', margin: '0 0 8px 0', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.5px' }}>Product Name</p>
+          <p style={{ color: '#1a1a1a', fontSize: '1.1em', margin: '0', fontWeight: '600' }}>{data.product_name}</p>
         </div>
-        <div>
-          <p><strong>Version:</strong> {data.version_number}</p>
-          <p><strong>Release Date:</strong> {new Date(data.release_date).toLocaleDateString()}</p>
+        
+        <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <p style={{ color: '#999999', fontSize: '0.9em', margin: '0 0 8px 0', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.5px' }}>Team Number</p>
+          <p style={{ color: '#1a1a1a', fontSize: '1.1em', margin: '0', fontWeight: '600' }}>{data.team_number}</p>
+        </div>
+
+        <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <p style={{ color: '#999999', fontSize: '0.9em', margin: '0 0 8px 0', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.5px' }}>Version</p>
+          <p style={{ color: '#1a1a1a', fontSize: '1.1em', margin: '0', fontWeight: '600' }}>{data.version_number}</p>
+        </div>
+
+        <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+          <p style={{ color: '#999999', fontSize: '0.9em', margin: '0 0 8px 0', textTransform: 'uppercase', fontWeight: '600', letterSpacing: '0.5px' }}>Release Date</p>
+          <p style={{ color: '#1a1a1a', fontSize: '1.1em', margin: '0', fontWeight: '600' }}>{new Date(data.release_date).toLocaleDateString()}</p>
         </div>
       </div>
 
-      <div style={{ marginTop: '20px', padding: '15px', background: '#141212', borderRadius: '8px' }}>
-        <h4>Product Description</h4>
-        <p style={{ lineHeight: '1.6' }}>{data.product_description}</p>
+      <div style={{ background: '#f0f7ff', padding: '30px', borderRadius: '8px', border: '1px solid #d0e3ff' }}>
+        <h2 style={{ color: '#1a1a1a', marginTop: '0', marginBottom: '15px' }}>Product Description</h2>
+        <p style={{ color: '#666666', lineHeight: '1.7', margin: '0', fontSize: '1.05em' }}>{data.product_description}</p>
       </div>
     </div>
   );
