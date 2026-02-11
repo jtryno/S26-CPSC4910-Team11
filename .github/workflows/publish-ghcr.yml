@@ -11,6 +11,9 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: driver-incentive-program
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
