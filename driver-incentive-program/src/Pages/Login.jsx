@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -18,8 +21,17 @@ const Login = () => {
       const data = await response.json();
 
       if (response.ok) {
-        alert(`Login success: ${data.user.username}`);
+        // Store user data in localStorage (if remember me) or sessionStorage
+        const userDataString = JSON.stringify(data.user);
+        if (rememberMe) {
+          localStorage.setItem('user', userDataString);
+        } else {
+          sessionStorage.setItem('user', userDataString);
+        }
+        
         console.log("User Data:", data.user);
+        // Redirect to home page
+        navigate('/');
       } else {
         alert(data.message);
       }
@@ -44,14 +56,23 @@ const Login = () => {
           />
         </div>
         <div style={{ marginBottom: '15px' }}>
-          <input 
-            type="password" 
-            placeholder="Password" 
-            value={password} 
-            onChange={(e) => setPassword(e.target.value)} 
-            style={{ width: '90%', padding: '10px' }}
-            required 
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <input 
+              type={showPassword ? 'text' : 'password'} 
+              placeholder="Password" 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              style={{ flex: 1, padding: '10px' }}
+              required 
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={{ padding: '8px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
         </div>
         <div style={{ marginBottom: '15px' }}>
           <label>
