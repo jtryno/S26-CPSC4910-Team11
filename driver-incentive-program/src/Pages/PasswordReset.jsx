@@ -78,6 +78,8 @@ const PasswordReset = () => {
         // Clear user data and redirect to login
         localStorage.removeItem('user');
         sessionStorage.removeItem('user');
+        // Dispatch event to notify app of logout
+        window.dispatchEvent(new Event('authStateChanged'));
         setTimeout(() => navigate('/login'), 2000);
       } else {
         setError(data.message || 'Failed to reset password');

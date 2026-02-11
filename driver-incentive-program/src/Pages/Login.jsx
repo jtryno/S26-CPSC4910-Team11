@@ -29,6 +29,9 @@ const Login = () => {
           sessionStorage.setItem('user', userDataString);
         }
         
+        // Dispatch event to notify app of login
+        window.dispatchEvent(new Event('authStateChanged'));
+        
         console.log("User Data:", data.user);
         // Redirect to home page
         navigate('/');

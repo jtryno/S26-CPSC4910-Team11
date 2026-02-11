@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
 import './App.css'
 import Home from './Pages/Home'
@@ -7,6 +7,29 @@ import Login from './Pages/Login'
 import PasswordReset from './Pages/PasswordReset'
 
 function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    // Check if user is logged in
+    const checkLoginStatus = () => {
+      const user = localStorage.getItem('user') || sessionStorage.getItem('user');
+      setIsLoggedIn(!!user);
+    };
+
+    checkLoginStatus();
+
+    // Listen for changes to storage (from other tabs/windows)
+    window.addEventListener('storage', checkLoginStatus);
+    
+    // Listen for custom auth state change event (same tab login/logout)
+    window.addEventListener('authStateChanged', checkLoginStatus);
+    
+    return () => {
+      window.removeEventListener('storage', checkLoginStatus);
+      window.removeEventListener('authStateChanged', checkLoginStatus);
+    };
+  }, []);
+
   return (
     <Router>
       <nav className="navbar">
@@ -16,7 +39,7 @@ function App() {
         <ul className="nav-links">
           <li><Link to="/">Home</Link></li>
           <li><Link to="/about">About</Link></li>
-          <li><Link to="/login">Login</Link></li>
+          {!isLoggedIn && <li><Link to="/login">Login</Link></li>}
         </ul>
       </nav>
       <main className="main-content">

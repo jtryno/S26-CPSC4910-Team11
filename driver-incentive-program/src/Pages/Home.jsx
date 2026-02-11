@@ -16,6 +16,8 @@ const Home = () => {
   const handleLogout = () => {
     localStorage.removeItem('user');
     sessionStorage.removeItem('user');
+    // Dispatch event to notify app of logout
+    window.dispatchEvent(new Event('authStateChanged'));
     setUserData(null);
     navigate('/login');
   };
