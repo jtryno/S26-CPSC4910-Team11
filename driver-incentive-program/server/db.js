@@ -1,10 +1,22 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '.env') });
+const serverEnvPath = path.join(__dirname, '.env');
+const rootEnvPath = path.join(__dirname, '../.env');
+if (fs.existsSync(serverEnvPath)) {
+    dotenv.config({ path: serverEnvPath });
+    console.log('Loaded env from', serverEnvPath);
+} else if (fs.existsSync(rootEnvPath)) {
+    dotenv.config({ path: rootEnvPath });
+    console.log('Loaded env from', rootEnvPath);
+} else {
+    dotenv.config();
+    console.log('No .env found in server or root; using process.env');
+}
 
 console.log("Attempting to connect to database:", process.env.DB_HOST);
 
