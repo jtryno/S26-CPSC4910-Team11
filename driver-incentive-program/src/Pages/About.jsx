@@ -11,7 +11,7 @@ const About = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/about')
+    fetch('/api/about')
       .then(res => res.json())
       .then(json => {
         setData(json);
