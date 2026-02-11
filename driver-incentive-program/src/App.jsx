@@ -39,16 +39,23 @@ function Home() {
 function App() {
   return (
     <Router>
-      <nav style={{ padding: '20px', textAlign: 'center' }}>
-        <Link to="/" style={{ marginRight: '20px' }}>Home</Link>
-        <Link to="/about"style={{ marginRight: '20px' }}>About</Link>
-        <Link to="/login">Login</Link>
+      <nav className="navbar">
+        <div className="nav-brand">
+          <Link to="/">Driver Incentive</Link>
+        </div>
+        <ul className="nav-links">
+          <li><Link to="/">Home</Link></li>
+          <li><Link to="/about">About</Link></li>
+          <li><Link to="/login">Login</Link></li>
+        </ul>
       </nav>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/about" element={<About />} />
-        <Route path="/login" element={<Login />} />
-      </Routes>
+      <main className="main-content">
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/login" element={<Login />} />
+        </Routes>
+      </main>
     </Router>
   )
 }
