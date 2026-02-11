@@ -34,6 +34,34 @@ const isPasswordComplex = (password) => {
     return password.length >= minLength && hasUpperCase && hasNumber && hasSpecialChar;
 };
 
+const SCRYPT_PREFIX = 'scrypt$';
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1 };
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16);
+  const derivedKey = crypto.scryptSync(password, salt, SCRYPT_KEYLEN, SCRYPT_OPTIONS);
+  return `${SCRYPT_PREFIX}${salt.toString('base64')}$${derivedKey.toString('base64')}`;
+}
+
+console.log(hashPassword('TestP@ssw0rd!'));
+
+function isScryptHash(stored) {
+  return typeof stored === 'string' && stored.startsWith(SCRYPT_PREFIX);
+}
+
+function verifyScryptPassword(password, stored) {
+  // stored format: "scrypt$<saltBase64>$<hashBase64>"
+  const parts = stored.split('$');
+  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
+
+  const salt = Buffer.from(parts[1], 'base64');
+  const expected = Buffer.from(parts[2], 'base64');
+  const actual = crypto.scryptSync(password, salt, expected.length, SCRYPT_OPTIONS);
+
+  return crypto.timingSafeEqual(actual, expected);
+}
+
 // --- About Page Route ---
 app.get('/api/about', async (req, res) => {
     try {
@@ -70,12 +98,29 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ message: 'Security update required: Password does not meet complexity standards.' });
         }
 
-        if (password === user.password_hash) {
-            const { password_hash, ...userNoPassword } = user;
-            res.json({ message: 'Login successful', user: userNoPassword });
+        const stored = user.password_hash;
+
+        let ok = false;
+
+        if (isScryptHash(stored)) {
+        ok = verifyScryptPassword(password, stored);
         } else {
-            res.status(401).json({ message: 'Invalid email or password' });
+        // Backward-compat: DB currently stores plaintext despite the column name
+        ok = password === stored;
         }
+
+        if (!ok) {
+        return res.status(401).json({ message: 'Invalid email or password' });
+        }
+
+        // If it was plaintext, upgrade-in-place to a one-way hash
+        if (!isScryptHash(stored)) {
+        const upgraded = hashPassword(password);
+        await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [upgraded, user.user_id]);
+        }
+
+        const { password_hash, ...userNoPassword } = user;
+        return res.json({ message: 'Login successful', user: userNoPassword });
 
     } catch (error) {
         console.error('Login error:', error);
@@ -127,8 +172,8 @@ app.post('/api/password-reset/confirm', async (req, res) => {
             return res.status(400).json({ message: 'Token has expired' });
         }
 
-        // Update password and mark token as used
-        await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [newPassword, tokens[0].user_id]);
+        const newHash = hashPassword(newPassword);
+        await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [newHash, tokens[0].user_id]);
         await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_id = ?', [tokens[0].token_id]);
 
         res.json({ message: 'Password reset successfully' });
