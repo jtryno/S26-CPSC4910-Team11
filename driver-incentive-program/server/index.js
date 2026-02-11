@@ -1,5 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
@@ -7,7 +8,18 @@ import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '../.env') });
+const serverEnvPath = path.join(__dirname, '.env');
+const rootEnvPath = path.join(__dirname, '../.env');
+if (fs.existsSync(serverEnvPath)) {
+    dotenv.config({ path: serverEnvPath });
+    console.log('Loaded env from', serverEnvPath);
+} else if (fs.existsSync(rootEnvPath)) {
+    dotenv.config({ path: rootEnvPath });
+    console.log('Loaded env from', rootEnvPath);
+} else {
+    dotenv.config();
+    console.log('No .env found in server or root; using process.env');
+}
 
 const app = express();
 app.use(cors());
