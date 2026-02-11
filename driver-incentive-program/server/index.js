@@ -31,6 +31,36 @@ app.get('/api/about', async (req, res) => {
     }
 });
 
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+
+        if (users.length === 0) {
+            return res.status(401).json({ message: 'Invalid email or password' });
+        }
+
+        const user = users[0];
+        
+        // note to cameron or whoever, change to hash in db
+        if (password === user.password_hash) {
+            // user info (excluding password for safety)
+            const { password_hash, ...userNoPassword } = user;
+            res.json({ 
+                message: 'Login successful', 
+                user: userNoPassword 
+            });
+        } else {
+            res.status(401).json({ message: 'Invalid email or password' });
+        }
+
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Server error during login' });
+    }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
