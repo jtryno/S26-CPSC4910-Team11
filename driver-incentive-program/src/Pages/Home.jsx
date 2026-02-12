@@ -22,11 +22,32 @@ const Home = () => {
     navigate('/login');
   };
 
-  if (!userData) {
+if (!userData) {
     return (
-      <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-        <h1 style={{ color: '#1a1a1a', marginBottom: '15px' }}>Welcome</h1>
-        <p style={{ color: '#666666', fontSize: '1.1em' }}>Please log in to continue.</p>
+      <div style={{ textAlign: 'center', padding: '100px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <h1 style={{ color: '#1a1a1a', marginBottom: '15px', fontSize: '2.5rem' }}>Welcome to the Driver Incentive Program</h1>
+        <p style={{ color: '#666666', fontSize: '1.2rem', marginBottom: '30px' }}>Please log in to continue.</p>
+        
+        
+        <button 
+          onClick={() => navigate('/login')}
+          style={{
+            padding: '14px 60px',
+            fontSize: '18px',
+            backgroundColor: '#0066cc',
+            color: 'white',
+            border: 'none',
+            borderRadius: '50px',
+            cursor: 'pointer',
+            fontWeight: '600',
+            boxShadow: '0 4px 12px rgba(0, 102, 204, 0.3)',
+            transition: 'transform 0.2s, background-color 0.2s'
+          }}
+          onMouseOver={(e) => e.target.style.backgroundColor = '#0052a3'}
+          onMouseOut={(e) => e.target.style.backgroundColor = '#0066cc'}
+        >
+          Login
+        </button>
       </div>
     );
   }
