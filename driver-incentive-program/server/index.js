@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import cors from 'cors';
 import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
+import cookieParser from 'cookie-parser';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = path.join(__dirname, '.env');
@@ -24,6 +25,7 @@ if (fs.existsSync(serverEnvPath)) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 
 // Helper: Password Complexity Validation 
 const isPasswordComplex = (password) => {
@@ -120,6 +122,14 @@ app.post('/api/login', async (req, res) => {
         }
 
         const { password_hash, ...userNoPassword } = user;
+        if (req.body.rememberMe) {
+            res.cookie('remember_me', user.user_id, { 
+                maxAge: 10 * 24 * 60 * 60 * 1000, // this is 10 daysm, time is just measured in ms
+                httpOnly: true, 
+                sameSite: 'lax' //basic security to make sure cookie can't be stolen
+            });
+        }
+
         return res.json({ message: 'Login successful', user: userNoPassword });
 
     } catch (error) {
@@ -183,6 +193,26 @@ app.post('/api/password-reset/confirm', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+
+app.get('/api/session', async (req, res) => {
+    const userId = req.cookies.remember_me;
+
+    if (!userId) {
+        return res.status(401).json({ loggedIn: false });
+    }
+
+    try {
+        const [users] = await pool.query('SELECT user_id, email, username FROM users WHERE user_id = ?', [userId]);
+        if (users.length > 0) {
+            res.json({ loggedIn: true, user: users[0] });
+        } else {
+            res.status(401).json({ loggedIn: false });
+        }
+    } catch (error) {
+        res.status(500).json({ error: 'Session check failed' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });

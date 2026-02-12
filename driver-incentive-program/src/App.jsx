@@ -9,25 +9,34 @@ import PasswordReset from './Pages/PasswordReset'
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  useEffect(() => {
-    // Check if user is logged in
-    const checkLoginStatus = () => {
-      const user = localStorage.getItem('user') || sessionStorage.getItem('user');
-      setIsLoggedIn(!!user);
+useEffect(() => {
+    const checkAuth = async () => {
+      const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+      if (storedUser) {
+        setIsLoggedIn(true);
+      }
+      
+      try {
+        const response = await fetch('/api/session');
+        const data = await response.json();
+        
+        if (data.loggedIn) {
+          localStorage.setItem('user', JSON.stringify(data.user)); 
+          setIsLoggedIn(true);
+        } else { //cookie is expired
+          localStorage.removeItem('user');
+          sessionStorage.removeItem('user');
+          setIsLoggedIn(false);
+        }
+      } catch (err) {
+        console.error("session error", err);
+      }
     };
 
-    checkLoginStatus();
-
-    // Listen for changes to storage (from other tabs/windows)
-    window.addEventListener('storage', checkLoginStatus);
+    checkAuth();
+    window.addEventListener('authStateChanged', checkAuth);
     
-    // Listen for custom auth state change event (same tab login/logout)
-    window.addEventListener('authStateChanged', checkLoginStatus);
-    
-    return () => {
-      window.removeEventListener('storage', checkLoginStatus);
-      window.removeEventListener('authStateChanged', checkLoginStatus);
-    };
+    return () => window.removeEventListener('authStateChanged', checkAuth);
   }, []);
 
   return (
@@ -39,7 +48,6 @@ function App() {
         <ul className="nav-links">
           <li><Link to="/">Home</Link></li>
           <li><Link to="/about">About</Link></li>
-          {!isLoggedIn && <li><Link to="/login">Login</Link></li>}
         </ul>
       </nav>
       <main className="main-content">
