@@ -133,6 +133,12 @@ app.post('/api/login', async (req, res) => {
 
         /* reset login attempts/unlock account in sql db: UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_failed_login = NULL WHERE email = 'hello@test.com'; */
         if (!ok) {
+            const newFails = user.failed_login_attempts + 1;
+            const shouldLock = newFails >= 5;
+
+            await pool.query('UPDATE users SET failed_login_attempts = ?, is_locked = ? WHERE user_id = ?', [newFails, shouldLock, user.user_id]);
+            await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`FAILED: ${email}`]);
+
             const newAttempts = (user.failed_login_attempts || 0) + 1;
 
             if (newAttempts >= MAX_LOGIN_ATTEMPTS) {
@@ -181,6 +187,9 @@ app.post('/api/login', async (req, res) => {
             });
         }
 
+        await pool.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE user_id = ?', [user.user_id]);
+        await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${email}`]);
+        
         return res.json({ message: 'Login successful', user: userNoPassword });
 
     } catch (error) {
