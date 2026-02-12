@@ -4,8 +4,10 @@ import './App.css'
 import Home from './Pages/Home'
 import About from './Pages/About'
 import Login from './Pages/Login'
+import Account from './Pages/Account'
 import PasswordReset from './Pages/PasswordReset'
 import InactivityModal from './components/InactivityModal'
+import { FaUser } from 'react-icons/fa';
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -18,8 +20,8 @@ function AppContent() {
   const logoutTimerRef = useRef(null);
 
   // inactivity timeout constants (add 60 inbetween the first and last numbers for real value)
-  const INACTIVITY_TIMEOUT = 30 * 1000; // 30 * 60 * 1000 minutes real value (testing 30 seconds)
-  const WARNING_TIME = 20 * 1000; // 28 minutes, with 2 mins to answer log in or log out once warning pops up
+  const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 * 60 * 1000 minutes real value (testing 30 seconds)
+  const WARNING_TIME = 20 * 60 * 1000; // 28 minutes, with 2 mins to answer log in or log out once warning pops up
   // (real value 28 * 60 * 1000 = 28 minutes, testing value 10 seconds of pop up)
 
 useEffect(() => {
@@ -313,14 +315,19 @@ useEffect(() => {
         <ul className="nav-auth">
           {!isLoggedIn && <li><Link to="/login">Login</Link></li>}
           {isLoggedIn && (
-            <li>
-              <a href="#" onClick={(e) => {
-                e.preventDefault();
-                handleLogout();
-              }} style={{ cursor: 'pointer' }}>
-                Logout
-              </a>
-            </li>
+            <div style={{display: 'grid', gridAutoFlow: 'column', gap: '20px'}}>
+              <Link to="/account">
+                <FaUser size={25} />
+              </Link>
+              <li>
+                <a href="#" onClick={(e) => {
+                  e.preventDefault();
+                  handleLogout();
+                }} style={{ cursor: 'pointer' }}>
+                  Logout
+                </a>
+              </li>
+            </div>
           )}
         </ul>
       </nav>
@@ -330,6 +337,7 @@ useEffect(() => {
           <Route path="/about" element={<About />} />
           <Route path="/password-reset" element={<PasswordReset />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/account" element={<Account />} />
         </Routes>
       </main>
 
