@@ -21,7 +21,7 @@ function AppContent() {
 
   // inactivity timeout constants (add 60 inbetween the first and last numbers for real value)
   const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 * 60 * 1000 minutes real value (testing 30 seconds)
-  const WARNING_TIME = 20 * 60 * 1000; // 28 minutes, with 2 mins to answer log in or log out once warning pops up
+  const WARNING_TIME = 28 * 60 * 1000; // 28 minutes, with 2 mins to answer log in or log out once warning pops up
   // (real value 28 * 60 * 1000 = 28 minutes, testing value 10 seconds of pop up)
 
 useEffect(() => {
