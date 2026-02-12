@@ -282,6 +282,26 @@ app.post('/api/logout', (req, res) => {
     res.json({ message: 'Logged out successfully' });
 });
 
+// --- Update User Route ---
+app.put('/api/user', async (req, res) => {
+    const { email, field, value } = req.body;
+
+    try {
+        const [users] = await pool.query('SELECT user_id FROM users WHERE email = ?', [email]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const userId = users[0].user_id;
+        await pool.query(`UPDATE users SET ${field} = ? WHERE user_id = ?`, [value, userId]);
+
+        res.json({ message: 'User field updated successfully' });
+    } catch (error) {
+        console.error('Error updating user field:', error);
+        res.status(500).json({ error: 'Failed to update user information' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });

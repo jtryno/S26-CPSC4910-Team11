@@ -76,7 +76,7 @@ if (!userData) {
       
       <div style={{ background: '#f9f9f9', padding: '30px', borderRadius: '8px', marginBottom: '30px', border: '1px solid #e0e0e0' }}>
         <h2 style={{ color: '#1a1a1a', marginTop: '0', marginBottom: '20px' }}>User Profile</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', justifyItems: 'center', alignItems: 'center' }}>
           <div>
             <p style={{ color: '#999999', fontSize: '0.9em', margin: '0 0 5px 0' }}>Email Address</p>
             <p style={{ color: '#1a1a1a', fontWeight: '600', margin: '0', fontSize: '1.05em' }}>{userData.email}</p>
@@ -85,6 +85,24 @@ if (!userData) {
             <p style={{ color: '#999999', fontSize: '0.9em', margin: '0 0 5px 0' }}>User ID</p>
             <p style={{ color: '#1a1a1a', fontWeight: '600', margin: '0', fontSize: '1.05em' }}>{userData.user_id}</p>
           </div>
+          <button
+            style={{
+              width: '75%',
+              padding: '14px 60px',
+              fontSize: '18px',
+              backgroundColor: '#0066cc',
+              color: 'white',
+              border: 'none',
+              borderRadius: '50px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              boxShadow: '0 4px 12px rgba(0, 102, 204, 0.3)',
+              transition: 'transform 0.2s, background-color 0.2s'
+            }}
+            onClick={() => navigate('/account')}
+          >
+            View Account
+          </button>
         </div>
       </div>
 
