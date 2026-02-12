@@ -40,6 +40,10 @@ const SCRYPT_PREFIX = 'scrypt$';
 const SCRYPT_KEYLEN = 64;
 const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1 };
 
+// acc lockout settings
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MINUTES = 30;
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16);
   const derivedKey = crypto.scryptSync(password, salt, SCRYPT_KEYLEN, SCRYPT_OPTIONS);
@@ -94,7 +98,23 @@ app.post('/api/login', async (req, res) => {
         }
 
         const user = users[0];
-        
+
+        // check if acc is locked
+        if (user.lockout_until && new Date() < new Date(user.lockout_until)) {
+            const remainingMinutes = Math.ceil((new Date(user.lockout_until) - new Date()) / 60000);
+            return res.status(403).json({
+                message: `Account locked due to too many failed login attempts. Please try again in ${remainingMinutes} minute(s).`
+            });
+        }
+
+        // if lockout_until has passed = auto unlock
+        if (user.lockout_until && new Date() >= new Date(user.lockout_until)) {
+            await pool.query(
+                'UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login = NULL WHERE user_id = ?',
+                [user.user_id]
+            );
+        }
+
         // Verify complexity requirement even at login to prompt updates if needed
         if (!isPasswordComplex(password)) {
             return res.status(400).json({ message: 'Security update required: Password does not meet complexity standards.' });
@@ -111,14 +131,45 @@ app.post('/api/login', async (req, res) => {
         ok = password === stored;
         }
 
+        /* reset login attempts/unlock account in sql db: UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_failed_login = NULL WHERE email = 'hello@test.com'; */
         if (!ok) {
-        return res.status(401).json({ message: 'Invalid email or password' });
+            const newAttempts = (user.failed_login_attempts || 0) + 1;
+
+            if (newAttempts >= MAX_LOGIN_ATTEMPTS) {
+                // lock account for 30 mins
+                const lockUntil = new Date(Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000);
+                await pool.query(
+                    'UPDATE users SET failed_login_attempts = ?, lockout_until = ?, last_failed_login = NOW() WHERE user_id = ?',
+                    [newAttempts, lockUntil, user.user_id]
+                );
+                return res.status(403).json({
+                    message: `Account locked due to too many failed login attempts. Please try again in ${LOCKOUT_DURATION_MINUTES} minutes.`
+                });
+            } else {
+                // increment counter and show remaining attempts
+                await pool.query(
+                    'UPDATE users SET failed_login_attempts = ?, last_failed_login = NOW() WHERE user_id = ?',
+                    [newAttempts, user.user_id]
+                );
+                const attemptsLeft = MAX_LOGIN_ATTEMPTS - newAttempts;
+                return res.status(401).json({
+                    message: `Invalid email or password. ${attemptsLeft} attempt(s) remaining before account lockout.`
+                });
+            }
         }
 
         // If it was plaintext, upgrade-in-place to a one-way hash
         if (!isScryptHash(stored)) {
         const upgraded = hashPassword(password);
         await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [upgraded, user.user_id]);
+        }
+
+        // reset failed login attempts on successful login
+        if (user.failed_login_attempts > 0 || user.lockout_until) {
+            await pool.query(
+                'UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login = NULL WHERE user_id = ?',
+                [user.user_id]
+            );
         }
 
         const { password_hash, ...userNoPassword } = user;
@@ -183,7 +234,10 @@ app.post('/api/password-reset/confirm', async (req, res) => {
         }
 
         const newHash = hashPassword(newPassword);
-        await pool.query('UPDATE users SET password_hash = ? WHERE user_id = ?', [newHash, tokens[0].user_id]);
+        await pool.query(
+            'UPDATE users SET password_hash = ?, failed_login_attempts = 0, lockout_until = NULL, last_failed_login = NULL WHERE user_id = ?',
+            [newHash, tokens[0].user_id]
+        );
         await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_id = ?', [tokens[0].token_id]);
 
         res.json({ message: 'Password reset successfully' });
@@ -211,6 +265,12 @@ app.get('/api/session', async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: 'Session check failed' });
     }
+});
+
+// --- Logout Route ---
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('remember_me');
+    res.json({ message: 'Logged out successfully' });
 });
 
 app.listen(PORT, () => {
