@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { handleLogout } from '../Context/AuthContext';
 
 const Home = () => {
   const [userData, setUserData] = useState(null);
@@ -12,15 +13,6 @@ const Home = () => {
       setUserData(JSON.parse(storedUser));
     }
   }, []);
-
-  const handleLogout = () => {
-    localStorage.removeItem('user');
-    sessionStorage.removeItem('user');
-    // Dispatch event to notify app of logout
-    window.dispatchEvent(new Event('authStateChanged'));
-    setUserData(null);
-    navigate('/login');
-  };
 
   if (!userData) {
     return (
@@ -46,7 +38,7 @@ const Home = () => {
             Reset Password
           </button>
           <button 
-            onClick={handleLogout}
+            onClick={() => handleLogout(navigate, setUserData)}
             style={{ padding: '10px 18px', background: '#0066cc', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.95em', transition: 'background-color 0.2s' }}
           >
             Logout
