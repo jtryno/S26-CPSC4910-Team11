@@ -7,21 +7,25 @@ const Home = () => {
 
   useEffect(() => {
     // Check if user data exists in session or localStorage (for remember me)
-    const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
-    if (storedUser) {
-      setUserData(JSON.parse(storedUser));
-    }
+    const checkUserData = () => {
+      const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+      if (storedUser) {
+        setUserData(JSON.parse(storedUser));
+      } else {
+        setUserData(null);
+      }
+    };
+
+    // check on mount
+    checkUserData();
+
+    // auth state changes (ex: logout)
+    window.addEventListener('authStateChanged', checkUserData);
+
+    return () => window.removeEventListener('authStateChanged', checkUserData);
   }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem('user');
-    sessionStorage.removeItem('user');
-    // Dispatch event to notify app of logout
-    window.dispatchEvent(new Event('authStateChanged'));
-    setUserData(null);
-    navigate('/login');
-  };
-
+  
 if (!userData) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -59,20 +63,15 @@ if (!userData) {
           <h1 style={{ color: '#1a1a1a', margin: '0 0 5px 0' }}>Welcome, {userData.username}!</h1>
           <p style={{ color: '#999999', margin: '0', fontSize: '0.95em' }}>Driver Incentive Program</p>
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button 
-            onClick={() => navigate('/password-reset')}
-            style={{ padding: '10px 18px', background: '#f0f0f0', color: '#333333', border: '1px solid #d0d0d0', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.95em', transition: 'background-color 0.2s' }}
-          >
-            Reset Password
-          </button>
-          <button 
-            onClick={handleLogout}
-            style={{ padding: '10px 18px', background: '#0066cc', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.95em', transition: 'background-color 0.2s' }}
-          >
-            Logout
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            window.resetInactivityTimer?.();
+            navigate('/password-reset');
+          }}
+          style={{ padding: '10px 18px', background: '#f0f0f0', color: '#333333', border: '1px solid #d0d0d0', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.95em', transition: 'background-color 0.2s' }}
+        >
+          Reset Password
+        </button>
       </div>
       
       <div style={{ background: '#f9f9f9', padding: '30px', borderRadius: '8px', marginBottom: '30px', border: '1px solid #e0e0e0' }}>
