@@ -28,6 +28,9 @@ const PasswordReset = () => {
     setMessage('');
     setLoading(true);
 
+    
+    window.resetInactivityTimer?.(); // Reset inactivity timer on form submission
+
     try {
       const response = await fetch('/api/password-reset/request', {
         method: 'POST',
@@ -63,6 +66,9 @@ const PasswordReset = () => {
     }
 
     setLoading(true);
+
+    
+    window.resetInactivityTimer?.(); // reset inactivity timer on form submission
 
     try {
       const response = await fetch('/api/password-reset/confirm', {

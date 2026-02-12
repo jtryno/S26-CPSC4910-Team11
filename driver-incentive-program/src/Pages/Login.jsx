@@ -28,10 +28,13 @@ const Login = () => {
         } else {
           sessionStorage.setItem('user', userDataString);
         }
-        
+
+        // always use localStorage for lastActivityTime ((crosstab sync)
+        localStorage.setItem('lastActivityTime', Date.now().toString());
+
         // Dispatch event to notify app of login
         window.dispatchEvent(new Event('authStateChanged'));
-        
+
         console.log("User Data:", data.user);
         // Redirect to home page
         navigate('/');

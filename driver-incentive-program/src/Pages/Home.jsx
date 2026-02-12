@@ -8,17 +8,51 @@ const Home = () => {
 
   useEffect(() => {
     // Check if user data exists in session or localStorage (for remember me)
-    const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
-    if (storedUser) {
-      setUserData(JSON.parse(storedUser));
-    }
+    const checkUserData = () => {
+      const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+      if (storedUser) {
+        setUserData(JSON.parse(storedUser));
+      } else {
+        setUserData(null);
+      }
+    };
+
+    // check on mount
+    checkUserData();
+
+    // auth state changes (ex: logout)
+    window.addEventListener('authStateChanged', checkUserData);
+
+    return () => window.removeEventListener('authStateChanged', checkUserData);
   }, []);
 
-  if (!userData) {
+  
+if (!userData) {
     return (
-      <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-        <h1 style={{ color: '#1a1a1a', marginBottom: '15px' }}>Welcome</h1>
-        <p style={{ color: '#666666', fontSize: '1.1em' }}>Please log in to continue.</p>
+      <div style={{ textAlign: 'center', padding: '100px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <h1 style={{ color: '#1a1a1a', marginBottom: '15px', fontSize: '2.5rem' }}>Welcome to the Driver Incentive Program</h1>
+        <p style={{ color: '#666666', fontSize: '1.2rem', marginBottom: '30px' }}>Please log in to continue.</p>
+        
+        
+        <button 
+          onClick={() => navigate('/login')}
+          style={{
+            padding: '14px 60px',
+            fontSize: '18px',
+            backgroundColor: '#0066cc',
+            color: 'white',
+            border: 'none',
+            borderRadius: '50px',
+            cursor: 'pointer',
+            fontWeight: '600',
+            boxShadow: '0 4px 12px rgba(0, 102, 204, 0.3)',
+            transition: 'transform 0.2s, background-color 0.2s'
+          }}
+          onMouseOver={(e) => e.target.style.backgroundColor = '#0052a3'}
+          onMouseOut={(e) => e.target.style.backgroundColor = '#0066cc'}
+        >
+          Login
+        </button>
       </div>
     );
   }
@@ -30,20 +64,15 @@ const Home = () => {
           <h1 style={{ color: '#1a1a1a', margin: '0 0 5px 0' }}>Welcome, {userData.username}!</h1>
           <p style={{ color: '#999999', margin: '0', fontSize: '0.95em' }}>Driver Incentive Program</p>
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button 
-            onClick={() => navigate('/password-reset')}
-            style={{ padding: '10px 18px', background: '#f0f0f0', color: '#333333', border: '1px solid #d0d0d0', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.95em', transition: 'background-color 0.2s' }}
-          >
-            Reset Password
-          </button>
-          <button 
-            onClick={() => handleLogout(navigate, setUserData)}
-            style={{ padding: '10px 18px', background: '#0066cc', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.95em', transition: 'background-color 0.2s' }}
-          >
-            Logout
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            window.resetInactivityTimer?.();
+            navigate('/password-reset');
+          }}
+          style={{ padding: '10px 18px', background: '#f0f0f0', color: '#333333', border: '1px solid #d0d0d0', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.95em', transition: 'background-color 0.2s' }}
+        >
+          Reset Password
+        </button>
       </div>
       
       <div style={{ background: '#f9f9f9', padding: '30px', borderRadius: '8px', marginBottom: '30px', border: '1px solid #e0e0e0' }}>
