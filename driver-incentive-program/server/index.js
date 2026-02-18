@@ -363,6 +363,86 @@ app.get('/api/driver/points/:userId', async (req, res) => {
     }
 });
 
+// --- Get Drivers in Org Route ---
+app.get('/api/sponsor/drivers/:sponsorUserId', async (req, res) => {
+    const { sponsorUserId } = req.params;
+    try {
+        const [allSponsors] = await pool.query('SELECT user_id, sponsor_org_id FROM sponsor_user');
+
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [sponsorUserId]
+        );
+        if (sponsorRows.length === 0) {
+            return res.status(404).json({ error: `No sponsor_user row found for user_id: ${sponsorUserId}` });
+        }
+        const { sponsor_org_id } = sponsorRows[0];
+
+        const [drivers] = await pool.query(
+            `SELECT
+                u.user_id,
+                u.username,
+                u.first_name,
+                u.last_name,
+                u.email,
+                du.driver_status,
+                du.current_points_balance AS total_points
+             FROM driver_user du
+             JOIN users u ON du.user_id = u.user_id
+             WHERE du.sponsor_org_id = ?
+               AND du.driver_status = 'active'`,
+            [sponsor_org_id]
+        );
+
+        res.json({ sponsor_org_id, drivers });
+    } catch (error) {
+        console.error('Error fetching sponsor drivers:', error);
+        res.status(500).json({ error: 'Failed to fetch drivers' });
+    }
+});
+
+// --- Sponsor Award/Deduct Points ---
+app.post('/api/sponsor/points', async (req, res) => {
+    const { sponsorUserId, driverIds, pointAmount, reason, source } = req.body;
+
+    if (!driverIds || !Array.isArray(driverIds) || driverIds.length === 0) {
+        return res.status(400).json({ error: 'driverIds must be a non-empty array' });
+    }
+    if (typeof pointAmount !== 'number' || pointAmount === 0) {
+        return res.status(400).json({ error: 'pointAmount must be a non-zero number' });
+    }
+    if (!reason || !reason.trim()) {
+        return res.status(400).json({ error: 'reason is required' });
+    }
+    const validSources = ['manual', 'recurring'];
+    if (!validSources.includes(source)) {
+        return res.status(400).json({ error: 'source must be "manual" or "recurring"' });
+    }
+
+    try {
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [sponsorUserId]
+        );
+        if (sponsorRows.length === 0) {
+            return res.status(404).json({ error: 'Sponsor org not found for this user' });
+        }
+        const { sponsor_org_id } = sponsorRows[0];
+
+        // Insert a transaction row for each driver. The DB trigger updates current_points_balance automatically
+        const txValues = driverIds.map(id => [id, sponsor_org_id, pointAmount, reason.trim(), source, sponsorUserId]);
+        await pool.query(
+            'INSERT INTO point_transactions (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id) VALUES ?',
+            [txValues]
+        );
+
+        res.json({ message: `Points applied to ${driverIds.length} driver(s)` });
+    } catch (error) {
+        console.error('Error applying points:', error);
+        res.status(500).json({ error: 'Failed to apply points' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
