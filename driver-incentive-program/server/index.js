@@ -323,6 +323,46 @@ app.get('/api/user/lifetime-points/:userId', async (req, res) => {
     }
 });
 
+// --- Driver Points History Route ---
+app.get('/api/driver/points/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const [users] = await pool.query('SELECT user_type FROM users WHERE user_id = ?', [userId]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        if (users[0].user_type !== 'driver') {
+            return res.status(403).json({ error: 'Not a driver account' });
+        }
+
+        const [transactions] = await pool.query(
+            `SELECT 
+                pt.transaction_id,
+                pt.point_amount,
+                pt.reason,
+                pt.source,
+                pt.created_at,
+                pt.sponsor_org_id,
+                so.name AS sponsor_name
+             FROM point_transactions pt
+             LEFT JOIN sponsor_organization so ON pt.sponsor_org_id = so.sponsor_org_id
+             WHERE pt.driver_user_id = ?
+             ORDER BY pt.created_at DESC`,
+            [userId]
+        );
+
+        const [[{ total_points }]] = await pool.query(
+            'SELECT COALESCE(SUM(point_amount), 0) AS total_points FROM point_transactions WHERE driver_user_id = ?',
+            [userId]
+        );
+
+        res.json({ total_points, transactions });
+    } catch (error) {
+        console.error('Error fetching driver points:', error);
+        res.status(500).json({ error: 'Failed to fetch driver points' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });

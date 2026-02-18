@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
 
@@ -28,18 +28,6 @@ async function saveField(email, field, value) {
 }
 
 const ProfileTab = ({ userData, setUserData, navigate }) => {
-    const [lifetimePoints, setLifetimePoints] = useState(null);
-
-    // Get the lifetime points for drivers only
-    useEffect(() => {
-        if (userData?.user_id && userData?.user_type === 'driver') {
-            fetch(`/api/user/lifetime-points/${userData.user_id}`)
-                .then(res => res.json())
-                .then(data => setLifetimePoints(data.lifetime_points))
-                .catch(() => setLifetimePoints('N/A'));
-        }
-    }, [userData?.user_id, userData?.user_type]);
-
     return (
         <div style={{ display: 'grid', direction: 'column'}}>
             <div style={{ background: '#f9f9f9',  paddingBottom: '30px', paddingLeft: '30px', paddingTop: '0px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
@@ -88,12 +76,6 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         <b>Role: </b>
                         <span>{userData?.user_type || "Not available"}</span>
                     </div>
-                    {userData?.user_type === 'driver' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <b>Lifetime Points: </b>
-                            <span>{lifetimePoints !== null ? lifetimePoints : 'Loading...'}</span>
-                        </div>
-                    )}
                 </div>
             </div>
             <div style={{ background: '#f9f9f9',  paddingBottom: '30px', paddingLeft: '30px', paddingTop: '0px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>

@@ -6,6 +6,7 @@ import About from './Pages/About'
 import Login from './Pages/Login'
 import Account from './Pages/Account'
 import PasswordReset from './Pages/PasswordReset'
+import Dashboard from './Pages/Dashboard'
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
 
@@ -310,6 +311,9 @@ useEffect(() => {
           <ul className="nav-links">
             <li><Link to="/">Home</Link></li>
             <li><Link to="/about">About</Link></li>
+            {isLoggedIn && (
+              <li><Link to="/dashboard">Dashboard</Link></li>
+            )}
           </ul>
         </div>
         <ul className="nav-auth">
@@ -338,6 +342,7 @@ useEffect(() => {
           <Route path="/password-reset" element={<PasswordReset />} />
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
+          <Route path="/dashboard" element={<Dashboard />} />
         </Routes>
       </main>
 
