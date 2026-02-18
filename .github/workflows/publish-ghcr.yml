@@ -2,7 +2,7 @@ name: Publish Docker images to GHCR and deploy to EC2
 
 on:
   push:
-    branches: [ "feature/update-action" ]
+    branches: [ "main" ]
 
 permissions:
   contents: read
