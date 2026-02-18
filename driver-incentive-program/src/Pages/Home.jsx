@@ -109,7 +109,7 @@ if (!userData) {
       <div style={{ background: '#f0f7ff', padding: '30px', borderRadius: '8px', border: '1px solid #d0e3ff' }}>
         <h3 style={{ color: '#1a1a1a', marginTop: '0', marginBottom: '12px' }}>About the Driver Incentive Program</h3>
         <p style={{ color: '#666666', margin: '0', lineHeight: '1.6' }}>
-          This dashboard is where you can manage your driver profile, view your points balance, and browse available rewards. Your participation helps incentivize safe driving practices across the transportation industry.
+          This dashboard is where you can manage your driver profile, view your points balance, and browse available rewards. Your participation helps incentivize safe driving practices across the transportation industry!
         </p>
         <p style={{ color: '#999999', fontSize: '0.9em', margin: '15px 0 0 0', fontStyle: 'italic' }}>Additional features coming soon</p>
       </div>
