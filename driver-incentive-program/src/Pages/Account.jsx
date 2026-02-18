@@ -51,6 +51,17 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         value={userData?.email || "Not available"}
                         onSave={(value) => {
                             saveField(userData.email, "email", value);
+                        }}
+                        validate={(value) => {
+                            if (!value || value === "Not available") return "Email is required";
+                            if (!value.includes('@')) {
+                                return "Email must contain @";
+                            }
+                            const validEndings = ['.com', '.edu', '.org'];
+                            if (!validEndings.some(ending => value.toLowerCase().endsWith(ending))) {
+                                return "Email must end with a valid domain of .com, .edu, or .org";
+                            }
+                            return null;
                         }} 
                     />
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -61,7 +72,18 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         label="Phone Number"
                         value={userData?.phone_number || "Not available"}
                         onSave={(value) => {
-                            saveField(userData.email, "phone_number", value);
+                            const digitsOnly = value.replace(/\D/g, '');
+                            const formatted = `(${digitsOnly.slice(0,3)}) ${digitsOnly.slice(3,6)}-${digitsOnly.slice(6,10)}`;
+                            saveField(userData.email, "phone_number", formatted);
+                            setUserData({ ...userData, phone_number: formatted });
+                            return formatted;
+                        }}
+                        validate={(value) => {
+                            if (!value || value === "Not available") return null;
+                            const digitsOnly = value.replace(/\D/g, '');
+                            if (digitsOnly.length === 0) return null;
+                            if (digitsOnly.length !== 10) return "Phone number must be exactly 10 digits";
+                            return null;
                         }} 
                     />
                     <EditableField
