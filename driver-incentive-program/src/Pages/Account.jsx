@@ -28,6 +28,12 @@ async function saveField(email, field, value) {
 }
 
 const ProfileTab = ({ userData, setUserData, navigate }) => {
+    let createdAtDisplay;
+    if (userData?.created_at) {
+        createdAtDisplay = new Date(userData.created_at).toLocaleString('en-US', {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',hour12: true});
+    } else {
+        createdAtDisplay = "Not available";
+    }
     return (
         <div style={{ display: 'grid', direction: 'column'}}>
             <div style={{ background: '#f9f9f9',  paddingBottom: '30px', paddingLeft: '30px', paddingTop: '0px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
@@ -75,6 +81,12 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <b>Role: </b>
                         <span>{userData?.user_type || "Not available"}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <b>Account Created: </b>
+                        <span>
+                            {createdAtDisplay}
+                        </span>
                     </div>
                 </div>
             </div>
