@@ -464,6 +464,7 @@ const SponsorDashboard = ({ user }) => {
                                     borderRadius: '4px',
                                     border: '1px solid #ccc',
                                     background: '#f5f5f5',
+                                    color: '#1a1a1a',
                                     cursor: 'pointer',
                                 }}
                             >
