@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// ─── Role-specific dashboard components ───────────────────────────────────────
-
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -114,7 +112,7 @@ const DriverDashboard = ({ user }) => {
 };
 
 const SponsorDashboard = ({ user }) => {
-    // Add sponsor-specific content here
+    // Add sponsor specific things here
     return (
         <>
             <h1>Sponsor Dashboard</h1>
@@ -124,7 +122,7 @@ const SponsorDashboard = ({ user }) => {
 };
 
 const AdminDashboard = ({ user }) => {
-    // Add admin-specific content here
+    // Add admin specific things here
     return (
         <>
             <h1>Admin Dashboard</h1>
@@ -133,14 +131,13 @@ const AdminDashboard = ({ user }) => {
     );
 };
 
-// ─── Role map — add new roles here ────────────────────────────────────────────
 const DASHBOARDS = {
     driver:  DriverDashboard,
     sponsor: SponsorDashboard,
     admin:   AdminDashboard,
 };
 
-// ─── Shell ────────────────────────────────────────────────────────────────────
+// Shell for the dashboard
 const Dashboard = () => {
     const navigate = useNavigate();
     const user = JSON.parse(localStorage.getItem('user') || sessionStorage.getItem('user') || 'null');
