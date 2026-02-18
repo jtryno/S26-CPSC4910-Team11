@@ -36,15 +36,17 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     <EditableField 
                         label="Username"
                         value={userData?.username || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "username", value);
+                        onSave={async (value) => {
+                            await saveField(userData.email, "username", value);
+                            setUserData(prev => ({ ...prev, username: value }));
                         }} 
                     />
                     <EditableField
                         label="Email"
                         value={userData?.email || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "email", value);
+                        onSave={async (value) => {
+                            await saveField(userData.email, "email", value);
+                            setUserData(prev => ({ ...prev, email: value }));
                         }} 
                     />
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -54,22 +56,25 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     <EditableField
                         label="Phone Number"
                         value={userData?.phone_number || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "phone_number", value);
+                        onSave={async (value) => {
+                            await saveField(userData.email, "phone_number", value);
+                            setUserData(prev => ({ ...prev, phone_number: value }));
                         }} 
                     />
                     <EditableField
                         label="First Name"
                         value={userData?.first_name || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "first_name", value);
+                        onSave={async (value) => {
+                            await saveField(userData.email, "first_name", value);
+                            setUserData(prev => ({ ...prev, first_name: value }));
                         }} 
                     />
                     <EditableField
                         label="Last Name"
                         value={userData?.last_name || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "last_name", value);
+                        onSave={async (value) => {
+                            await saveField(userData.email, "last_name", value);
+                            setUserData(prev => ({ ...prev, last_name: value }));
                         }} 
                     />
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

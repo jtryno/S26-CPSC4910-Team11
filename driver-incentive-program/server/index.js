@@ -83,6 +83,69 @@ app.get('/api/about', async (req, res) => {
     }
 });
 
+//-- Organization Route ---
+app.get('/api/organization/:sponsor_org_id', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+    
+    try {
+        const [orgs] = await pool.query('SELECT * FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
+        
+        if (orgs.length === 0) {
+            return res.status(404).json({ message: 'Organization not found' });
+        }
+        
+        const org = orgs[0];
+        res.json({message: 'Organization info retrieved successfully', organization: org});
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch organization info' });
+    }
+});
+
+app.get('/api/organization/:sponsor_org_id/count', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+
+    try {
+        const response = await pool.query('SELECT COUNT(*) AS count FROM users WHERE sponsor_org_id = ?', [sponsor_org_id]);
+        const count = response[0][0].count;
+        res.json({ message: 'Organization member count retrieved successfully', count });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to retrieve organization member count' });
+    }
+});
+
+app.put('/api/organization/:sponsor_org_id', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+    const { field, value } = req.body;
+
+    try {
+        const [result] = await pool.query(
+            `UPDATE sponsor_organization SET ${field} = ? WHERE sponsor_org_id = ?`,
+            [value, sponsor_org_id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Organization not found' });
+        }
+
+        res.json({ message: 'Organization updated successfully' });
+    } catch (error) {
+        console.error('Error updating organization:', error);
+        res.status(500).json({ error: 'Failed to update organization' });
+    }
+});
+
+app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+
+    try {
+        const [users] = await pool.query('SELECT * FROM users WHERE sponsor_org_id = ?', [sponsor_org_id]);
+        res.json({ message: 'Organization users retrieved successfully', users });
+    } catch (error) {
+        console.error('Error fetching organization users:', error);
+        res.status(500).json({ error: 'Failed to fetch organization users' });
+    }
+});
+
 // --- Login Route  ---
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;

@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 const EditableField = ({ label, value, onSave }) => {
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
-    const [currentValue, setCurrentValue] = useState(value);
 
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -18,7 +17,7 @@ const EditableField = ({ label, value, onSave }) => {
                     />
                     <button
                         onClick={() => {
-                            setCurrentValue(inputValue);
+                            value = inputValue;
                             onSave(inputValue);
                             setIsEditing(false);
                         }}
@@ -33,7 +32,7 @@ const EditableField = ({ label, value, onSave }) => {
                     <button
                         onClick={() => {
                             setIsEditing(false);
-                            setInputValue(currentValue);
+                            setInputValue(value);
                         }}
                         style={{
                             padding: '2px 6px',
@@ -48,9 +47,9 @@ const EditableField = ({ label, value, onSave }) => {
                 </div>
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '4px' }}>
-                    <span>{currentValue}</span>
+                    <span>{value}</span>
                     <button 
-                    onClick={() => { setIsEditing(true); setInputValue(currentValue); }}
+                    onClick={() => { setIsEditing(true); setInputValue(value); }}
                     style={{
                         padding: '2px 6px',
                         fontSize: '0.8em',
