@@ -12,6 +12,7 @@ import { FaUser } from 'react-icons/fa';
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userData, setUserData] = useState(null);
   const [showInactivityModal, setShowInactivityModal] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -32,8 +33,10 @@ useEffect(() => {
       // first check local storage
       if (storedUser) {
         setIsLoggedIn(true);
+        setUserData(JSON.parse(storedUser));
       } else {
         setIsLoggedIn(false);
+        setUserData(null);
       }
 
       // check if there is valid cookie session
@@ -45,16 +48,19 @@ useEffect(() => {
           // Cookie is valid, update localStorage with user data
           localStorage.setItem('user', JSON.stringify(data.user));
           setIsLoggedIn(true);
+          setUserData(data.user);
         } else if (!storedUser) {
           // Only clear if there is no stored user either
           // prevents clearing when user is logged in without remember Me
           setIsLoggedIn(false);
+          setUserData(null);
         }
       } catch (err) {
         console.error("session error", err);
         // if error, use localStorage if it exists
         if (storedUser) {
           setIsLoggedIn(true);
+          setUserData(JSON.parse(storedUser));
         }
       }
     };
@@ -319,9 +325,10 @@ useEffect(() => {
         <ul className="nav-auth">
           {!isLoggedIn && <li><Link to="/login">Login</Link></li>}
           {isLoggedIn && (
-            <div style={{display: 'grid', gridAutoFlow: 'column', gap: '20px'}}>
-              <Link to="/account">
-                <FaUser size={25} />
+            <div style={{display: 'flex', alignItems: 'center', gap: '20px'}}>
+              <Link to="/account" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
+                <FaUser size={20} />
+                <span className="nav-username">{userData?.username || 'User'}</span>
               </Link>
               <li>
                 <a href="#" onClick={(e) => {
