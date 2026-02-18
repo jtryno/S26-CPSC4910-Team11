@@ -119,3 +119,13 @@
   }
 }
 
+.nav-username {
+  color: #1a1a1a;
+  font-weight: 500;
+  font-size: 0.95rem;
+  transition: color 0.2s ease;
+}
+
+.nav-username:hover {
+  color: #0066cc;
+}
