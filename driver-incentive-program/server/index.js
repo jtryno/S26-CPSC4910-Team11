@@ -386,6 +386,25 @@ app.get('/api/user/lifetime-points/:userId', async (req, res) => {
     }
 });
 
+// --- Driver Join Sponsor Route ----
+app.get('/api/driver/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            'SELECT * FROM driver_user WHERE user_id = ?',
+            [userId]
+        );
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Driver not found' });
+        }
+        
+        res.json({ driver: rows[0] });
+    } catch (error) {
+        console.error('Error fetching driver details:', error);
+        res.status(500).json({ error: 'Failed to fetch driver details' });
+    }
+});
 // --- Driver Points History Route ---
 app.get('/api/driver/points/:userId', async (req, res) => {
     const { userId } = req.params;
