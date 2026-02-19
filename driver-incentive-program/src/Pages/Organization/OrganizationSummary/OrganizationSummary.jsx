@@ -4,6 +4,9 @@ import Field from '../../../components/Field';
 import OrganizationHeader from './OrganizationHeader';
 import OrganizationMembersTab from './OrganizationMembersTab';
 import { fetchOrgData, fetchOrgUsers } from '../../../api/OrganizationApi';
+import { featchApplicationsUser } from '../../../api/ApplicationApi';
+import TabGroup from '../../../components/TabGroup';
+import OrganizationApplicationsTab from './OrganizationApplicationsTab';
 
 const OrganizationSummary = () => {
     const [userData, setUserData] = useState(() => {
@@ -13,24 +16,30 @@ const OrganizationSummary = () => {
     const { orgId } = useParams();
     const [orgData, setOrgData] = useState(null);
     const [orgUsers, setOrgUsers] = useState(null);
+    const [hasPendingApplication, setHasPendingApplication] = useState(true);
 
     async function fetchOrg() {
         const org = await fetchOrgData(orgId);
         setOrgData(org);
         const users = await fetchOrgUsers(orgId);
         setOrgUsers(users);
+        const applications = await featchApplicationsUser(userData.user_id, 'pending');
+        setHasPendingApplication(applications.length > 0);
     }
 
     useEffect(() => {
         if (!orgId) return;
         fetchOrg();
-    }, [orgId]);
+    }, [orgId, userData?.user_id]);
     
     return (
         <div style={{background: '#f9f9f9', borderRadius: '8px', border: '1px solid #e0e0e0'}}>
-            <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg}/>
+            <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg} hasPendingApplication={hasPendingApplication}/>
             <div style={{ borderBottom: '1px solid #e0e0e0', marginBottom: '20px'}}/>
-            <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg}/>
+            <TabGroup tabs={[
+                { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg}/> },
+                ...(userData?.user_type !== 'driver' ? [{ label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg} /> }] : [])
+            ]}/>
         </div>
     );
 }

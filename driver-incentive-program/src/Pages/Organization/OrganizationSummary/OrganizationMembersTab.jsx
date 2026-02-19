@@ -7,9 +7,9 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
 
     return (
         <div style={{ display: 'grid', direction: 'column', margin: '20px'}}>
-            <h2 style={{ margin: '0 0 10px 0'}}>Organization Members</h2>
             <SortableTable
                 columns={[
+                    { key: 'user_id', label: 'User ID', sortable: true },
                     { key: 'username', label: 'Username', sortable: true },
                     { key: 'user_type', label: 'Role', sortable: true },]}
                 actions={userData?.user_type !== 'driver' ? [

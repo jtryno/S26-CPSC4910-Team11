@@ -4,7 +4,7 @@ import Field from '../../../components/Field';
 import EditableField from '../../../components/EditableField';
 import { fetchOrgData } from '../../../api/OrganizationApi';
 import { removeFromOrganization } from '../../../api/UserApi';
-import { createApplication, checkApplicationStatus } from '../../../api/ApplicationApi';
+import { createApplication, featchApplicationsUser } from '../../../api/ApplicationApi';
 
 
 const SponsorFields = ({orgData, setOrgData, numUsers}) => {
@@ -33,20 +33,7 @@ const DriverFields = ({orgData, numUsers}) => {
     );
 }
 
-const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserData, fetchOrg}) => {
-    const [hasPendingApplication, setHasPendingApplication] = useState(true);
-
-    async function checkApplication() {
-        if (userData?.user_id) {
-            const status = await checkApplicationStatus(userData.user_id);
-            setHasPendingApplication(status === 'pending');
-        }
-    }
-
-    useEffect(() => {
-        checkApplication();
-    }, [userData]);
-
+const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserData, fetchOrg, hasPendingApplication}) => {
     return (
         <div style={{ margin: '20px'}}>
             <h1 style={{ color: '#1a1a1a', marginBottom: '20px'}}>Organization Summary</h1>
@@ -74,7 +61,7 @@ const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserDat
                         onClick={async () => {
                             if (window.confirm(`Are you sure you want to request to join "${orgData?.name}"?`)) {
                                 await createApplication(userData.user_id, orgData.sponsor_org_id);
-                                await checkApplication();
+                                await fetchOrg();
                             }
                         }}
                         style={{ height: '50px', width: '200px', marginTop: 'auto', marginLeft: 'auto', color: 'white', borderRadius: '4px', padding: '0 15px', backgroundColor: hasPendingApplication ? '#95a5a6' : '#3498db', cursor: hasPendingApplication ? 'not-allowed' : 'pointer' }}

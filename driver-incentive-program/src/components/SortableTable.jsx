@@ -69,7 +69,7 @@ const SortableTable = ({ columns, data, actions }) => {
                         {actions &&
                             actions.map((action, actionIndex) => (
                                 <td key={actionIndex} style={{ padding: '2px' }}>
-                                    <button onClick={() => action.onClick(row)}>
+                                    <button style={{ backgroundColor: action.color || '#007bff', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px' }} onClick={() => action.onClick(row)}>
                                         {action.label}
                                     </button>
                                 </td>

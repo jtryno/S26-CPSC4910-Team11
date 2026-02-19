@@ -84,7 +84,46 @@ app.get('/api/about', async (req, res) => {
 });
 
 //-- Driver Application Route ---
-app.post('/api/driver/application', async (req, res) => {
+app.get('/api/application/organization/:org_id', async (req, res) => {
+    const { org_id } = req.params;
+    const { status } = req.query;
+    try {
+        let query = 'SELECT * FROM driver_applications WHERE sponsor_org_id = ?';
+        const params = [org_id];
+
+        if (status) {
+            query += ' AND status = ?';
+            params.push(status);
+        }
+
+        const [applications] = await pool.query(query, params);
+        res.json({ applications });
+    } catch (error) {
+        console.error('Error fetching driver applications:', error);
+        res.status(500).json({ error: 'Failed to fetch driver applications' });
+    }
+});
+
+app.put('/api/application/:application_id', async (req, res) => {
+    try {
+        const { application_id } = req.params;
+        const { status, decision_reason, user_id } = req.body;
+
+        const [result] = await pool.query(
+            'UPDATE driver_applications SET status = ?, decision_reason = ?, reviewed_by_user_id = ?, reviewed_at = NOW() WHERE application_id = ?',
+            [status, decision_reason, user_id, application_id]
+        );
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Application not found' });
+        }
+        res.json({ message: 'Application updated successfully' });
+    } catch (error) {
+        console.error('Error updating application:', error);
+        res.status(500).json({ error: 'Failed to update application' });
+    }
+});
+
+app.post('/api/application', async (req, res) => {
     const { user_id, org_id } = req.body;
     try {
         const [result] = await pool.query(
@@ -98,14 +137,20 @@ app.post('/api/driver/application', async (req, res) => {
     }
 });
 
-app.get('/api/driver/application', async (req, res) => {
-    const { user_id } = req.query;
+app.get('/api/application/user/:user_id', async (req, res) => {
+    const { user_id } = req.params;
+    const { status } = req.query;
     try {
-        const [applications] = await pool.query(
-            'SELECT * FROM driver_applications WHERE driver_user_id = ?',
-            [user_id]
-        );
-        res.json({ status: applications[0].status });
+        let query = 'SELECT * FROM driver_applications WHERE driver_user_id = ?';
+        const params = [user_id];
+
+        if (status) {
+            query += ' AND status = ?';
+            params.push(status);
+        }
+
+        const [applications] = await pool.query(query, params);
+        res.json({ applications });
     } catch (error) {
         console.error('Error fetching driver applications:', error);
         res.status(500).json({ error: 'Failed to fetch driver applications' });
