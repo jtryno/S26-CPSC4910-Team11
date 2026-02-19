@@ -31,15 +31,35 @@ app.use(cookieParser());
 // Catalog API proxy to Fake Store API
 app.get('/api/catalog', async (req, res) => {
     try {
-        const response = await fetch('https://fakestoreapi.com/products');
+        console.log("Fetching catalog from FakeStoreAPI...");
+        
+        const response = await fetch('https://fakestoreapi.com/products', {
+            method: 'GET',
+            headers: {
+                // This header tells Cloudflare/FakeStore that the request is from a browser
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        });
+
         if (!response.ok) {
-            return res.status(502).json({ error: 'Failed to fetch catalog from external API.' });
+            // Log the specific status code to your EC2 terminal (e.g., 403)
+            console.error(`External API Error: ${response.status} ${response.statusText}`);
+            return res.status(502).json({ 
+                error: 'Failed to fetch catalog from external API.',
+                statusCode: response.status 
+            });
         }
+
         const products = await response.json();
-        // Optionally map/transform product fields here
+        console.log(`Successfully fetched ${products.length} products.`);
         res.json(products);
+
     } catch (err) {
-        res.status(500).json({ error: 'Internal server error.' });
+        // This catches network timeouts or DNS failures
+        console.error('Internal Catalog Route Error:', err);
+        res.status(500).json({ error: 'Internal server error.', details: err.message });
     }
 });
 
