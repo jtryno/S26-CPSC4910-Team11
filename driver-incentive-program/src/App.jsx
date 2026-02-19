@@ -7,6 +7,7 @@ import Login from './Pages/Login'
 import Account from './Pages/Account'
 import PasswordReset from './Pages/PasswordReset'
 import Dashboard from './Pages/Dashboard'
+import Catalog from './Pages/Catalog'
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
 
@@ -318,7 +319,10 @@ useEffect(() => {
             <li><Link to="/">Home</Link></li>
             <li><Link to="/about">About</Link></li>
             {isLoggedIn && (
-              <li><Link to="/dashboard">Dashboard</Link></li>
+              <>
+                <li><Link to="/dashboard">Dashboard</Link></li>
+                <li><Link to="/catalog">Catalog</Link></li>
+              </>
             )}
           </ul>
         </div>
@@ -350,6 +354,7 @@ useEffect(() => {
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/catalog" element={<Catalog />} />
         </Routes>
       </main>
 
