@@ -7,13 +7,17 @@ const DriverDashboard = ({ user }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    const [leaveModalOpen, setLeaveModalOpen] = useState(false);
+    const [leaving, setLeaving] = useState(false);
+    const [leaveMsg, setLeaveMsg] = useState(null);
+
     const SOURCE_LABELS = {
         recurring: 'Recurring',
         manual: 'Manual',
         order: 'Order',
     };
 
-    useEffect(() => {
+    const fetchData = () => {
         fetch(`/api/driver/points/${user.user_id}`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load points');
@@ -21,7 +25,28 @@ const DriverDashboard = ({ user }) => {
             })
             .then(d => { setData(d); setLoading(false); })
             .catch(err => { setError(err.message); setLoading(false); });
-    }, [user.user_id]);
+    };
+
+    useEffect(() => { fetchData(); }, [user.user_id]);
+
+    const handleLeave = async () => {
+        setLeaving(true);
+        try {
+            const res = await fetch('/api/driver/leave-sponsor', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ driverUserId: user.user_id }),
+            });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Failed to leave sponsor');
+            setLeaveMsg({ type: 'success', text: result.message });
+            fetchData();
+        } catch (err) {
+            setLeaveMsg({ type: 'error', text: err.message });
+        } finally {
+            setLeaving(false);
+        }
+    };
 
     if (loading) return <div>Loading dashboard...</div>;
     if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
@@ -41,12 +66,34 @@ const DriverDashboard = ({ user }) => {
                 border: '1px solid #b3d4ff',
                 borderRadius: '8px',
                 padding: '20px 28px',
-                marginBottom: '28px',
+                marginBottom: '16px',
                 display: 'inline-block',
             }}>
                 <div style={{ fontSize: '14px', color: '#555' }}>Total Points</div>
                 <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#1a1a1a' }}>{data.total_points}</div>
             </div>
+
+            {data.driver_status === 'active' && (
+                <div style={{ marginBottom: '28px' }}>
+                    <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
+                        Sponsor: <strong>{data.sponsor_name}</strong>
+                    </div>
+                    <button
+                        onClick={() => { setLeaveMsg(null); setLeaveModalOpen(true); }}
+                        style={{
+                            padding: '6px 18px',
+                            borderRadius: '4px',
+                            border: '1px solid #c62828',
+                            background: '#fff',
+                            color: '#c62828',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                        }}
+                    >
+                        Leave Sponsor
+                    </button>
+                </div>
+            )}
 
             <h2 style={{ marginBottom: '12px' }}>Breakdown by Source</h2>
             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '32px' }}>
@@ -105,6 +152,75 @@ const DriverDashboard = ({ user }) => {
                     </table>
                 </div>
             )}
+
+            {/* ── Leave Sponsor Confirm Modal ── */}
+            {leaveModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '420px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Leave Sponsor?</h2>
+                        <p style={{ color: '#444', lineHeight: '1.5' }}>
+                            Are you sure you want to leave <strong>{data.sponsor_name}</strong>?
+                            Your points history will be preserved, but you will no longer be active in this organization.
+                        </p>
+
+                        {leaveMsg && (
+                            <div style={{
+                                marginTop: '12px',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                background: leaveMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: leaveMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '14px',
+                            }}>
+                                {leaveMsg.text}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '20px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setLeaveModalOpen(false)}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ccc',
+                                    background: '#f5f5f5',
+                                    color: '#1a1a1a',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                {leaveMsg?.type === 'success' ? 'Close' : 'Cancel'}
+                            </button>
+                            <button
+                                onClick={handleLeave}
+                                disabled={leaving || leaveMsg?.type === 'success'}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: leaving || leaveMsg?.type === 'success' ? '#ef9a9a' : '#c62828',
+                                    color: '#fff',
+                                    cursor: leaving || leaveMsg?.type === 'success' ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {leaving ? 'Leaving...' : 'Confirm Leave'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };
@@ -127,6 +243,11 @@ const SponsorDashboard = ({ user }) => {
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [activeTab, setActiveTab] = useState('individual');
 
+    // settings tab state
+    const [settings, setSettings] = useState({ point_upper_limit: '', point_lower_limit: '', monthly_point_limit: '' });
+    const [settingsSaving, setSettingsSaving] = useState(false);
+    const [settingsMsg, setSettingsMsg] = useState(null);
+
     const fetchDrivers = () => {
         setLoading(true);
         fetch(`/api/sponsor/drivers/${user.user_id}`)
@@ -139,6 +260,36 @@ const SponsorDashboard = ({ user }) => {
     };
 
     useEffect(() => { fetchDrivers(); }, [user.user_id]);
+
+    useEffect(() => {
+        fetch(`/api/sponsor/settings/${user.user_id}`)
+            .then(res => res.ok ? res.json() : Promise.reject())
+            .then(d => setSettings({
+                point_upper_limit: d.point_upper_limit ?? '',
+                point_lower_limit: d.point_lower_limit ?? '',
+                monthly_point_limit: d.monthly_point_limit ?? '',
+            }))
+            .catch(() => {});
+    }, [user.user_id]);
+
+    const handleSaveSettings = async () => {
+        setSettingsSaving(true);
+        setSettingsMsg(null);
+        try {
+            const res = await fetch('/api/sponsor/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sponsorUserId: user.user_id, ...settings }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to save settings');
+            setSettingsMsg({ type: 'success', text: data.message });
+        } catch (err) {
+            setSettingsMsg({ type: 'error', text: err.message });
+        } finally {
+            setSettingsSaving(false);
+        }
+    };
 
     const openModal = (driverIds) => {
         setModalDriverIds(driverIds);
@@ -240,6 +391,7 @@ const SponsorDashboard = ({ user }) => {
             <div style={{ marginBottom: '-1px', textAlign: 'left' }}>
                 {tabBtn('individual', 'Individual Points')}
                 {tabBtn('batch', 'Batch Award')}
+                {tabBtn('settings', 'Settings')}
             </div>
 
             <div style={{
@@ -383,6 +535,89 @@ const SponsorDashboard = ({ user }) => {
                                 </button>
                             </>
                         )}
+                    </>
+                )}
+
+                {/* ── Settings Tab ── */}
+                {activeTab === 'settings' && (
+                    <>
+                        <p style={{ color: '#555', marginTop: 0 }}>
+                            Set point limits for your organization. Leave a field blank to apply no limit.
+                        </p>
+
+                        <div style={{ maxWidth: '380px' }}>
+                            <label style={labelStyle}>
+                                Upper Point Limit
+                                <span style={{ color: '#888', fontSize: '12px', marginLeft: '6px' }}>
+                                    (max points a driver can hold)
+                                </span>
+                            </label>
+                            <input
+                                type="number"
+                                value={settings.point_upper_limit}
+                                onChange={e => { setSettings(s => ({ ...s, point_upper_limit: e.target.value })); setSettingsMsg(null); }}
+                                placeholder="No limit"
+                                style={inputStyle}
+                            />
+
+                            <label style={labelStyle}>
+                                Lower Point Limit
+                                <span style={{ color: '#888', fontSize: '12px', marginLeft: '6px' }}>
+                                    (min points a driver can hold, example: 0 prevents negative)
+                                </span>
+                            </label>
+                            <input
+                                type="number"
+                                value={settings.point_lower_limit}
+                                onChange={e => { setSettings(s => ({ ...s, point_lower_limit: e.target.value })); setSettingsMsg(null); }}
+                                placeholder="No limit"
+                                style={inputStyle}
+                            />
+
+                            <label style={labelStyle}>
+                                Monthly Point Limit
+                                <span style={{ color: '#888', fontSize: '12px', marginLeft: '6px' }}>
+                                    (total points org can award per month)
+                                </span>
+                            </label>
+                            <input
+                                type="number"
+                                value={settings.monthly_point_limit}
+                                onChange={e => { setSettings(s => ({ ...s, monthly_point_limit: e.target.value })); setSettingsMsg(null); }}
+                                placeholder="No limit"
+                                style={inputStyle}
+                            />
+
+                            {settingsMsg && (
+                                <div style={{
+                                    marginTop: '12px',
+                                    padding: '8px 12px',
+                                    borderRadius: '4px',
+                                    background: settingsMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                    color: settingsMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                    fontSize: '14px',
+                                }}>
+                                    {settingsMsg.text}
+                                </div>
+                            )}
+
+                            <button
+                                onClick={handleSaveSettings}
+                                disabled={settingsSaving}
+                                style={{
+                                    marginTop: '20px',
+                                    padding: '8px 24px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: settingsSaving ? '#90caf9' : '#1976d2',
+                                    color: '#fff',
+                                    cursor: settingsSaving ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {settingsSaving ? 'Saving...' : 'Save Settings'}
+                            </button>
+                        </div>
                     </>
                 )}
             </div>

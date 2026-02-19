@@ -176,6 +176,30 @@ app.post('/api/login', async (req, res) => {
             );
         }
 
+        // if the user has 2FA turned on, don't finish logging them
+        // gen random 6 digit code and send it back so the
+        // frontend can show a second step asking the user to enter the code
+        if (user.two_fa_enabled) {
+            // picks a random number between 100000 and 999999 (always 6 digits)
+            const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+            // hash code before storing it in the DB
+            const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+
+            // code expires after 10 mins
+            const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+            // save the hashed code to the two_fa_codes table
+            await pool.query(
+                'INSERT INTO two_fa_codes (user_id, code_hash, expires_at) VALUES (?, ?, ?)',
+                [user.user_id, codeHash, expiresAt]
+            );
+
+            // frontend 2FA is required and send the plain code so
+            // UI can display it to user (like how password reset shows token)
+            return res.json({ requiresTwoFa: true, userId: user.user_id, twoFaCode: code });
+        }
+
         const { password_hash, ...userNoPassword } = user;
         if (req.body.rememberMe) {
             res.cookie('remember_me', user.user_id, { 
@@ -359,7 +383,7 @@ app.get('/api/driver/points/:userId', async (req, res) => {
         }
 
         const [transactions] = await pool.query(
-            `SELECT 
+            `SELECT
                 pt.transaction_id,
                 pt.point_amount,
                 pt.reason,
@@ -379,10 +403,58 @@ app.get('/api/driver/points/:userId', async (req, res) => {
             [userId]
         );
 
-        res.json({ total_points, transactions });
+        const [driverRows] = await pool.query(
+            `SELECT du.driver_status, du.sponsor_org_id, so.name AS sponsor_name
+             FROM driver_user du
+             LEFT JOIN sponsor_organization so ON du.sponsor_org_id = so.sponsor_org_id
+             WHERE du.user_id = ?`,
+            [userId]
+        );
+        const driverInfo = driverRows[0] || {};
+
+        res.json({
+            total_points,
+            transactions,
+            driver_status: driverInfo.driver_status,
+            sponsor_name: driverInfo.sponsor_name,
+            sponsor_org_id: driverInfo.sponsor_org_id,
+        });
     } catch (error) {
         console.error('Error fetching driver points:', error);
         res.status(500).json({ error: 'Failed to fetch driver points' });
+    }
+});
+
+// --- Driver Leave Sponsor Route ---
+app.post('/api/driver/leave-sponsor', async (req, res) => {
+    const { driverUserId } = req.body;
+    if (!driverUserId) {
+        return res.status(400).json({ error: 'driverUserId is required' });
+    }
+    try {
+        const [rows] = await pool.query(
+            'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = ?',
+            [driverUserId, 'active']
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'No active sponsor found for this driver' });
+        }
+        const { sponsor_org_id } = rows[0];
+
+        await pool.query(
+            'UPDATE driver_user SET driver_status = ?, dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
+            ['dropped', driverUserId, sponsor_org_id]
+        );
+
+        await pool.query(
+            'UPDATE driver_applications SET status = ?, reviewed_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = ?',
+            ['withdrawn', driverUserId, sponsor_org_id, 'approved']
+        );
+
+        res.json({ message: 'Successfully left sponsor' });
+    } catch (error) {
+        console.error('Error leaving sponsor:', error);
+        res.status(500).json({ error: 'Failed to leave sponsor' });
     }
 });
 
@@ -424,6 +496,59 @@ app.get('/api/sponsor/drivers/:sponsorUserId', async (req, res) => {
     }
 });
 
+// --- Sponsor Settings Routes ---
+app.get('/api/sponsor/settings/:sponsorUserId', async (req, res) => {
+    const { sponsorUserId } = req.params;
+    try {
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [sponsorUserId]
+        );
+        if (sponsorRows.length === 0) {
+            return res.status(404).json({ error: 'Sponsor org not found for this user' });
+        }
+        const { sponsor_org_id } = sponsorRows[0];
+
+        const [orgRows] = await pool.query(
+            'SELECT point_upper_limit, point_lower_limit, monthly_point_limit FROM sponsor_organization WHERE sponsor_org_id = ?',
+            [sponsor_org_id]
+        );
+        res.json(orgRows[0]);
+    } catch (error) {
+        console.error('Error fetching sponsor settings:', error);
+        res.status(500).json({ error: 'Failed to fetch sponsor settings' });
+    }
+});
+
+app.put('/api/sponsor/settings', async (req, res) => {
+    const { sponsorUserId, point_upper_limit, point_lower_limit, monthly_point_limit } = req.body;
+    try {
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [sponsorUserId]
+        );
+        if (sponsorRows.length === 0) {
+            return res.status(404).json({ error: 'Sponsor org not found for this user' });
+        }
+        const { sponsor_org_id } = sponsorRows[0];
+
+        await pool.query(
+            'UPDATE sponsor_organization SET point_upper_limit = ?, point_lower_limit = ?, monthly_point_limit = ? WHERE sponsor_org_id = ?',
+            [
+                point_upper_limit !== '' && point_upper_limit != null ? parseInt(point_upper_limit, 10) : null,
+                point_lower_limit !== '' && point_lower_limit != null ? parseInt(point_lower_limit, 10) : null,
+                monthly_point_limit !== '' && monthly_point_limit != null ? parseInt(monthly_point_limit, 10) : null,
+                sponsor_org_id,
+            ]
+        );
+
+        res.json({ message: 'Settings saved successfully' });
+    } catch (error) {
+        console.error('Error saving sponsor settings:', error);
+        res.status(500).json({ error: 'Failed to save sponsor settings' });
+    }
+});
+
 // --- Sponsor Award/Deduct Points ---
 app.post('/api/sponsor/points', async (req, res) => {
     const { sponsorUserId, driverIds, pointAmount, reason, source } = req.body;
@@ -452,6 +577,52 @@ app.post('/api/sponsor/points', async (req, res) => {
         }
         const { sponsor_org_id } = sponsorRows[0];
 
+        // getr org limits
+        const [orgRows] = await pool.query(
+            'SELECT point_upper_limit, point_lower_limit, monthly_point_limit FROM sponsor_organization WHERE sponsor_org_id = ?',
+            [sponsor_org_id]
+        );
+        const { point_upper_limit, point_lower_limit, monthly_point_limit } = orgRows[0];
+
+        // check monthly org limit
+        if (monthly_point_limit != null) {
+            const monthStart = new Date();
+            monthStart.setDate(1);
+            monthStart.setHours(0, 0, 0, 0);
+            const [[{ month_total }]] = await pool.query(
+                'SELECT COALESCE(SUM(point_amount), 0) AS month_total FROM point_transactions WHERE sponsor_org_id = ? AND created_at >= ?',
+                [sponsor_org_id, monthStart]
+            );
+            const projected = Number(month_total) + pointAmount * driverIds.length;
+            if (projected > monthly_point_limit) {
+                return res.status(400).json({
+                    error: `This would exceed your organization's monthly point limit of ${monthly_point_limit}. Monthly total so far: ${month_total}.`,
+                });
+            }
+        }
+
+        // check driver upper/lower limits
+        if (point_upper_limit != null || point_lower_limit != null) {
+            const placeholders = driverIds.map(() => '?').join(', ');
+            const [balanceRows] = await pool.query(
+                `SELECT user_id, current_points_balance FROM driver_user WHERE user_id IN (${placeholders})`,
+                driverIds
+            );
+            for (const driver of balanceRows) {
+                const projected = driver.current_points_balance + pointAmount;
+                if (point_upper_limit != null && projected > point_upper_limit) {
+                    return res.status(400).json({
+                        error: `This adjustment would push one or more drivers above the upper point limit of ${point_upper_limit}.`,
+                    });
+                }
+                if (point_lower_limit != null && projected < point_lower_limit) {
+                    return res.status(400).json({
+                        error: `This adjustment would push one or more drivers below the lower point limit of ${point_lower_limit}.`,
+                    });
+                }
+            }
+        }
+
         // Insert a transaction row for each driver. The DB trigger updates current_points_balance automatically
         const txValues = driverIds.map(id => [id, sponsor_org_id, pointAmount, reason.trim(), source, sponsorUserId]);
         await pool.query(
@@ -463,6 +634,81 @@ app.post('/api/sponsor/points', async (req, res) => {
     } catch (error) {
         console.error('Error applying points:', error);
         res.status(500).json({ error: 'Failed to apply points' });
+    }
+});
+
+// --- 2FA Verify Route ---
+// called after the user enters their 6-digit code on login
+// finishes login process if the code is correct
+app.post('/api/2fa/verify', async (req, res) => {
+    const { userId, code, rememberMe } = req.body;
+
+    try {
+        // hash the code the user submitted so can compare it to what is in DB
+        // plain code never stored, only hash
+        const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+
+        // look up a matching & unused code for curr user
+        const [rows] = await pool.query(
+            'SELECT * FROM two_fa_codes WHERE user_id = ? AND code_hash = ? AND used_at IS NULL',
+            [userId, codeHash]
+        );
+
+        // no match means wrong code or already used code
+        if (rows.length === 0) {
+            return res.status(401).json({ message: 'Invalid or already used 2FA code' });
+        }
+
+        // Check if code is still within the 10 min window
+        if (new Date() > new Date(rows[0].expires_at)) {
+            return res.status(400).json({ message: '2FA code has expired. Please log in again.' });
+        }
+
+        // mark code as used so it cant be reused
+        await pool.query('UPDATE two_fa_codes SET used_at = NOW() WHERE code_id = ?', [rows[0].code_id]);
+
+        // Fetch full user row to return to the frontend (same as login)
+        const [users] = await pool.query('SELECT * FROM users WHERE user_id = ?', [userId]);
+        const user = users[0];
+        const { password_hash, ...userNoPassword } = user;
+
+        // Set the remember me cookie now that 2FA passed (same as login)
+        if (rememberMe) {
+            res.cookie('remember_me', user.user_id, {
+                maxAge: 10 * 24 * 60 * 60 * 1000,
+                httpOnly: true,
+                sameSite: 'lax'
+            });
+        }
+
+        // Update last login time and log the success
+        await pool.query('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
+        await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${user.email}`]);
+
+        return res.json({ message: 'Login successful', user: userNoPassword });
+    } catch (error) {
+        console.error('2FA verify error:', error);
+        res.status(500).json({ error: 'Server error during 2FA verification' });
+    }
+});
+
+// --- 2FA Toggle Route ---
+// from the acc page when the user clicks Enable/Disable 2FA.
+// flips the two_fa_enabled flag (0 or 1) in the users table.
+app.put('/api/2fa/toggle', async (req, res) => {
+    const { email, enabled } = req.body;
+
+    try {
+        const [users] = await pool.query('SELECT user_id FROM users WHERE email = ?', [email]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+
+        // enabled is a boolean from the frontend; convert to 1 or 0 for MySQL
+        await pool.query('UPDATE users SET two_fa_enabled = ? WHERE user_id = ?', [enabled ? 1 : 0, users[0].user_id]);
+
+        res.json({ message: `2FA ${enabled ? 'enabled' : 'disabled'} successfully` });
+    } catch (error) {
+        console.error('Error toggling 2FA:', error);
+        res.status(500).json({ error: 'Failed to update 2FA setting' });
     }
 });
 

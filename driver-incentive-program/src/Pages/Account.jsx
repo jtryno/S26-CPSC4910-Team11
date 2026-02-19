@@ -27,6 +27,28 @@ async function saveField(email, field, value) {
     }
 }
 
+// sends req to enable or disable 2FA for curr logged user,
+// then updates stored user data so UI shows the change right away
+async function toggleTwoFa(email, enabled, userData, setUserData) {
+    const response = await fetch('/api/2fa/toggle', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, enabled }), // enabled is true to turn on & false to turn off
+    });
+    if (response.ok) {
+        // Update the local copy of the user so the button text and status flip right away
+        const updated = { ...userData, two_fa_enabled: enabled ? 1 : 0 };
+        if (localStorage.getItem('user')) {
+            localStorage.setItem('user', JSON.stringify(updated));
+        } else {
+            sessionStorage.setItem('user', JSON.stringify(updated));
+        }
+        setUserData(updated);
+    } else {
+        alert('Failed to update 2FA setting');
+    }
+}
+
 const ProfileTab = ({ userData, setUserData, navigate }) => {
     let createdAtDisplay;
     if (userData?.created_at) {
@@ -129,6 +151,29 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     >
                         Reset Password
                     </button>
+                    {/* 2FA toggle — shows current status and a button to flip it */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <span style={{ fontWeight: '600' }}>Two-Factor Authentication:</span>
+                        {/* green = enabled, gray = disabled */}
+                        <span style={{ color: userData?.two_fa_enabled ? '#2e7d32' : '#666666' }}>
+                            {userData?.two_fa_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                        {/* clicking this calls toggleTwoFa with the opposite of the current value */}
+                        <button
+                            onClick={() => toggleTwoFa(userData.email, !userData.two_fa_enabled, userData, setUserData)}
+                            style={{
+                                padding: '6px 20px',
+                                fontSize: '14px',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                background: userData?.two_fa_enabled ? '#d32f2f' : '#0066cc',
+                                color: 'white',
+                                border: 'none',
+                            }}
+                        >
+                            {userData?.two_fa_enabled ? 'Disable 2FA' : 'Enable 2FA'}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
