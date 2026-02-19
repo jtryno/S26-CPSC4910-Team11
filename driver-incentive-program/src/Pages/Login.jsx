@@ -182,6 +182,11 @@ const Login = () => {
             Remember Me
           </label>
         </div>
+        <div style={{ marginBottom: '25px' }}>
+          <label onClick={() => navigate("/password-reset")} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#666666', fontSize: '0.95em', cursor: 'pointer' }}>
+            <span style={{color: "#1a73e8"}}>Forgot Password?</span>
+          </label>
+        </div>
         <button type="submit" style={{ width: '100%', padding: '12px', background: '#0066cc', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '1em', transition: 'background-color 0.2s' }}>
           Sign In
         </button>

@@ -57,7 +57,7 @@ const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserDat
                         Leave Organization        
                     </button>
                 }
-                {userData?.user_type !== 'admin' && userData?.sponsor_org_id === null &&
+                {userData?.user_type === 'driver' && userData?.sponsor_org_id === null &&
                     <button 
                         disabled={hasPendingApplication}
                         onClick={async () => {
