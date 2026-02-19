@@ -2,20 +2,20 @@ import React from 'react';
 import { useState, useEffect } from 'react';
 import Field from '../../../components/Field';
 import EditableField from '../../../components/EditableField';
-import { fetchOrgData } from '../../../api/OrganizationApi';
+import { updateOrganizationField } from '../../../api/OrganizationApi';
 import { removeFromOrganization } from '../../../api/UserApi';
-import { createApplication, featchApplicationsUser } from '../../../api/ApplicationApi';
+import { createApplication } from '../../../api/ApplicationApi';
 
 
 const SponsorFields = ({orgData, setOrgData, numUsers}) => {
     return (
         <div>
             <EditableField label="Organization Name" value={orgData?.name || "Loading..."} onSave={async (value) => {
-                const result = await fetchOrgData(orgData.sponsor_org_id, 'name', value);
+                const result = await updateOrganizationField(orgData.sponsor_org_id, 'name', value);
                 setOrgData({...orgData, name: value});
             }}/>
             <EditableField label="Point Value" value={orgData?.point_value || "Loading..."} onSave={async (value) => {
-                const result = await fetchOrgData(orgData.sponsor_org_id, 'point_value', value);
+                const result = await updateOrganizationField(orgData.sponsor_org_id, 'point_value', value);
                 setOrgData({...orgData, point_value: value});
             }}/>
             <Field label="Members" value={numUsers !== null ? numUsers : "Loading..."} />

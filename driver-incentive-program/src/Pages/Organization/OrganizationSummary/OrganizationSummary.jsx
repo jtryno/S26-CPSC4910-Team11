@@ -19,8 +19,6 @@ const OrganizationSummary = () => {
     const [hasPendingApplication, setHasPendingApplication] = useState(true);
 
     async function fetchOrg() {
-        console.log(userData?.sponsor_org_id);
-        console.log(orgId);
         const org = await fetchOrgData(orgId);
         setOrgData(org);
         const users = await fetchOrgUsers(orgId);

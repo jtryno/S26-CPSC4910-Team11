@@ -69,4 +69,19 @@ async function createOrganization(name, pointValue) {
     }
 }
 
-export { fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization };
+async function updateOrganizationField(orgId, field, value) {
+    try {
+        const response = await fetch(`/api/organization/${orgId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json'},
+            body: JSON.stringify({field, value})
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error updating field: ', error);
+        throw error;
+    }
+}
+
+export { fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization, updateOrganizationField };
