@@ -83,7 +83,72 @@ app.get('/api/about', async (req, res) => {
     }
 });
 
+//-- Driver Application Route ---
+app.post('/api/driver/application', async (req, res) => {
+    const { user_id, org_id } = req.body;
+    try {
+        const [result] = await pool.query(
+            'INSERT INTO driver_applications (driver_user_id, sponsor_org_id, status) VALUES (?, ?, "pending")',
+            [user_id, org_id]
+        );
+        res.json({ message: 'Driver application submitted successfully', application_id: result.insertId });
+    } catch (error) {
+        console.error('Error submitting driver application:', error);
+        res.status(500).json({ error: 'Failed to submit driver application' });
+    }
+});
+
+app.get('/api/driver/application', async (req, res) => {
+    const { user_id } = req.query;
+    try {
+        const [applications] = await pool.query(
+            'SELECT * FROM driver_applications WHERE driver_user_id = ?',
+            [user_id]
+        );
+        res.json({ status: applications[0].status });
+    } catch (error) {
+        console.error('Error fetching driver applications:', error);
+        res.status(500).json({ error: 'Failed to fetch driver applications' });
+    }
+});
 //-- Organization Route ---
+app.post('/api/organization', async (req, res) => {
+    try {
+        const { name, point_value } = req.body;
+        const [result] = await pool.query(
+            'INSERT INTO sponsor_organization (name, point_value) VALUES (?, ?)',
+            [name, point_value]
+        );
+        res.json({ message: 'Organization created successfully', organization_id: result.insertId });
+    } catch (error) {
+        console.error('Error creating organization:', error);
+        res.status(500).json({ error: 'Failed to create organization' });
+    }
+});
+
+app.delete('/api/organization/:sponsor_org_id', async (req, res) => { 
+    try {
+        const { sponsor_org_id } = req.params;
+        const [result] = await pool.query('DELETE FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Organization not found' });
+        }
+        res.json({ message: 'Organization deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting organization:', error);
+        res.status(500).json({ error: 'Failed to delete organization' });
+    }
+});
+
+app.get('/api/organization', async (req, res) => {
+    try {
+        const [orgs] = await pool.query('SELECT * FROM sponsor_organization');
+        res.json({ message: 'Organizations retrieved successfully', organizations: orgs });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to retrieve organizations' });
+    }
+});
+
 app.get('/api/organization/:sponsor_org_id', async (req, res) => {
     const { sponsor_org_id } = req.params;
     
@@ -345,17 +410,10 @@ app.post('/api/logout', (req, res) => {
 
 // --- Update User Route ---
 app.put('/api/user', async (req, res) => {
-    const { email, field, value } = req.body;
+    const {user_id, field, value } = req.body;
 
     try {
-        const [users] = await pool.query('SELECT user_id FROM users WHERE email = ?', [email]);
-        if (users.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        const userId = users[0].user_id;
-        await pool.query(`UPDATE users SET ${field} = ? WHERE user_id = ?`, [value, userId]);
-
+        await pool.query(`UPDATE users SET ${field} = ? WHERE user_id = ?`, [value, user_id]);
         res.json({ message: 'User field updated successfully' });
     } catch (error) {
         console.error('Error updating user field:', error);

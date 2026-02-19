@@ -7,7 +7,8 @@ import Login from './Pages/Login'
 import Account from './Pages/Account'
 import PasswordReset from './Pages/PasswordReset'
 import Dashboard from './Pages/Dashboard'
-import Organization from './Pages/Organization/Organization'
+import Organizations from './Pages/Organization/Organizations/Organizations';
+import OrganizationSummary from './Pages/Organization/OrganizationSummary/OrganizationSummary';
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
 
@@ -345,7 +346,7 @@ useEffect(() => {
           <ul className="nav-links">
             <li><Link to="/">Home</Link></li>
             <li><Link to="/about">About</Link></li>
-            <li><Link to="/organization">Organization</Link></li>
+            {isLoggedIn && <li><Link to="/organization">Organizations</Link></li>}
             {isLoggedIn && (
               <li><Link to="/dashboard">Dashboard</Link></li>
             )}
@@ -382,7 +383,8 @@ useEffect(() => {
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/organization" element={<Organization />} />
+          <Route path="/organization" element={<Organizations />} />
+          <Route path="/organization/:orgId" element={<OrganizationSummary />} />
         </Routes>
       </main>
 

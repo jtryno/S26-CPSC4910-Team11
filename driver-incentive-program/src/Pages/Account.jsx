@@ -2,15 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
 
-async function saveField(email, field, value) {
+async function updateField(userId, field, value) {
     const response = await fetch('/api/user', {
         method: 'PUT',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, field, value }),
+        body: JSON.stringify({ user_id: userId, field, value }),
     });
-    console.log("Saving field", { email, field, value });
     if (response.ok) {
         console.log('Field updated successfully');
     } else {
@@ -50,7 +49,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         label="Username"
                         value={userData?.username || "Not available"}
                         onSave={async (value) => {
-                            await saveField(userData.email, "username", value);
+                            await updateField(userData.user_id, "username", value);
                             setUserData(prev => ({ ...prev, username: value }));
                         }} 
                     />
@@ -58,7 +57,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         label="Email"
                         value={userData?.email || "Not available"}
                         onSave={async (value) => {
-                            await saveField(userData.email, "email", value);
+                            await updateField(userData.user_id, "email", value);
                             setUserData(prev => ({ ...prev, email: value }));
                         }} 
                     />
@@ -70,7 +69,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         label="Phone Number"
                         value={userData?.phone_number || "Not available"}
                         onSave={async (value) => {
-                            await saveField(userData.email, "phone_number", value);
+                            await updateField(userData.user_id, "phone_number", value);
                             setUserData(prev => ({ ...prev, phone_number: value }));
                         }} 
                     />
@@ -78,7 +77,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         label="First Name"
                         value={userData?.first_name || "Not available"}
                         onSave={async (value) => {
-                            await saveField(userData.email, "first_name", value);
+                            await updateField(userData.user_id, "first_name", value);
                             setUserData(prev => ({ ...prev, first_name: value }));
                         }} 
                     />
@@ -86,7 +85,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         label="Last Name"
                         value={userData?.last_name || "Not available"}
                         onSave={async (value) => {
-                            await saveField(userData.email, "last_name", value);
+                            await updateField(userData.user_id, "last_name", value);
                             setUserData(prev => ({ ...prev, last_name: value }));
                         }} 
                     />
@@ -137,7 +136,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
 const OrganizationTab = () => {
     return (
         <div>
-
+            organization
         </div>
     );
 }
@@ -188,8 +187,8 @@ const Account = () => {
                     </button>
                 </div>
                 <div style={{ flex: 1, paddingLeft: "24px" }}>
-                    {activeTab === "profile" && ProfileTab({ userData, setUserData, navigate })}
-                    {activeTab === "organization" && OrganizationTab()}
+                    {activeTab === "profile" && <ProfileTab userData={userData} setUserData={setUserData} navigate={navigate} />}
+                    {activeTab === "organization" && <OrganizationTab />}
                 </div>
             </div>
         ) : (
