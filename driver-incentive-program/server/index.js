@@ -300,6 +300,29 @@ app.put('/api/user', async (req, res) => {
     }
 });
 
+// --- Admin: Get User by Email ---
+app.get('/api/admin/user', async (req, res) => {
+    const { email } = req.query;
+    
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    try {
+        const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+        
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const { password_hash, ...userWithoutPassword } = users[0];
+        res.json({ user: userWithoutPassword });
+    } catch (error) {
+        console.error('Error fetching user:', error);
+        res.status(500).json({ error: 'Failed to fetch user' });
+    }
+});
+
 // --- Lifetime Points Route ---
 app.get('/api/user/lifetime-points/:userId', async (req, res) => {
     const { userId } = req.params;
