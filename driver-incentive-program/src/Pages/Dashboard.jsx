@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import EditableField from '../components/EditableField';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -494,10 +495,180 @@ const SponsorDashboard = ({ user }) => {
 };
 
 const AdminDashboard = ({ user }) => {
+    const [searchEmail, setSearchEmail] = useState('');
+    const [searchedUser, setSearchedUser] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [successMsg, setSuccessMsg] = useState('');
+
+    const handleSearch = async () => {
+        setLoading(true);
+        setError('');
+        setSuccessMsg('');
+        setSearchedUser(null);
+
+        try {
+            //some emails mess up without encodeURIcomponent
+            const res = await fetch(`/api/admin/user?email=${encodeURIComponent(searchEmail)}`);
+            const data = await res.json();
+            if (!res.ok) {
+                setError(data.error || 'user doesp not exist');
+            } else {
+                setSearchedUser(data.user);
+            }
+        } catch (err) {
+            setError('error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSaveField = async (field, value) => {
+        try {
+            const res = await fetch('/api/user', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: searchedUser.email, field, value }),
+            });
+            if (res.ok) {
+                setSearchedUser(prev => ({ ...prev, [field]: value }));
+                setSuccessMsg(`${field} updated successfully!`);
+                setTimeout(() => setSuccessMsg(''), 3000);
+            } else {
+                setError('Failed to update field');
+            }
+        } catch (err) {
+            setError('Failed to update field');
+        }
+    };
+
     return (
         <>
             <h1>Admin Dashboard</h1>
-            <p style={{ color: '#666' }}>Admin dashboard coming soon.</p>
+            <p style={{ color: '#666', marginBottom: '24px' }}>Search for any user by email to view and edit their information.</p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '24px' }}>
+                <input
+                    type="email"
+                    placeholder="Enter user email..."
+                    value={searchEmail}
+                    onChange={(e) => setSearchEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    style={{
+                        padding: '10px 14px',
+                        fontSize: '14px',
+                        border: '1px solid #ccc',
+                        borderRadius: '6px',
+                        width: '300px',
+                    }}
+                />
+                <button
+                    onClick={handleSearch}
+                    disabled={loading}
+                    style={{
+                        padding: '10px 20px',
+                        fontSize: '14px',
+                        borderRadius: '6px',
+                        border: 'none',
+                        background: '#1976d2',
+                        color: 'white',
+                        cursor: (() => {
+                            if(loading) {
+                                return 'not-allowed';
+                            }
+                            return 'pointer';
+                        })(),
+                        }}
+                >
+                    {(() => {
+                        if(loading) {
+                            return 'Searching...';
+                        }
+                        return 'Search';
+                    })()}
+                </button>
+            </div>
+
+
+            {error && (
+                <div style={{ color: '#c62828', marginBottom: '16px' }}>{error}</div>
+            )}
+
+            
+            {successMsg && (
+                <div style={{ color: '#2e7d32', marginBottom: '16px' }}>{successMsg}</div>
+            )}
+
+            
+            {searchedUser && (
+                <div style={{
+                    background: '#f9f9f9',
+                    border: '1px solid #e0e0e0',
+                    borderRadius: '8px',
+                    padding: '24px',
+                    textAlign: 'left',
+                    maxWidth: '500px',
+                    margin: '0 auto',
+                }}>
+                    <h2 style={{ marginTop: 0, marginBottom: '20px' }}>
+                        Editing: {searchedUser.username} 
+                        <span style={{ fontSize: '14px', color: '#666', marginLeft: '10px' }}>
+                            ({searchedUser.user_type})
+                        </span>
+                    </h2>
+
+                    <div style={{ display: 'grid', gap: '16px' }}>
+                        <EditableField
+                            label="Username"
+                            value={searchedUser.username || ''}
+                            onSave={(val) => handleSaveField('username', val)}
+                        />
+                        <EditableField
+                            label="Email"
+                            value={searchedUser.email || ''}
+                            onSave={(val) => handleSaveField('email', val)}
+                        />
+                        <EditableField
+                            label="First Name"
+                            value={searchedUser.first_name || ''}
+                            onSave={(val) => handleSaveField('first_name', val)}
+                        />
+                        <EditableField
+                            label="Last Name"
+                            value={searchedUser.last_name || ''}
+                            onSave={(val) => handleSaveField('last_name', val)}
+                        />
+                        <EditableField
+                            label="Phone Number"
+                            value={searchedUser.phone_number || ''}
+                            onSave={(val) => handleSaveField('phone_number', val)}
+                        />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <b>Role:</b> <span>{searchedUser.user_type}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <b>User ID:</b> <span>{searchedUser.user_id}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <b>Account Created:</b> 
+                            <span>
+                                {(() => {
+                                    if (searchedUser.created_at) {
+                                        return new Date(searchedUser.created_at).toLocaleString('en-US', {
+                                            year: 'numeric',
+                                            month: '2-digit', 
+                                            day: '2-digit',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            hour12: true
+                                        });
+                                    }
+                                    return 'N/A';
+                                })()}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };
