@@ -26,6 +26,28 @@ async function updateField(userId, field, value) {
     }
 }
 
+// sends req to enable or disable 2FA for curr logged user,
+// then updates stored user data so UI shows the change right away
+async function toggleTwoFa(email, enabled, userData, setUserData) {
+    const response = await fetch('/api/2fa/toggle', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, enabled }), // enabled is true to turn on & false to turn off
+    });
+    if (response.ok) {
+        // Update the local copy of the user so the button text and status flip right away
+        const updated = { ...userData, two_fa_enabled: enabled ? 1 : 0 };
+        if (localStorage.getItem('user')) {
+            localStorage.setItem('user', JSON.stringify(updated));
+        } else {
+            sessionStorage.setItem('user', JSON.stringify(updated));
+        }
+        setUserData(updated);
+    } else {
+        alert('Failed to update 2FA setting');
+    }
+}
+
 const ProfileTab = ({ userData, setUserData, navigate }) => {
     const [driverData, setDriverData] = useState(null);
 
@@ -40,6 +62,12 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                 })
         }
     }, [userData]);
+    let createdAtDisplay;
+    if (userData?.created_at) {
+        createdAtDisplay = new Date(userData.created_at).toLocaleString('en-US', {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',hour12: true});
+    } else {
+        createdAtDisplay = "Not available";
+    }
     return (
         <div style={{ display: 'grid', direction: 'column'}}>
             <div style={{ background: '#f9f9f9',  paddingBottom: '30px', paddingLeft: '30px', paddingTop: '0px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
@@ -56,9 +84,19 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     <EditableField
                         label="Email"
                         value={userData?.email || "Not available"}
-                        onSave={async (value) => {
-                            await updateField(userData.user_id, "email", value);
-                            setUserData(prev => ({ ...prev, email: value }));
+                        onSave={(value) => {
+                            updateField(userData.user_id, "email", value);
+                        }}
+                        validate={(value) => {
+                            if (!value || value === "Not available") return "Email is required";
+                            if (!value.includes('@')) {
+                                return "Email must contain @";
+                            }
+                            const validEndings = ['.com', '.edu', '.org'];
+                            if (!validEndings.some(ending => value.toLowerCase().endsWith(ending))) {
+                                return "Email must end with a valid domain of .com, .edu, or .org";
+                            }
+                            return null;
                         }} 
                     />
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -68,9 +106,19 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     <EditableField
                         label="Phone Number"
                         value={userData?.phone_number || "Not available"}
-                        onSave={async (value) => {
-                            await updateField(userData.user_id, "phone_number", value);
-                            setUserData(prev => ({ ...prev, phone_number: value }));
+                        onSave={(value) => {
+                            const digitsOnly = value.replace(/\D/g, '');
+                            const formatted = `(${digitsOnly.slice(0,3)}) ${digitsOnly.slice(3,6)}-${digitsOnly.slice(6,10)}`;
+                            updateField(userData.user_id, "phone_number", formatted);
+                            setUserData({ ...userData, phone_number: formatted });
+                            return formatted;
+                        }}
+                        validate={(value) => {
+                            if (!value || value === "Not available") return null;
+                            const digitsOnly = value.replace(/\D/g, '');
+                            if (digitsOnly.length === 0) return null;
+                            if (digitsOnly.length !== 10) return "Phone number must be exactly 10 digits";
+                            return null;
                         }} 
                     />
                     <EditableField
@@ -127,6 +175,29 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     >
                         Reset Password
                     </button>
+                    {/* 2FA toggle — shows current status and a button to flip it */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <span style={{ fontWeight: '600' }}>Two-Factor Authentication:</span>
+                        {/* green = enabled, gray = disabled */}
+                        <span style={{ color: userData?.two_fa_enabled ? '#2e7d32' : '#666666' }}>
+                            {userData?.two_fa_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                        {/* clicking this calls toggleTwoFa with the opposite of the current value */}
+                        <button
+                            onClick={() => toggleTwoFa(userData.email, !userData.two_fa_enabled, userData, setUserData)}
+                            style={{
+                                padding: '6px 20px',
+                                fontSize: '14px',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                background: userData?.two_fa_enabled ? '#d32f2f' : '#0066cc',
+                                color: 'white',
+                                border: 'none',
+                            }}
+                        >
+                            {userData?.two_fa_enabled ? 'Disable 2FA' : 'Enable 2FA'}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

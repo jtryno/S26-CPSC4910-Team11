@@ -9,6 +9,7 @@ import PasswordReset from './Pages/PasswordReset'
 import Dashboard from './Pages/Dashboard'
 import Organizations from './Pages/Organization/Organizations/Organizations';
 import OrganizationSummary from './Pages/Organization/OrganizationSummary/OrganizationSummary';
+import Catalog from './Pages/Catalog'
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
 
@@ -57,6 +58,7 @@ useEffect(() => {
         setIsLoggedIn(false);
         setUserData(null);
         setOrgName(null);
+        setUserData(JSON.parse(storedUser));
       }
 
       // check if there is valid cookie session
@@ -90,6 +92,7 @@ useEffect(() => {
         console.error("session error", err);
         if (storedUser) {
           setIsLoggedIn(true);
+          setUserData(JSON.parse(storedUser));
         }
       }
     };
@@ -348,7 +351,10 @@ useEffect(() => {
             <li><Link to="/about">About</Link></li>
             {isLoggedIn && <li><Link to="/organization">Organizations</Link></li>}
             {isLoggedIn && (
-              <li><Link to="/dashboard">Dashboard</Link></li>
+              <>
+                <li><Link to="/dashboard">Dashboard</Link></li>
+                <li><Link to="/catalog">Catalog</Link></li>
+              </>
             )}
           </ul>
         </div>
@@ -385,6 +391,7 @@ useEffect(() => {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/organization" element={<Organizations />} />
           <Route path="/organization/:orgId" element={<OrganizationSummary />} />
+          <Route path="/catalog" element={<Catalog />} />
         </Routes>
       </main>
 
