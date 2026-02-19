@@ -736,6 +736,11 @@ const AdminDashboard = ({ user }) => {
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
 
+    // Delete modal state
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const [deleteMsg, setDeleteMsg] = useState(null);
+
     const handleSearch = async () => {
         setLoading(true);
         setError('');
@@ -743,11 +748,10 @@ const AdminDashboard = ({ user }) => {
         setSearchedUser(null);
 
         try {
-            //some emails mess up without encodeURIcomponent
             const res = await fetch(`/api/admin/user?email=${encodeURIComponent(searchEmail)}`);
             const data = await res.json();
             if (!res.ok) {
-                setError(data.error || 'user doesp not exist');
+                setError(data.error || 'user does not exist');
             } else {
                 setSearchedUser(data.user);
             }
@@ -774,6 +778,25 @@ const AdminDashboard = ({ user }) => {
             }
         } catch (err) {
             setError('Failed to update field');
+        }
+    };
+
+    const handleDeleteConfirm = async () => {
+        setDeleting(true);
+        setDeleteMsg(null);
+        try {
+            const res = await fetch(`/api/admin/user/${searchedUser.user_id}`, {
+                method: 'DELETE',
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to delete user');
+            setDeleteMsg({ type: 'success', text: data.message });
+            setSearchedUser(null);
+            setSearchEmail('');
+        } catch (err) {
+            setDeleteMsg({ type: 'error', text: err.message });
+        } finally {
+            setDeleting(false);
         }
     };
 
@@ -806,34 +829,16 @@ const AdminDashboard = ({ user }) => {
                         border: 'none',
                         background: '#1976d2',
                         color: 'white',
-                        cursor: (() => {
-                            if(loading) {
-                                return 'not-allowed';
-                            }
-                            return 'pointer';
-                        })(),
-                        }}
+                        cursor: loading ? 'not-allowed' : 'pointer',
+                    }}
                 >
-                    {(() => {
-                        if(loading) {
-                            return 'Searching...';
-                        }
-                        return 'Search';
-                    })()}
+                    {loading ? 'Searching...' : 'Search'}
                 </button>
             </div>
 
+            {error && <div style={{ color: '#c62828', marginBottom: '16px' }}>{error}</div>}
+            {successMsg && <div style={{ color: '#2e7d32', marginBottom: '16px' }}>{successMsg}</div>}
 
-            {error && (
-                <div style={{ color: '#c62828', marginBottom: '16px' }}>{error}</div>
-            )}
-
-            
-            {successMsg && (
-                <div style={{ color: '#2e7d32', marginBottom: '16px' }}>{successMsg}</div>
-            )}
-
-            
             {searchedUser && (
                 <div style={{
                     background: '#f9f9f9',
@@ -845,7 +850,7 @@ const AdminDashboard = ({ user }) => {
                     margin: '0 auto',
                 }}>
                     <h2 style={{ marginTop: 0, marginBottom: '20px' }}>
-                        Editing: {searchedUser.username} 
+                        Editing: {searchedUser.username}
                         <span style={{ fontSize: '14px', color: '#666', marginLeft: '10px' }}>
                             ({searchedUser.user_type})
                         </span>
@@ -884,22 +889,103 @@ const AdminDashboard = ({ user }) => {
                             <b>User ID:</b> <span>{searchedUser.user_id}</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <b>Account Created:</b> 
+                            <b>Account Created:</b>
                             <span>
-                                {(() => {
-                                    if (searchedUser.created_at) {
-                                        return new Date(searchedUser.created_at).toLocaleString('en-US', {
-                                            year: 'numeric',
-                                            month: '2-digit', 
-                                            day: '2-digit',
-                                            hour: '2-digit',
-                                            minute: '2-digit',
-                                            hour12: true
-                                        });
-                                    }
-                                    return 'N/A';
-                                })()}
+                                {searchedUser.created_at
+                                    ? new Date(searchedUser.created_at).toLocaleString('en-US', {
+                                        year: 'numeric', month: '2-digit', day: '2-digit',
+                                        hour: '2-digit', minute: '2-digit', hour12: true,
+                                    })
+                                    : 'N/A'}
                             </span>
+                        </div>
+                    </div>
+
+                    {/* Delete User Button */}
+                    <div style={{ marginTop: '28px', borderTop: '1px solid #e0e0e0', paddingTop: '20px' }}>
+                        <button
+                            onClick={() => { setDeleteMsg(null); setDeleteModalOpen(true); }}
+                            style={{
+                                padding: '8px 20px',
+                                borderRadius: '6px',
+                                border: '1px solid #c62828',
+                                background: '#fff',
+                                color: '#c62828',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: '600',
+                            }}
+                        >
+                            Delete User
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirm Modal */}
+            {deleteModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '420px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Delete User?</h2>
+                        <p style={{ color: '#444', lineHeight: '1.5' }}>
+                            Are you sure you want to delete <strong>{searchedUser?.username}</strong> ({searchedUser?.user_type})?
+                            This will deactivate their account and cannot be undone from this interface.
+                        </p>
+
+                        {deleteMsg && (
+                            <div style={{
+                                marginTop: '12px',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                background: deleteMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: deleteMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '14px',
+                            }}>
+                                {deleteMsg.text}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '20px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setDeleteModalOpen(false)}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ccc',
+                                    background: '#f5f5f5',
+                                    color: '#1a1a1a',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleDeleteConfirm}
+                                disabled={deleting}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: deleting ? '#ef9a9a' : '#c62828',
+                                    color: '#fff',
+                                    cursor: deleting ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {deleting ? 'Deleting...' : 'Confirm Delete'}
+                            </button>
                         </div>
                     </div>
                 </div>

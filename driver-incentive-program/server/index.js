@@ -712,6 +712,38 @@ app.put('/api/2fa/toggle', async (req, res) => {
     }
 });
 
+// --- Admin delete user route  ---
+app.delete('/api/admin/user/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    try {
+        const [users] = await pool.query('SELECT user_id, user_type FROM users WHERE user_id = ?', [userId]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const { user_type } = users[0];
+
+        if (user_type === 'driver') {
+            await pool.query(
+                'UPDATE driver_user SET driver_status = ? WHERE user_id = ?',
+                ['unaffiliated', userId]
+            );
+        }
+
+        await pool.query('UPDATE users SET is_active = 0 WHERE user_id = ?', [userId]);
+
+        res.json({ message: `User deleted successfully` });
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        res.status(500).json({ error: 'Failed to delete user' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
