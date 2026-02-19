@@ -161,3 +161,9 @@
 .nav-username:hover {
   color: #0066cc;
 }
+
+@media (max-width: 768px) {
+  .nav-username {
+    display: none;
+  }
+}

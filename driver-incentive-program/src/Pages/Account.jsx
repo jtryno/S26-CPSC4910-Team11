@@ -1,16 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
 
-async function saveField(email, field, value) {
+async function updateField(userId, field, value) {
     const response = await fetch('/api/user', {
         method: 'PUT',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, field, value }),
+        body: JSON.stringify({ user_id: userId, field, value }),
     });
-    console.log("Saving field", { email, field, value });
     if (response.ok) {
         console.log('Field updated successfully');
     } else {
@@ -50,6 +49,19 @@ async function toggleTwoFa(email, enabled, userData, setUserData) {
 }
 
 const ProfileTab = ({ userData, setUserData, navigate }) => {
+    const [driverData, setDriverData] = useState(null);
+
+    useEffect(() => {
+        if (userData?.user_type === 'driver' && userData?.user_id) {
+            fetch(`/api/driver/${userData.user_id}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.driver) {
+                        setDriverData(data.driver);
+                    }
+                })
+        }
+    }, [userData]);
     let createdAtDisplay;
     if (userData?.created_at) {
         createdAtDisplay = new Date(userData.created_at).toLocaleString('en-US', {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',hour12: true});
@@ -64,15 +76,16 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     <EditableField 
                         label="Username"
                         value={userData?.username || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "username", value);
+                        onSave={async (value) => {
+                            await updateField(userData.user_id, "username", value);
+                            setUserData(prev => ({ ...prev, username: value }));
                         }} 
                     />
                     <EditableField
                         label="Email"
                         value={userData?.email || "Not available"}
                         onSave={(value) => {
-                            saveField(userData.email, "email", value);
+                            updateField(userData.user_id, "email", value);
                         }}
                         validate={(value) => {
                             if (!value || value === "Not available") return "Email is required";
@@ -96,7 +109,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                         onSave={(value) => {
                             const digitsOnly = value.replace(/\D/g, '');
                             const formatted = `(${digitsOnly.slice(0,3)}) ${digitsOnly.slice(3,6)}-${digitsOnly.slice(6,10)}`;
-                            saveField(userData.email, "phone_number", formatted);
+                            updateField(userData.user_id, "phone_number", formatted);
                             setUserData({ ...userData, phone_number: formatted });
                             return formatted;
                         }}
@@ -111,27 +124,38 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     <EditableField
                         label="First Name"
                         value={userData?.first_name || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "first_name", value);
+                        onSave={async (value) => {
+                            await updateField(userData.user_id, "first_name", value);
+                            setUserData(prev => ({ ...prev, first_name: value }));
                         }} 
                     />
                     <EditableField
                         label="Last Name"
                         value={userData?.last_name || "Not available"}
-                        onSave={(value) => {
-                            saveField(userData.email, "last_name", value);
+                        onSave={async (value) => {
+                            await updateField(userData.user_id, "last_name", value);
+                            setUserData(prev => ({ ...prev, last_name: value }));
                         }} 
                     />
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <b>Role: </b>
                         <span>{userData?.user_type || "Not available"}</span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <b>Account Created: </b>
-                        <span>
-                            {createdAtDisplay}
-                        </span>
-                    </div>
+                    {userData?.user_type === 'driver' && driverData?.affilated_at && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <b>Joined Sponsor: </b>
+                            <span>
+                                {new Date(driverData.affilated_at).toLocaleString('en-US', {
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: true
+                                })}
+                            </span>
+                        </div>
+                    )}
                 </div>
             </div>
             <div style={{ background: '#f9f9f9',  paddingBottom: '30px', paddingLeft: '30px', paddingTop: '0px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
@@ -183,7 +207,7 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
 const OrganizationTab = () => {
     return (
         <div>
-
+            organization
         </div>
     );
 }
@@ -234,8 +258,8 @@ const Account = () => {
                     </button>
                 </div>
                 <div style={{ flex: 1, paddingLeft: "24px" }}>
-                    {activeTab === "profile" && ProfileTab({ userData, setUserData, navigate })}
-                    {activeTab === "organization" && OrganizationTab()}
+                    {activeTab === "profile" && <ProfileTab userData={userData} setUserData={setUserData} navigate={navigate} />}
+                    {activeTab === "organization" && <OrganizationTab />}
                 </div>
             </div>
         ) : (

@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 const EditableField = ({ label, value, onSave, validate  }) => {
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
-    const [currentValue, setCurrentValue] = useState(value);
     const [error, setError] = useState('');
 
     return (
@@ -31,8 +30,8 @@ const EditableField = ({ label, value, onSave, validate  }) => {
                                     }
                                 }
                                 setError('');
-                                const displayValue = onSave(inputValue);
-                                setCurrentValue(displayValue !== undefined ? displayValue : inputValue);
+                                value = inputValue;
+                                onSave(inputValue);
                                 setIsEditing(false);
                             }}
                             style={{
@@ -46,7 +45,7 @@ const EditableField = ({ label, value, onSave, validate  }) => {
                         <button
                             onClick={() => {
                                 setIsEditing(false);
-                                setInputValue(currentValue);
+                                setInputValue(value);
                                 setError('');
                             }}
                             style={{
@@ -62,9 +61,9 @@ const EditableField = ({ label, value, onSave, validate  }) => {
                     </div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '4px' }}>
-                        <span>{currentValue}</span>
+                        <span>{value}</span>
                         <button 
-                        onClick={() => { setIsEditing(true); setInputValue(currentValue); setError('');}}
+                        onClick={() => { setIsEditing(true); setInputValue(value); setError('');}}
                         style={{
                             padding: '2px 6px',
                             fontSize: '0.8em',

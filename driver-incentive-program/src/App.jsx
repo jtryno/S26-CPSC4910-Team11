@@ -7,6 +7,8 @@ import Login from './Pages/Login'
 import Account from './Pages/Account'
 import PasswordReset from './Pages/PasswordReset'
 import Dashboard from './Pages/Dashboard'
+import Organizations from './Pages/Organization/Organizations/Organizations';
+import OrganizationSummary from './Pages/Organization/OrganizationSummary/OrganizationSummary';
 import Catalog from './Pages/Catalog'
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
@@ -14,6 +16,7 @@ import { FaUser } from 'react-icons/fa';
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userData, setUserData] = useState(null);
+  const [orgName, setOrgName] = useState(null);
   const [showInactivityModal, setShowInactivityModal] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -33,11 +36,29 @@ useEffect(() => {
 
       // first check local storage
       if (storedUser) {
+        const user = JSON.parse(storedUser);
         setIsLoggedIn(true);
-        setUserData(JSON.parse(storedUser));
+        setUserData(user);
+        
+        //get org name from sponsor org table if driver has a sponsor_org_id
+        if (user.sponsor_org_id) {
+          try {
+            const orgRes = await fetch(`/api/organization/${user.sponsor_org_id}`);
+            const orgData = await orgRes.json();
+            if (orgData.organization?.name) {
+              setOrgName(orgData.organization.name);
+            }
+          } catch (err) {
+            console.error("Failed to fetch org name:", err);
+          }
+        } else {
+          setOrgName(null);
+        }
       } else {
         setIsLoggedIn(false);
         setUserData(null);
+        setOrgName(null);
+        setUserData(JSON.parse(storedUser));
       }
 
       // check if there is valid cookie session
@@ -50,15 +71,25 @@ useEffect(() => {
           localStorage.setItem('user', JSON.stringify(data.user));
           setIsLoggedIn(true);
           setUserData(data.user);
+          
+          if (data.user.sponsor_org_id) {
+            try {
+              const orgRes = await fetch(`/api/organization/${data.user.sponsor_org_id}`);
+              const orgData = await orgRes.json();
+              if (orgData.organization?.name) {
+                setOrgName(orgData.organization.name);
+              }
+            } catch (err) {
+              console.error("Failed to fetch org name:", err);
+            }
+          }
         } else if (!storedUser) {
-          // Only clear if there is no stored user either
-          // prevents clearing when user is logged in without remember Me
           setIsLoggedIn(false);
           setUserData(null);
+          setOrgName(null);
         }
       } catch (err) {
         console.error("session error", err);
-        // if error, use localStorage if it exists
         if (storedUser) {
           setIsLoggedIn(true);
           setUserData(JSON.parse(storedUser));
@@ -318,6 +349,7 @@ useEffect(() => {
           <ul className="nav-links">
             <li><Link to="/">Home</Link></li>
             <li><Link to="/about">About</Link></li>
+            {isLoggedIn && <li><Link to="/organization">Organizations</Link></li>}
             {isLoggedIn && (
               <>
                 <li><Link to="/dashboard">Dashboard</Link></li>
@@ -332,7 +364,10 @@ useEffect(() => {
             <div style={{display: 'flex', alignItems: 'center', gap: '20px'}}>
               <Link to="/account" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
                 <FaUser size={20} />
-                <span className="nav-username">{userData?.username || 'User'}</span>
+                <span className="nav-username">
+                  {userData?.username || 'User'}
+                  {orgName && <span style={{ color: '#2f2f2f', fontWeight: '400' }}> • {orgName}</span>}
+                </span>
               </Link>
               <li>
                 <a href="#" onClick={(e) => {
@@ -354,6 +389,8 @@ useEffect(() => {
           <Route path="/login" element={<Login />} />
           <Route path="/account" element={<Account />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/organization" element={<Organizations />} />
+          <Route path="/organization/:orgId" element={<OrganizationSummary />} />
           <Route path="/catalog" element={<Catalog />} />
         </Routes>
       </main>
