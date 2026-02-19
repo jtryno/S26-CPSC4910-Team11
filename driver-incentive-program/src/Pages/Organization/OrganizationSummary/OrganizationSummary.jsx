@@ -19,6 +19,8 @@ const OrganizationSummary = () => {
     const [hasPendingApplication, setHasPendingApplication] = useState(true);
 
     async function fetchOrg() {
+        console.log(userData?.sponsor_org_id);
+        console.log(orgId);
         const org = await fetchOrgData(orgId);
         setOrgData(org);
         const users = await fetchOrgUsers(orgId);
@@ -38,7 +40,7 @@ const OrganizationSummary = () => {
             <div style={{ borderBottom: '1px solid #e0e0e0', marginBottom: '20px'}}/>
             <TabGroup tabs={[
                 { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg}/> },
-                ...(userData?.user_type !== 'driver' ? [{ label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg} /> }] : [])
+                ...((userData?.user_type === 'admin' ||  (userData?.user_type === 'sponsor' && userData?.sponsor_org_id === Number(orgId))) ? [{ label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg} /> }] : [])
             ]}/>
         </div>
     );

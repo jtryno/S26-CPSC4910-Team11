@@ -46,9 +46,11 @@ const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserDat
                 {userData?.sponsor_org_id === orgData?.sponsor_org_id && 
                     <button 
                         onClick={async () => {
-                            await removeFromOrganization(userData.user_id);
-                            fetchOrg();
-                            setUserData(prev => ({ ...prev, sponsor_org_id: null }));
+                            if (window.confirm("Are you sure you want to leave the organization? You will need to request to join again if you change your mind.")) {
+                                await removeFromOrganization(userData.user_id);
+                                fetchOrg();
+                                setUserData(prev => ({ ...prev, sponsor_org_id: null }));
+                            }
                         }}
                         style={{ height: '50px', width: '200px', marginTop: 'auto', marginLeft: 'auto', backgroundColor: '#e74c3c', color: 'white', borderRadius: '4px', padding: '0 15px' }}
                     >
