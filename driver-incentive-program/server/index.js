@@ -1,3 +1,4 @@
+
 import express from 'express';
 import dotenv from 'dotenv';
 import fs from 'fs';
@@ -26,6 +27,21 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
+
+// Catalog API proxy to Fake Store API
+app.get('/api/catalog', async (req, res) => {
+    try {
+        const response = await fetch('https://fakestoreapi.com/products');
+        if (!response.ok) {
+            return res.status(502).json({ error: 'Failed to fetch catalog from external API.' });
+        }
+        const products = await response.json();
+        // Optionally map/transform product fields here
+        res.json(products);
+    } catch (err) {
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
 
 // Helper: Password Complexity Validation 
 const isPasswordComplex = (password) => {
