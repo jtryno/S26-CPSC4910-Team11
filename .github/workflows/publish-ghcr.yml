@@ -57,3 +57,5 @@ jobs:
 
             # Stop and remove old containers, then start new ones with updated images
             docker compose up -d 
+
+            docker system prune -af || true
