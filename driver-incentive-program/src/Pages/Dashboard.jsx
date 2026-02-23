@@ -229,6 +229,9 @@ const SponsorDashboard = ({ user }) => {
     const [drivers, setDrivers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [monthlyAwarded, setMonthlyAwarded] = useState(null);
+    const [monthlyDeducted, setMonthlyDeducted] = useState(null);
+    const [monthlyLimit, setMonthlyLimit] = useState(null);
 
     // Modal state
     const [modalOpen, setModalOpen] = useState(false);
@@ -259,16 +262,29 @@ const SponsorDashboard = ({ user }) => {
             .catch(err => { setError(err.message); setLoading(false); });
     };
 
-    useEffect(() => { fetchDrivers(); }, [user.user_id]);
+    const fetchMonthlyPoints = () => {
+        fetch(`/api/sponsor/monthly-points/${user.user_id}`)
+            .then(res => res.ok ? res.json() : Promise.reject())
+            .then(d => {
+                setMonthlyAwarded(d.month_awarded);
+                setMonthlyDeducted(d.month_deducted);
+            })
+            .catch(() => {});
+    };
+
+    useEffect(() => { fetchDrivers(); fetchMonthlyPoints(); }, [user.user_id]);
 
     useEffect(() => {
         fetch(`/api/sponsor/settings/${user.user_id}`)
             .then(res => res.ok ? res.json() : Promise.reject())
-            .then(d => setSettings({
-                point_upper_limit: d.point_upper_limit ?? '',
-                point_lower_limit: d.point_lower_limit ?? '',
-                monthly_point_limit: d.monthly_point_limit ?? '',
-            }))
+            .then(d => {
+                setSettings({
+                    point_upper_limit: d.point_upper_limit ?? '',
+                    point_lower_limit: d.point_lower_limit ?? '',
+                    monthly_point_limit: d.monthly_point_limit ?? '',
+                });
+                setMonthlyLimit(d.monthly_point_limit ?? null);
+            })
             .catch(() => {});
     }, [user.user_id]);
 
@@ -333,6 +349,7 @@ const SponsorDashboard = ({ user }) => {
             setSubmitMsg({ type: 'success', text: data.message });
             setSelectedIds(new Set());
             fetchDrivers();
+            fetchMonthlyPoints();
         } catch (err) {
             setSubmitMsg({ type: 'error', text: err.message });
         } finally {
@@ -384,9 +401,77 @@ const SponsorDashboard = ({ user }) => {
         </button>
     );
 
+    const MonthlyPointsSummary = () => (
+        monthlyAwarded !== null && monthlyDeducted !== null && (
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
+
+                {/* Points Awarded Card */}
+                <div style={{
+                    display: 'inline-flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    background: '#f0fff0',
+                    border: '1px solid #a5d6a7',
+                    borderRadius: '8px',
+                    padding: '12px 32px',
+                }}>
+                    <div style={{ fontSize: '13px', color: '#555', whiteSpace: 'nowrap' }}>
+                        Points Awarded This Month
+                    </div>
+                    <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#2e7d32' }}>
+                        {monthlyAwarded}
+                        {monthlyLimit !== null && (
+                            <span style={{ fontSize: '16px', color: '#666', fontWeight: 'normal' }}>
+                                {' '}/ {monthlyLimit} limit
+                            </span>
+                        )}
+                    </div>
+                    {monthlyLimit !== null && (
+                        <div style={{ width: '100%', marginTop: '8px' }}>
+                            <div style={{ height: '8px', borderRadius: '4px', background: '#ddd', overflow: 'hidden' }}>
+                                <div style={{
+                                    height: '100%',
+                                    borderRadius: '4px',
+                                    width: `${Math.min((monthlyAwarded / monthlyLimit) * 100, 100)}%`,
+                                    background: (monthlyAwarded / monthlyLimit) >= 0.9 ? '#c62828' :
+                                                (monthlyAwarded / monthlyLimit) >= 0.7 ? '#f57c00' : '#1976d2',
+                                    transition: 'width 0.3s ease',
+                                }} />
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#888', marginTop: '4px', textAlign: 'right' }}>
+                                {`${Math.round((monthlyAwarded / monthlyLimit) * 100)}%`}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Points Deducted Card */}
+                <div style={{
+                    display: 'inline-flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    background: '#fff5f5',
+                    border: '1px solid #ffb3b3',
+                    borderRadius: '8px',
+                    padding: '12px 32px',
+                }}>
+                    <div style={{ fontSize: '13px', color: '#555', whiteSpace: 'nowrap' }}>
+                        Points Deducted This Month
+                    </div>
+                    <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#c62828' }}>
+                        {monthlyDeducted}
+                    </div>
+                </div>
+
+            </div>
+        )
+    );
+
     return (
         <>
             <h1>Sponsor Dashboard</h1>
+
+            <MonthlyPointsSummary  />
 
             <div style={{ marginBottom: '-1px', textAlign: 'left' }}>
                 {tabBtn('individual', 'Individual Points')}

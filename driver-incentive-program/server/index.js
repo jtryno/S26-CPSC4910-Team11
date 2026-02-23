@@ -971,6 +971,41 @@ app.delete('/api/admin/user/:userId', async (req, res) => {
     }
 });
 
+// --- Sponsor User Monthly Point Amount Awarded & Deducted Route ---
+app.get('/api/sponsor/monthly-points/:sponsorUserId', async (req, res) => {
+    const { sponsorUserId } = req.params;
+    try {
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [sponsorUserId]
+        );
+        if (sponsorRows.length === 0) {
+            return res.status(404).json({ error: 'Sponsor org not found for this user' });
+        }
+        const { sponsor_org_id } = sponsorRows[0];
+
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+
+        const [[{ month_awarded, month_deducted }]] = await pool.query(
+            `SELECT 
+                COALESCE(SUM(CASE WHEN point_amount > 0 THEN point_amount ELSE 0 END), 0) AS month_awarded,
+                COALESCE(SUM(CASE WHEN point_amount < 0 THEN point_amount ELSE 0 END), 0) AS month_deducted
+             FROM point_transactions 
+             WHERE sponsor_org_id = ? 
+             AND created_by_user_id = ? 
+             AND created_at >= ?`,
+            [sponsor_org_id, sponsorUserId, monthStart]
+        );
+
+        res.json({ month_awarded, month_deducted });
+    } catch (error) {
+        console.error('Error fetching monthly points:', error);
+        res.status(500).json({ error: 'Failed to fetch monthly points' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
