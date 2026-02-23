@@ -284,7 +284,13 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
     const { sponsor_org_id } = req.params;
 
     try {
-        const [users] = await pool.query('SELECT * FROM users WHERE sponsor_org_id = ?', [sponsor_org_id]);
+        const [users] = await pool.query(
+            `SELECT u.*, du.current_points_balance AS points
+             FROM users u
+             LEFT JOIN driver_user du ON u.user_id = du.user_id AND du.sponsor_org_id = ?
+             WHERE u.sponsor_org_id = ?`,
+            [sponsor_org_id, sponsor_org_id]
+        );
         res.json({ message: 'Organization users retrieved successfully', users });
     } catch (error) {
         console.error('Error fetching organization users:', error);

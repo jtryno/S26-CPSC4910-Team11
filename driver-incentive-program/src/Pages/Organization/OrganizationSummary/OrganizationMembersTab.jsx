@@ -11,7 +11,9 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
                 columns={[
                     { key: 'user_id', label: 'User ID', sortable: true },
                     { key: 'username', label: 'Username', sortable: true },
-                    { key: 'user_type', label: 'Role', sortable: true },]}
+                    { key: 'user_type', label: 'Role', sortable: true },
+                    { key: 'points', label: 'Points', sortable: true },
+                ]}
                 actions={userData?.user_type !== 'driver' ? [
                     { label: 'Remove', onClick: async (row) => {
                         if (window.confirm(`Are you sure you want to remove ${row.username} from the organization?`)) {
@@ -23,7 +25,12 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
                         }
                     }}
                 ] : []}
-                data={orgUsers || []}
+                data={(orgUsers || []).map(user => ({
+                    ...user,
+                    points: user.user_type === 'driver'
+                        ? (user.points != null ? Number(user.points) : 0)
+                        : null,
+                }))}
             />
         </div>
     );
