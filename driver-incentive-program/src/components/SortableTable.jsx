@@ -10,6 +10,18 @@ const SortableTable = ({ columns, data, actions }) => {
             const aValue = a[sortConfig.key];
             const bValue = b[sortConfig.key];
 
+            // Push nulls/undefined to the bottom always
+            if (aValue == null && bValue == null) return 0;
+            if (aValue == null) return 1;
+            if (bValue == null) return -1;
+
+            // If the types are different convert both to string for comparison
+            if (typeof aValue !== typeof bValue) {
+                return sortConfig.direction === 'asc'
+                    ? String(aValue).localeCompare(String(bValue))
+                    : String(bValue).localeCompare(String(aValue));
+            }
+
             if (typeof aValue === 'string') {
                 return sortConfig.direction === 'asc'
                     ? aValue.localeCompare(bValue)
