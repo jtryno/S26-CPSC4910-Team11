@@ -5,6 +5,8 @@ import { removeFromOrganization } from '../../../api/UserApi';
 
 const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => {
 
+    const isSponsorOrAdmin = userData?.user_type === 'sponsor' || userData?.user_type === 'admin';
+
     return (
         <div style={{ display: 'grid', direction: 'column', margin: '20px'}}>
             <SortableTable
@@ -12,7 +14,7 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
                     { key: 'user_id', label: 'User ID', sortable: true },
                     { key: 'username', label: 'Username', sortable: true },
                     { key: 'user_type', label: 'Role', sortable: true },
-                    { key: 'points', label: 'Points', sortable: true },
+                    ...(isSponsorOrAdmin ? [{ key: 'points', label: 'Points', sortable: true }] : []),
                 ]}
                 actions={userData?.user_type !== 'driver' ? [
                     { label: 'Remove', onClick: async (row) => {
