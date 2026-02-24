@@ -102,6 +102,42 @@ function verifyScryptPassword(password, stored) {
   return crypto.timingSafeEqual(actual, expected);
 }
 
+//required notificationss
+const MANDATORY_CATEGORIES = ['dropped', 'password_changed'];
+//"extras" parameter is if it has a related_something in the db, if not present for that notification type pass in null
+async function createNotification(userId, category, message, extras = {}) {
+    try {
+        if(!MANDATORY_CATEGORIES.includes(category)) {
+
+            //null if not in preferences table
+            const prefColumnMap = {'points_changed': 'points_changed_enabled', 'order_placed': 'order_placed_enabled', 'application_status': null};
+
+            const prefColumn = prefColumnMap[category];
+
+            //if it has a corresponding spot in preferences table
+            if (prefColumn) {
+                const [prefRows] = await pool.query('SELECT ?? FROM notification_preferences WHERE user_id = ?',[prefColumn, userId]);
+
+                //first check makes sure new user has  enabled preferneces
+                if(prefRows.length > 0 && prefRows[0][prefColumn] === 0) {
+                    return;
+                }
+            }
+        }
+
+
+        const {related_order_id = null, related_transaction_id = null, related_application_id = null} = extras;
+
+        await pool.query(
+            `INSERT INTO notifications (user_id, category, message, related_order_id, related_transaction_id, related_application_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+            [userId, category, message, related_order_id, related_transaction_id, related_application_id]
+        );
+
+    } catch (error) {
+        console.error('Failed to create notification:', error);
+    }
+}
+
 // --- About Page Route ---
 app.get('/api/about', async (req, res) => {
     try {
