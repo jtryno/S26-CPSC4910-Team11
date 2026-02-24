@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
+import SortableTable from '../components/SortableTable';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -17,6 +18,7 @@ const DriverDashboard = ({ user }) => {
     const [contestSubmitting, setContestSubmitting] = useState(false);
     const [contestMsg, setContestMsg] = useState(null);
     const [contestedTxIds, setContestedTxIds] = useState(new Set());
+    const [expandedReasons, setExpandedReasons] = useState(new Set());
 
     const SOURCE_LABELS = {
         recurring: 'Recurring',
@@ -148,58 +150,147 @@ const DriverDashboard = ({ user }) => {
                 <div style={{ color: '#888' }}>No transactions found.</div>
             ) : (
                 <div style={{ textAlign: 'left' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr style={{ background: '#f5f5f5' }}>
-                                <th style={th}>Transaction ID</th>
-                                <th style={th}>Date</th>
-                                <th style={th}>Sponsor</th>
-                                <th style={th}>Source</th>
-                                <th style={th}>Reason</th>
-                                <th style={{ ...th, textAlign: 'right' }}>Points</th>
-                                <th style={th}>Contest</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {data.transactions.map(tx => (
-                                <tr key={tx.transaction_id} style={{ borderBottom: '1px solid #eee' }}>
-                                    <td style={{ ...td, color: '#888', fontSize: '12px', textAlign: 'center' }}>{tx.transaction_id}</td>
-                                    <td style={td}>{new Date(tx.created_at).toLocaleDateString()}</td>
-                                    <td style={td}>{tx.sponsor_name || '—'}</td>
-                                    <td style={td}>{SOURCE_LABELS[tx.source] || tx.source}</td>
-                                    <td style={td}>{tx.reason}</td>
-                                    <td style={{ ...td, textAlign: 'center', fontWeight: 'bold', color: tx.point_amount >= 0 ? '#2e7d32' : '#c62828' }}>
-                                        {tx.point_amount >= 0 ? '+' : ''}{tx.point_amount}
-                                    </td>
-                                    <td style={td}>
-                                        {tx.point_amount < 0 && (
-                                            <button
-                                                disabled={contestedTxIds.has(tx.transaction_id)}
-                                                onClick={() => {
-                                                    setContestTx(tx);
-                                                    setContestReason('');
-                                                    setContestMsg(null);
-                                                    setContestModalOpen(true);
-                                                }}
-                                                style={{
-                                                    padding: '4px 10px',
-                                                    borderRadius: '4px',
-                                                    border: '1px solid #f57c00',
-                                                    background: contestedTxIds.has(tx.transaction_id) ? '#eee' : '#fff3e0',
-                                                    color: contestedTxIds.has(tx.transaction_id) ? '#aaa' : '#e65100',
-                                                    cursor: contestedTxIds.has(tx.transaction_id) ? 'not-allowed' : 'pointer',
-                                                    fontSize: '12px',
-                                                    fontWeight: '600',
-                                                }}
-                                            >
-                                                {contestedTxIds.has(tx.transaction_id) ? 'Contested' : 'Contest'}
-                                            </button>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <SortableTable
+                        columns={[
+                            {
+                                key: 'transaction_id',
+                                label: 'Transaction ID',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{ color: '#888', fontSize: '12px' }}>{val}</span>
+                                ),
+                            },
+                            {
+                                key: 'created_at_display',
+                                label: 'Date',
+                                sortable: true,
+                                sortKey: 'created_at_sort',
+                            },
+                            {
+                                key: 'sponsor_name',
+                                label: 'Sponsor',
+                                sortable: true,
+                            },
+                            {
+                                key: 'source',
+                                label: 'Source',
+                                sortable: true,
+                                render: (val) => {
+                                    const colors = {
+                                        Manual:    { bg: '#e3f2fd', text: '#1565c0' },
+                                        Recurring: { bg: '#e8f5e9', text: '#2e7d32' },
+                                        Order:     { bg: '#fff3e0', text: '#e65100' },
+                                    };
+                                    const label = SOURCE_LABELS[val] || val;
+                                    const style = colors[label] || { bg: '#f5f5f5', text: '#444' };
+                                    return (
+                                        <span style={{
+                                            background: style.bg,
+                                            color: style.text,
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            fontSize: '12px',
+                                            fontWeight: '600',
+                                        }}>
+                                            {label}
+                                        </span>
+                                    );
+                                },
+                            },
+                            {
+                                key: 'reason',
+                                label: 'Reason',
+                                sortable: false,
+                                render: (val, row) => {
+                                    const isExpanded = expandedReasons.has(row.transaction_id);
+                                    const isLong = val?.length > 40;
+                                    return (
+                                        <span>
+                                            {isExpanded || !isLong ? val : `${val.slice(0, 40)}...`}
+                                            {isLong && (
+                                                <button
+                                                    onClick={() => setExpandedReasons(prev => {
+                                                        const next = new Set(prev);
+                                                        isExpanded ? next.delete(row.transaction_id) : next.add(row.transaction_id);
+                                                        return next;
+                                                    })}
+                                                    style={{
+                                                        marginLeft: '6px',
+                                                        background: 'none',
+                                                        border: 'none',
+                                                        color: '#1976d2',
+                                                        cursor: 'pointer',
+                                                        fontSize: '12px',
+                                                        padding: 0,
+                                                    }}
+                                                >
+                                                    {isExpanded ? 'less' : 'more'}
+                                                </button>
+                                            )}
+                                        </span>
+                                    );
+                                },
+                            },
+                            {
+                                key: 'point_amount',
+                                label: 'Points',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{
+                                        fontWeight: 'bold',
+                                        color: val >= 0 ? '#2e7d32' : '#c62828',
+                                    }}>
+                                        {val >= 0 ? '+' : ''}{val}
+                                    </span>
+                                ),
+                            },
+                        ]}
+                        data={data.transactions.map(tx => ({
+                            ...tx,
+                            sponsor_name: tx.sponsor_name || '—',
+                            // Separate display value from raw for correct date sorting
+                            created_at_display: new Date(tx.created_at).toLocaleDateString(),
+                            created_at_sort: new Date(tx.created_at).getTime(),
+                        }))}
+                        actions={[
+                            {
+                                label: 'Contest',
+                                color: null, // we'll override per-row below
+                                onClick: (row) => {
+                                    if (contestedTxIds.has(row.transaction_id)) return;
+                                    if (row.point_amount >= 0) return;
+                                    setContestTx(row);
+                                    setContestReason('');
+                                    setContestMsg(null);
+                                    setContestModalOpen(true);
+                                },
+                                render: (row) => row.point_amount < 0 ? (
+                                    <button
+                                        disabled={contestedTxIds.has(row.transaction_id)}
+                                        onClick={() => {
+                                            if (contestedTxIds.has(row.transaction_id)) return;
+                                            setContestTx(row);
+                                            setContestReason('');
+                                            setContestMsg(null);
+                                            setContestModalOpen(true);
+                                        }}
+                                        style={{
+                                            padding: '4px 10px',
+                                            borderRadius: '4px',
+                                            border: '1px solid #f57c00',
+                                            background: contestedTxIds.has(row.transaction_id) ? '#eee' : '#fff3e0',
+                                            color: contestedTxIds.has(row.transaction_id) ? '#aaa' : '#e65100',
+                                            cursor: contestedTxIds.has(row.transaction_id) ? 'not-allowed' : 'pointer',
+                                            fontSize: '12px',
+                                            fontWeight: '600',
+                                        }}
+                                    >
+                                        {contestedTxIds.has(row.transaction_id) ? 'Contested' : 'Contest'}
+                                    </button>
+                                ) : null,
+                            },
+                        ]}
+                    />
                 </div>
             )}
 

@@ -7,8 +7,10 @@ const SortableTable = ({ columns, data, actions }) => {
         if (!sortConfig.key) return data;
 
         return [...data].sort((a, b) => {
-            const aValue = a[sortConfig.key];
-            const bValue = b[sortConfig.key];
+            const sortKey = columns.find(c => c.key === sortConfig.key)?.sortKey || sortConfig.key;
+
+            const aValue = a[sortKey];
+            const bValue = b[sortKey];
 
             // Push nulls/undefined to the bottom always
             if (aValue == null && bValue == null) return 0;
@@ -75,18 +77,19 @@ const SortableTable = ({ columns, data, actions }) => {
                                 style={{ padding: '2px' }}
                                 key={column.key}
                             >
-                                {row[column.key]}
+                                {column.render ? column.render(row[column.key], row) : row[column.key]}
                             </td>
                         ))}
                         {actions &&
                             actions.map((action, actionIndex) => (
-                                <td key={actionIndex} style={{ padding: '2px' }}>
+                            <td key={actionIndex} style={{ padding: '2px' }}>
+                                {action.render ? action.render(row) : (
                                     <button style={{ backgroundColor: action.color || '#007bff', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px' }} onClick={() => action.onClick(row)}>
                                         {action.label}
                                     </button>
-                                </td>
-                            ))
-                        }
+                                )}
+                            </td>
+                        ))}
                     </tr>
                 ))}
             </tbody>
