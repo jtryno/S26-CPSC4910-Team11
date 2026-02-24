@@ -1006,6 +1006,138 @@ app.get('/api/sponsor/monthly-points/:sponsorUserId', async (req, res) => {
     }
 });
 
+// Driver submit a contest
+app.post('/api/point-contest', async (req, res) => {
+    const { transaction_id, driver_user_id, sponsor_org_id, reason } = req.body;
+
+    if (!transaction_id || !driver_user_id || !sponsor_org_id || !reason?.trim()) {
+        return res.status(400).json({ error: 'transaction_id, driver_user_id, sponsor_org_id, and reason are required' });
+    }
+
+    try {
+        // Verify the transaction belongs to this driver and is a deduction
+        const [txRows] = await pool.query(
+            'SELECT * FROM point_transactions WHERE transaction_id = ? AND driver_user_id = ? AND point_amount < 0',
+            [transaction_id, driver_user_id]
+        );
+        if (txRows.length === 0) {
+            return res.status(404).json({ error: 'Transaction not found or is not a deduction' });
+        }
+
+        // Prevent duplicate pending contests for the same transaction
+        const [existing] = await pool.query(
+            'SELECT contest_id FROM point_contests WHERE transaction_id = ? AND status = "pending"',
+            [transaction_id]
+        );
+        if (existing.length > 0) {
+            return res.status(409).json({ error: 'A pending contest already exists for this transaction' });
+        }
+
+        const [result] = await pool.query(
+            'INSERT INTO point_contests (transaction_id, driver_user_id, sponsor_org_id, reason) VALUES (?, ?, ?, ?)',
+            [transaction_id, driver_user_id, sponsor_org_id, reason.trim()]
+        );
+
+        res.json({ message: 'Contest submitted successfully', contest_id: result.insertId });
+    } catch (error) {
+        console.error('Error submitting point contest:', error);
+        res.status(500).json({ error: 'Failed to submit point contest' });
+    }
+});
+
+// Get point contests for an organization (sponsor/admin)
+app.get('/api/point-contest/organization/:org_id', async (req, res) => {
+    const { org_id } = req.params;
+    const { status } = req.query;
+
+    try {
+        let query = `
+            SELECT 
+                pc.*,
+                pt.point_amount,
+                pt.reason AS transaction_reason,
+                pt.source,
+                pt.created_at AS transaction_date,
+                u.username AS driver_username
+            FROM point_contests pc
+            JOIN point_transactions pt ON pc.transaction_id = pt.transaction_id
+            JOIN users u ON pc.driver_user_id = u.user_id
+            WHERE pc.sponsor_org_id = ?
+        `;
+        const params = [org_id];
+
+        if (status) {
+            query += ' AND pc.status = ?';
+            params.push(status);
+        }
+
+        query += ' ORDER BY pc.created_at DESC';
+
+        const [contests] = await pool.query(query, params);
+        res.json({ contests });
+    } catch (error) {
+        console.error('Error fetching point contests:', error);
+        res.status(500).json({ error: 'Failed to fetch point contests' });
+    }
+});
+
+// Review a point contest (sponsor/admin)
+app.put('/api/point-contest/:contest_id', async (req, res) => {
+    const { contest_id } = req.params;
+    const { status, decision_reason, reviewed_by_user_id } = req.body;
+
+    if (!['approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ error: 'status must be "approved" or "rejected"' });
+    }
+    if (!reviewed_by_user_id) {
+        return res.status(400).json({ error: 'reviewed_by_user_id is required' });
+    }
+
+    try {
+        const [contestRows] = await pool.query(
+            'SELECT * FROM point_contests WHERE contest_id = ? AND status = "pending"',
+            [contest_id]
+        );
+        if (contestRows.length === 0) {
+            return res.status(404).json({ error: 'Contest not found or already reviewed' });
+        }
+
+        const contest = contestRows[0];
+
+        await pool.query(
+            'UPDATE point_contests SET status = ?, decision_reason = ?, reviewed_by_user_id = ?, reviewed_at = NOW() WHERE contest_id = ?',
+            [status, decision_reason || null, reviewed_by_user_id, contest_id]
+        );
+
+        // If approved, reverse the original deduction
+        if (status === 'approved') {
+            const [txRows] = await pool.query(
+                'SELECT * FROM point_transactions WHERE transaction_id = ?',
+                [contest.transaction_id]
+            );
+            if (txRows.length > 0) {
+                const original = txRows[0];
+                await pool.query(
+                    'INSERT INTO point_transactions (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+                    [
+                        original.driver_user_id,
+                        original.sponsor_org_id,
+                        Math.abs(original.point_amount), // reverse the deduction
+                        `Contest approved — reversal of transaction #${contest.transaction_id}`,
+                        'manual',
+                        reviewed_by_user_id,
+                    ]
+                );
+            }
+        }
+
+        res.json({ message: `Contest ${status} successfully` });
+    } catch (error) {
+        console.error('Error reviewing point contest:', error);
+        res.status(500).json({ error: 'Failed to review point contest' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
