@@ -11,6 +11,13 @@ const DriverDashboard = ({ user }) => {
     const [leaving, setLeaving] = useState(false);
     const [leaveMsg, setLeaveMsg] = useState(null);
 
+    const [contestModalOpen, setContestModalOpen] = useState(false);
+    const [contestTx, setContestTx] = useState(null);
+    const [contestReason, setContestReason] = useState('');
+    const [contestSubmitting, setContestSubmitting] = useState(false);
+    const [contestMsg, setContestMsg] = useState(null);
+    const [contestedTxIds, setContestedTxIds] = useState(new Set());
+
     const SOURCE_LABELS = {
         recurring: 'Recurring',
         manual: 'Manual',
@@ -28,6 +35,21 @@ const DriverDashboard = ({ user }) => {
     };
 
     useEffect(() => { fetchData(); }, [user.user_id]);
+
+    useEffect(() => {
+        if (!data || !data.sponsor_org_id) return;
+        fetch(`/api/point-contest/organization/${data.sponsor_org_id}`)
+            .then(r => r.json())
+            .then(d => {
+                const ids = new Set(
+                    (d.contests || [])
+                        .filter(c => c.driver_user_id === user.user_id)
+                        .map(c => c.transaction_id)
+                );
+                setContestedTxIds(ids);
+            })
+            .catch(() => {});
+    }, [data]);
 
     const handleLeave = async () => {
         setLeaving(true);
@@ -129,22 +151,50 @@ const DriverDashboard = ({ user }) => {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ background: '#f5f5f5' }}>
+                                <th style={th}>Transaction ID</th>
                                 <th style={th}>Date</th>
                                 <th style={th}>Sponsor</th>
                                 <th style={th}>Source</th>
                                 <th style={th}>Reason</th>
                                 <th style={{ ...th, textAlign: 'right' }}>Points</th>
+                                <th style={th}>Contest</th>
                             </tr>
                         </thead>
                         <tbody>
                             {data.transactions.map(tx => (
                                 <tr key={tx.transaction_id} style={{ borderBottom: '1px solid #eee' }}>
+                                    <td style={{ ...td, color: '#888', fontSize: '12px', textAlign: 'center' }}>{tx.transaction_id}</td>
                                     <td style={td}>{new Date(tx.created_at).toLocaleDateString()}</td>
                                     <td style={td}>{tx.sponsor_name || '—'}</td>
                                     <td style={td}>{SOURCE_LABELS[tx.source] || tx.source}</td>
                                     <td style={td}>{tx.reason}</td>
-                                    <td style={{ ...td, textAlign: 'right', fontWeight: 'bold', color: tx.point_amount >= 0 ? '#2e7d32' : '#c62828' }}>
+                                    <td style={{ ...td, textAlign: 'center', fontWeight: 'bold', color: tx.point_amount >= 0 ? '#2e7d32' : '#c62828' }}>
                                         {tx.point_amount >= 0 ? '+' : ''}{tx.point_amount}
+                                    </td>
+                                    <td style={td}>
+                                        {tx.point_amount < 0 && (
+                                            <button
+                                                disabled={contestedTxIds.has(tx.transaction_id)}
+                                                onClick={() => {
+                                                    setContestTx(tx);
+                                                    setContestReason('');
+                                                    setContestMsg(null);
+                                                    setContestModalOpen(true);
+                                                }}
+                                                style={{
+                                                    padding: '4px 10px',
+                                                    borderRadius: '4px',
+                                                    border: '1px solid #f57c00',
+                                                    background: contestedTxIds.has(tx.transaction_id) ? '#eee' : '#fff3e0',
+                                                    color: contestedTxIds.has(tx.transaction_id) ? '#aaa' : '#e65100',
+                                                    cursor: contestedTxIds.has(tx.transaction_id) ? 'not-allowed' : 'pointer',
+                                                    fontSize: '12px',
+                                                    fontWeight: '600',
+                                                }}
+                                            >
+                                                {contestedTxIds.has(tx.transaction_id) ? 'Contested' : 'Contest'}
+                                            </button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -216,6 +266,122 @@ const DriverDashboard = ({ user }) => {
                                 }}
                             >
                                 {leaving ? 'Leaving...' : 'Confirm Leave'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {contestModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '440px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Contest Point Deduction</h2>
+
+                        <div style={{ marginBottom: '12px', fontSize: '14px', color: '#444' }}>
+                            <div><strong>Transaction ID:</strong> {contestTx?.transaction_id}</div>
+                            <div><strong>Points:</strong> <span style={{ color: '#c62828', fontWeight: 'bold' }}>{contestTx?.point_amount}</span></div>
+                            <div><strong>Reason:</strong> {contestTx?.reason}</div>
+                            <div><strong>Date:</strong> {contestTx ? new Date(contestTx.created_at).toLocaleDateString() : ''}</div>
+                        </div>
+
+                        <label style={labelStyle}>
+                            Your Reason for Contesting <span style={{ color: '#c62828' }}>*</span>
+                        </label>
+                        <textarea
+                            value={contestReason}
+                            onChange={e => setContestReason(e.target.value)}
+                            placeholder="Explain why you believe this deduction was incorrect..."
+                            rows={4}
+                            style={{ ...inputStyle, resize: 'vertical' }}
+                        />
+
+                        {contestMsg && (
+                            <div style={{
+                                marginTop: '12px',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                background: contestMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: contestMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '14px',
+                            }}>
+                                {contestMsg.text}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '20px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => {
+                                    setContestModalOpen(false);
+                                    setContestTx(null);
+                                    setContestMsg(null);
+                                    setContestReason('');
+                                }}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ccc',
+                                    background: '#f5f5f5',
+                                    color: '#1a1a1a',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                {contestMsg?.type === 'success' ? 'Close' : 'Cancel'}
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    if (!contestReason.trim()) {
+                                        setContestMsg({ type: 'error', text: 'Please provide a reason for your contest.' });
+                                        return;
+                                    }
+                                    setContestSubmitting(true);
+                                    try {
+                                        const res = await fetch('/api/point-contest', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                                transaction_id: contestTx.transaction_id,
+                                                driver_user_id: user.user_id,
+                                                sponsor_org_id: contestTx.sponsor_org_id,
+                                                reason: contestReason.trim(),
+                                            }),
+                                        });
+                                        const json = await res.json();
+                                        if (res.ok) {
+                                            setContestMsg({ type: 'success', text: 'Contest submitted successfully!' });
+                                            setContestedTxIds(prev => new Set([...prev, contestTx.transaction_id]));
+                                        } else {
+                                            setContestMsg({ type: 'error', text: json.error || 'Failed to submit contest.' });
+                                        }
+                                    } catch {
+                                        setContestMsg({ type: 'error', text: 'Network error. Please try again.' });
+                                    } finally {
+                                        setContestSubmitting(false);
+                                    }
+                                }}
+                                disabled={contestSubmitting || contestMsg?.type === 'success'}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: contestSubmitting || contestMsg?.type === 'success' ? '#ffcc80' : '#f57c00',
+                                    color: '#fff',
+                                    cursor: contestSubmitting || contestMsg?.type === 'success' ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {contestSubmitting ? 'Submitting...' : 'Submit Contest'}
                             </button>
                         </div>
                     </div>
