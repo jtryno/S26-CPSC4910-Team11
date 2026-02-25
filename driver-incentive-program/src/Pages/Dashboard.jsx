@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
 import SortableTable from '../components/SortableTable';
@@ -20,6 +20,12 @@ const DriverDashboard = ({ user }) => {
     const [contestedTxIds, setContestedTxIds] = useState(new Set());
     const [expandedReasons, setExpandedReasons] = useState(new Set());
 
+    const [orders, setOrders] = useState([]);
+    const [orderDetailOpen, setOrderDetailOpen] = useState(false);
+    const [selectedOrderItems, setSelectedOrderItems] = useState([]);
+    const [selectedOrderId, setSelectedOrderId] = useState(null);
+    const [orderItemsLoading, setOrderItemsLoading] = useState(false);
+
     const SOURCE_LABELS = {
         recurring: 'Recurring',
         manual: 'Manual',
@@ -37,6 +43,13 @@ const DriverDashboard = ({ user }) => {
     };
 
     useEffect(() => { fetchData(); }, [user.user_id]);
+
+    useEffect(() => {
+        fetch(`/api/orders/driver/${user.user_id}`)
+            .then(res => res.ok ? res.json() : Promise.reject())
+            .then(d => setOrders(d.orders || []))
+            .catch(() => {});
+    }, [user.user_id]);
 
     useEffect(() => {
         if (!data || !data.sponsor_org_id) return;
@@ -291,6 +304,156 @@ const DriverDashboard = ({ user }) => {
                             },
                         ]}
                     />
+                </div>
+            )}
+
+            {/* ── Purchase History ── */}
+            <h2 style={{ marginBottom: '12px', marginTop: '32px' }}>Purchase History</h2>
+            {orders.length === 0 ? (
+                <div style={{ color: '#888', marginBottom: '32px' }}>No purchases yet.</div>
+            ) : (
+                <div style={{ textAlign: 'left', marginBottom: '32px' }}>
+                    <SortableTable
+                        columns={[
+                            { key: 'order_id', label: 'Order ID', sortable: true },
+                            { key: 'sponsor_name', label: 'Sponsor', sortable: true },
+                            {
+                                key: 'created_at',
+                                label: 'Date',
+                                sortable: true,
+                                render: (val) => new Date(val).toLocaleDateString(),
+                            },
+                            {
+                                key: 'status',
+                                label: 'Status',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{
+                                        padding: '2px 8px',
+                                        borderRadius: '12px',
+                                        fontSize: '12px',
+                                        fontWeight: '600',
+                                        background: val === 'placed' ? '#e3f2fd' : '#f5f5f5',
+                                        color: val === 'placed' ? '#1565c0' : '#444',
+                                    }}>
+                                        {val}
+                                    </span>
+                                ),
+                            },
+                            { key: 'item_count', label: 'Items', sortable: true },
+                            {
+                                key: 'total_points',
+                                label: 'Points Spent',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{ fontWeight: 'bold', color: '#c62828' }}>
+                                        -{Number(val).toLocaleString()}
+                                    </span>
+                                ),
+                            },
+                            {
+                                key: 'total_usd',
+                                label: 'USD Value',
+                                sortable: true,
+                                render: (val) => `$${parseFloat(val).toFixed(2)}`,
+                            },
+                        ]}
+                        actions={[
+                            {
+                                label: 'Details',
+                                onClick: async (row) => {
+                                    setSelectedOrderId(row.order_id);
+                                    setOrderItemsLoading(true);
+                                    setOrderDetailOpen(true);
+                                    try {
+                                        const res = await fetch(`/api/orders/${row.order_id}/items`);
+                                        const d = await res.json();
+                                        setSelectedOrderItems(d.items || []);
+                                    } catch {
+                                        setSelectedOrderItems([]);
+                                    } finally {
+                                        setOrderItemsLoading(false);
+                                    }
+                                },
+                            },
+                        ]}
+                        data={orders}
+                    />
+                </div>
+            )}
+
+            {/* ── Order Detail Modal ── */}
+            {orderDetailOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '480px',
+                        maxWidth: '95vw',
+                        maxHeight: '80vh',
+                        overflowY: 'auto',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Order #{selectedOrderId}</h2>
+
+                        {orderItemsLoading ? (
+                            <p>Loading items...</p>
+                        ) : selectedOrderItems.length === 0 ? (
+                            <p style={{ color: '#888' }}>No items found.</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '16px' }}>
+                                {selectedOrderItems.map((item) => (
+                                    <div key={item.order_item_id} style={{
+                                        display: 'flex', gap: '12px', alignItems: 'flex-start',
+                                        borderBottom: '1px solid #f0f0f0', paddingBottom: '12px',
+                                    }}>
+                                        <img
+                                            src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/60?text=?'}
+                                            alt={item.title}
+                                            style={{ width: '60px', height: '60px', objectFit: 'contain', flexShrink: 0 }}
+                                            onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/60?text=?'; }}
+                                        />
+                                        <div>
+                                            <div style={{ fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>{item.title}</div>
+                                            <div style={{ fontSize: '13px', color: '#555' }}>Qty: {item.quantity}</div>
+                                            <div style={{ fontSize: '13px', color: '#555' }}>
+                                                {Number(item.points_price_at_purchase).toLocaleString()} pts · ${parseFloat(item.price_usd_at_purchase).toFixed(2)}
+                                            </div>
+                                            {item.item_web_url && (
+                                                <a
+                                                    href={item.item_web_url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{ fontSize: '12px', color: '#1976d2' }}
+                                                >
+                                                    View on eBay ↗
+                                                </a>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+                            <button
+                                onClick={() => { setOrderDetailOpen(false); setSelectedOrderId(null); setSelectedOrderItems([]); }}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px',
+                                    border: '1px solid #ccc', background: '#f5f5f5',
+                                    color: '#1a1a1a', cursor: 'pointer',
+                                }}
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
