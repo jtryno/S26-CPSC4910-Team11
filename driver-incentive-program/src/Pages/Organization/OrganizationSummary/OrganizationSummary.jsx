@@ -7,6 +7,8 @@ import { featchApplicationsUser } from '../../../api/ApplicationApi';
 import TabGroup from '../../../components/TabGroup';
 import OrganizationApplicationsTab from './OrganizationApplicationsTab';
 import OrganizationContestsTab from './OrganizationContestsTab';
+import OrganizationCatalogTab from './OrganizationCatalogTab';
+import OrganizationOrdersTab from './OrganizationOrdersTab';
 
 const OrganizationSummary = () => {
     const [userData, setUserData] = useState(() => {
@@ -44,6 +46,8 @@ const OrganizationSummary = () => {
                 ...(isSponsorOrAdmin ? [
                     { label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg} /> },
                     { label: "Point Contests", content: <OrganizationContestsTab userData={userData} orgId={orgId} /> },
+                    { label: "Catalog", content: <OrganizationCatalogTab orgId={orgId} userData={userData} /> },
+                    { label: "Orders", content: <OrganizationOrdersTab orgId={orgId} userData={userData} /> },
                 ] : [])
             ]} />
         </div>
