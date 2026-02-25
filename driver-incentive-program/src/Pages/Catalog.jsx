@@ -31,7 +31,12 @@ const Catalog = () => {
       <ul className="catalog-list">
         {catalog.map((item) => (
           <li key={item.id} className="catalog-item">
-            <img src={item.image} alt={item.title} style={{width: '100px', height: '100px', objectFit: 'contain', marginRight: '1rem'}} />
+            <img
+              src={item.image}
+              alt={item.title}
+              style={{width: '100px', height: '100px', objectFit: 'contain', marginRight: '1rem'}}
+              onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/100?text=No+Image'; }}
+            />
             <div>
               <h2>{item.title}</h2>
               <p>{item.description}</p>

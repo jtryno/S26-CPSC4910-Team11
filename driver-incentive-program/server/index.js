@@ -4,10 +4,12 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Buffer } from 'buffer';
 import cors from 'cors';
 import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
 import cookieParser from 'cookie-parser';
+import process from 'process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = path.join(__dirname, '.env');
@@ -28,38 +30,218 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 
-// Catalog API proxy to Fake Store API
-app.get('/api/catalog', async (req, res) => {
+// eBay API Configuration
+const EBAY_SANDBOX_TOKEN_URL = 'https://api.ebay.com/identity/v1/oauth2/token';
+const EBAY_SANDBOX_BROWSE_URL = 'https://api.ebay.com/buy/browse/v1/item_summary/search';
+const EBAY_CLIENT_ID = process.env.EBAY_CLIENT_ID;
+const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET;
+
+// Cache for eBay access token
+let ebayAccessToken = null;
+let ebayTokenExpiration = null;
+
+// Get eBay Access Token via OAuth2 Client Credentials Flow
+async function getEbayAccessToken() {
     try {
-        console.log("Fetching catalog from FakeStoreAPI...");
+        // Return cached token if still valid
+        if (ebayAccessToken && ebayTokenExpiration && Date.now() < ebayTokenExpiration) {
+            console.log('Using cached eBay access token');
+            return ebayAccessToken;
+        }
+
+        console.log('Requesting new eBay access token...');
         
-        const response = await fetch('https://fakestoreapi.com/products', {
-            method: 'GET',
+        // Encode credentials in base64
+        const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+        
+        const response = await fetch(EBAY_SANDBOX_TOKEN_URL, {
+            method: 'POST',
             headers: {
-                // This header tells Cloudflare/FakeStore that the request is from a browser
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
+                'Authorization': `Basic ${credentials}`,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope'
         });
 
         if (!response.ok) {
-            // Log the specific status code to your EC2 terminal (e.g., 403)
-            console.error(`External API Error: ${response.status} ${response.statusText}`);
-            return res.status(502).json({ 
-                error: 'Failed to fetch catalog from external API.',
-                statusCode: response.status 
-            });
+            const errorData = await response.text();
+            console.error(`eBay token request failed: ${response.status} ${response.statusText}`, errorData);
+            throw new Error(`Failed to get eBay access token: ${response.statusText}`);
         }
 
-        const products = await response.json();
-        console.log(`Successfully fetched ${products.length} products.`);
+        const data = await response.json();
+        ebayAccessToken = data.access_token;
+        // Set expiration 5 minutes before actual expiration (typically 3600 seconds)
+        ebayTokenExpiration = Date.now() + ((data.expires_in - 300) * 1000);
+        
+        console.log('Successfully obtained eBay access token');
+        return ebayAccessToken;
+    } catch (err) {
+        console.error('Error getting eBay access token:', err);
+        throw err;
+    }
+}
+
+// Search eBay catalog and format response
+async function searchEbayCatalog(query = null, limit = 30) {
+    try {
+        const token = await getEbayAccessToken();
+        
+        // If no query provided, search clothing categories for variety
+        const searchQueries = query ? [query] : ['women clothing', 'men clothing', 'shoes', 'jackets', 'accessories', 'dresses'];
+        
+        console.log(`Searching eBay for queries: ${searchQueries.join(', ')}`);
+        
+        let allProducts = [];
+        
+        // Search each query and combine results
+        for (const searchQuery of searchQueries) {
+            try {
+                const searchUrl = `${EBAY_SANDBOX_BROWSE_URL}?q=${encodeURIComponent(searchQuery)}&limit=${limit}&sort=relevance`;
+                
+                const response = await fetch(searchUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.text();
+                    console.error(`eBay browse request failed for "${searchQuery}": ${response.status} ${response.statusText}`, errorData);
+                    continue;
+                }
+
+                const data = await response.json();
+                console.log(`Found ${(data.itemSummaries || []).length} items for query: "${searchQuery}"`);
+                
+                // Transform eBay response to match our expected format
+                // Use the image URL already included in the search summary response,
+                // routing it through our local proxy to avoid CORS and hotlink issues.
+                const productsFromQuery = (data.itemSummaries || []).map((item, index) => {
+                    const rawImageUrl = item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl;
+                    const image = rawImageUrl
+                        ? `/api/proxy-image?url=${encodeURIComponent(rawImageUrl)}`
+                        : `https://via.placeholder.com/100?text=No+Image`;
+                    return {
+                        id: item.itemId || `${searchQuery}-${index}`,
+                        title: item.title,
+                        description: item.shortDescription || item.condition || 'No description available',
+                        price: item.price?.value || '0.00',
+                        image,
+                        itemId: item.itemId
+                    };
+                });
+
+                allProducts = allProducts.concat(productsFromQuery);
+            } catch (err) {
+                console.error(`Error searching for "${searchQuery}":`, err);
+            }
+        }
+        
+        console.log(`Total items found across all queries: ${allProducts.length}`);
+
+        // Deduplicate by itemId (eBay's unique identifier)
+        const uniqueProducts = [];
+        const seenItemIds = new Set();
+        
+        for (const product of allProducts) {
+            if (!seenItemIds.has(product.id)) {
+                seenItemIds.add(product.id);
+                uniqueProducts.push(product);
+            }
+        }
+
+        // Shuffle results to avoid having all similar items bunched together
+        for (let i = uniqueProducts.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [uniqueProducts[i], uniqueProducts[j]] = [uniqueProducts[j], uniqueProducts[i]];
+        }
+
+        console.log(`Successfully fetched ${allProducts.length} products from eBay (${uniqueProducts.length} unique after deduplication).`);
+        return uniqueProducts;
+    } catch (err) {
+        console.error('Error searching eBay catalog:', err);
+        throw err;
+    }
+}
+
+// Catalog API endpoint - now using eBay API
+app.get('/api/catalog', async (req, res) => {
+    try {
+        const query = req.query.q || 'electronics';
+        const limit = req.query.limit || 30;
+        
+        console.log("Fetching catalog from eBay API...");
+        const products = await searchEbayCatalog(query, limit);
+        
+        // Log first product image URL for debugging
+        if (products.length > 0) {
+            console.log('First product image URL:', products[0].image);
+        }
+        
         res.json(products);
 
     } catch (err) {
-        // This catches network timeouts or DNS failures
+        // This catches network timeouts or eBay API errors
         console.error('Internal Catalog Route Error:', err);
-        res.status(500).json({ error: 'Internal server error.', details: err.message });
+        res.status(502).json({ error: 'Failed to fetch catalog from eBay API.', details: err.message });
+    }
+});
+
+// Image proxy endpoint to handle CORS issues with third-party seller images
+app.get('/api/proxy-image', async (req, res) => {
+    const { url } = req.query;
+    
+    if (!url) {
+        return res.status(400).json({ error: 'url parameter is required' });
+    }
+
+    try {
+        console.log('Proxying image:', url);
+        
+        // Create an abort controller for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.ebay.com/'
+            },
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            console.warn(`Failed to fetch image (${response.status}), returning placeholder:`, url);
+            // Return a simple SVG placeholder instead of failing
+            const placeholderSVG = '<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" fill="#f0f0f0"/><text x="50" y="50" font-size="12" text-anchor="middle" dominant-baseline="middle" fill="#999">No Image</text></svg>';
+            res.set('Content-Type', 'image/svg+xml');
+            res.set('Access-Control-Allow-Origin', '*');
+            return res.send(placeholderSVG);
+        }
+
+        // Get the image as a buffer
+        const imageBuffer = await response.arrayBuffer();
+        
+        // Set appropriate content-type and cache headers
+        const contentType = response.headers.get('content-type') || 'image/jpeg';
+        res.set('Content-Type', contentType);
+        res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+        res.set('Access-Control-Allow-Origin', '*'); // Allow all origins to access
+        
+        // Send the image buffer
+        res.send(Buffer.from(imageBuffer));
+    } catch (err) {
+        console.error('Error proxying image:', err.message);
+        // Return SVG placeholder on error
+        const placeholderSVG = '<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" fill="#f0f0f0"/><text x="50" y="50" font-size="12" text-anchor="middle" dominant-baseline="middle" fill="#999">Error</text></svg>';
+        res.set('Content-Type', 'image/svg+xml');
+        res.set('Access-Control-Allow-Origin', '*');
+        res.send(placeholderSVG);
     }
 });
 
@@ -415,7 +597,7 @@ app.post('/api/login', async (req, res) => {
             return res.json({ requiresTwoFa: true, userId: user.user_id, twoFaCode: code });
         }
 
-        const { password_hash, ...userNoPassword } = user;
+        const { password_hash: _, ...userNoPassword } = user;
         if (req.body.rememberMe) {
             res.cookie('remember_me', user.user_id, { 
                 maxAge: 10 * 24 * 60 * 60 * 1000, // this is 10 daysm, time is just measured in ms
@@ -547,7 +729,7 @@ app.get('/api/admin/user', async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        const { password_hash, ...userWithoutPassword } = users[0];
+        const { password_hash: _, ...userWithoutPassword } = users[0];
         res.json({ user: userWithoutPassword });
     } catch (error) {
         console.error('Error fetching user:', error);
@@ -689,8 +871,6 @@ app.post('/api/driver/leave-sponsor', async (req, res) => {
 app.get('/api/sponsor/drivers/:sponsorUserId', async (req, res) => {
     const { sponsorUserId } = req.params;
     try {
-        const [allSponsors] = await pool.query('SELECT user_id, sponsor_org_id FROM sponsor_user');
-
         const [sponsorRows] = await pool.query(
             'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
             [sponsorUserId]
@@ -897,7 +1077,7 @@ app.post('/api/2fa/verify', async (req, res) => {
         // Fetch full user row to return to the frontend (same as login)
         const [users] = await pool.query('SELECT * FROM users WHERE user_id = ?', [userId]);
         const user = users[0];
-        const { password_hash, ...userNoPassword } = user;
+        const { password_hash: _, ...userNoPassword } = user;
 
         // Set the remember me cookie now that 2FA passed (same as login)
         if (rememberMe) {
