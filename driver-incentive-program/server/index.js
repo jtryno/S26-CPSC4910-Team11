@@ -1427,7 +1427,7 @@ app.get('/api/cart/:cartId', async (req, res) => {
              WHERE ci.cart_id = ?`,
             [cartId]
         );
-        res.json(rows);
+        res.json({ items: rows });
     } catch (error) {
         console.error('Error fetching cart:', error);
         res.status(500).json({ error: 'Failed to fetch cart' });
