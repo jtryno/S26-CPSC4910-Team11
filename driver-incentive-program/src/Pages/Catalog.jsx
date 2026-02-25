@@ -66,6 +66,8 @@ const Catalog = () => {
                     const cartData = await cartRes.json();
                     setCartId(cartData.cart_id);
                     await fetchCart(cartData.cart_id);
+                } else {
+                    console.error('Failed to initialize cart:', await cartRes.text());
                 }
 
                 await fetchBalance();
@@ -222,16 +224,18 @@ const Catalog = () => {
                                     )}
                                     <button
                                         onClick={() => handleAddToCart(item)}
-                                        disabled={addingIds.has(item.item_id) || item.availability_status === 'out_of_stock'}
+                                        disabled={!cartId || addingIds.has(item.item_id) || item.availability_status === 'out_of_stock'}
+                                        title={!cartId ? 'Cart unavailable — please refresh' : undefined}
                                         style={{
                                             marginTop: 'auto',
                                             padding: '8px',
                                             borderRadius: '4px',
                                             border: 'none',
                                             background: item.availability_status === 'out_of_stock' ? '#e0e0e0'
+                                                : !cartId ? '#e0e0e0'
                                                 : addingIds.has(item.item_id) ? '#90caf9' : '#1976d2',
-                                            color: item.availability_status === 'out_of_stock' ? '#999' : '#fff',
-                                            cursor: item.availability_status === 'out_of_stock' || addingIds.has(item.item_id) ? 'not-allowed' : 'pointer',
+                                            color: item.availability_status === 'out_of_stock' || !cartId ? '#999' : '#fff',
+                                            cursor: !cartId || item.availability_status === 'out_of_stock' || addingIds.has(item.item_id) ? 'not-allowed' : 'pointer',
                                             fontWeight: '600',
                                             fontSize: '13px',
                                         }}
