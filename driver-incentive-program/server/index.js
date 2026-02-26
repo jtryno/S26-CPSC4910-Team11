@@ -188,6 +188,21 @@ app.put('/api/application/:application_id', async (req, res) => {
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Application not found' });
         }
+        if(status === 'approved' || status === 'rejected') {
+            const [appInfo] = await pool.query('SELECT driver_user_id, sponsor_org_id FROM driver_applications WHERE application_id = ?', [application_id]);
+            if(appInfo.length > 0) {
+                const {driver_user_id, sponsor_org_id} = appInfo[0];
+                const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
+                const orgName = orgRows[0].name;
+                let msg;
+                if (status === 'approved') {
+                    msg = `Your application to join ${orgName} was approved.`;
+                } else {
+                    msg = `Your application to join ${orgName} was rejected. Reason: ${decision_reason || 'No reason provided.'}`;
+                }
+                await createNotification(driver_user_id, 'application_status', msg, {related_application_id: Number(application_id)});
+            }
+        }
         res.json({ message: 'Application updated successfully' });
     } catch (error) {
         console.error('Error updating application:', error);
@@ -514,6 +529,8 @@ app.post('/api/password-reset/confirm', async (req, res) => {
             [newHash, tokens[0].user_id]
         );
         await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_id = ?', [tokens[0].token_id]);
+        
+        await createNotification(tokens[0].user_id, 'password_changed', 'Your password was successfully changed. If you did not initiate this, please contact support.');
 
         res.json({ message: 'Password reset successfully' });
     } catch (error) {
@@ -886,6 +903,16 @@ app.post('/api/sponsor/points', async (req, res) => {
             [txValues]
         );
 
+        let action;
+        if(pointAmount > 0) {
+            action = 'added to';
+        } else {
+            action = 'deducted from';
+        }
+        const absAmount = Math.abs(pointAmount);
+        for(const driverId of driverIds) {
+            await createNotification(driverId, 'points_changed', `${absAmount} point(s) were ${action} your account. Reason: ${reason}`);
+        }
         res.json({ message: `Points applied to ${driverIds.length} driver(s)` });
     } catch (error) {
         console.error('Error applying points:', error);
@@ -1096,7 +1123,7 @@ app.post('/api/driver/drop', async (req, res) => {
             return res.status(404).json({error: 'Driver not found'});
         }
 
-        const sponsor_org_id = orgIdArray[0].sponsor_org_id;;
+        const sponsor_org_id = orgIdArray[0].sponsor_org_id;
 
         if(sponsor_org_id === null) {
             return res.status(400).json({error: 'Driver is not currently in an organization'});
