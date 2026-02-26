@@ -4,7 +4,7 @@ import { signUpUser } from '../api/UserApi';
 import Modal from './Modal';
 import DropdownField from './DropdownField';
 
-const SignupModal = ({ isOpen, onClose, onSave, possibleRoles, orgs, orgId }) => {
+const SignupModal = ({ isOpen, onClose, onSave, possibleRoles, orgs, orgId, createdByUserId }) => {
     const [firstName, setFirstName] = React.useState('');
     const [lastName, setLastName] = React.useState('');
     const [phoneNumber, setPhoneNumber] = React.useState('');
@@ -39,7 +39,7 @@ const SignupModal = ({ isOpen, onClose, onSave, possibleRoles, orgs, orgId }) =>
                 if (onSave) onSave();
                 handleClose();
                 if (!error) {
-                    signUpUser({firstName, lastName, phoneNumber, email, username, password, orgId: role !== 'admin' ? selectedOrgId : null}, role);
+                    signUpUser({firstName, lastName, phoneNumber, email, username, password, orgId: role !== 'admin' ? selectedOrgId : null, createdByUserId: createdByUserId || null}, role);
                     onClose();
                 }
             }}

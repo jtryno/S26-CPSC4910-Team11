@@ -1342,6 +1342,7 @@ const AdminDashboard = ({ user }) => {
                         label: org.name,
                         value: org.sponsor_org_id,
                     }))}
+                    createdByUserId={user?.user_id}
                 />
                 <input
                     type="email"
