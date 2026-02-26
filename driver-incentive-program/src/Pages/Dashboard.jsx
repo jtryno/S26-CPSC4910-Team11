@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
 import SortableTable from '../components/SortableTable';
+import SignupModal from '../components/SignupModal';
+import { fetchOrganizations } from '../api/OrganizationApi';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -1246,6 +1248,18 @@ const AdminDashboard = ({ user }) => {
     const [deleting, setDeleting] = useState(false);
     const [deleteMsg, setDeleteMsg] = useState(null);
 
+    const [signUpModalOpen, setSignUpModalOpen] = useState(false);
+    const [organizations, setOrganizations] = useState([]);
+
+    const loadOrganizations = async () => {
+        const orgs = await fetchOrganizations();
+        setOrganizations(orgs);
+    }
+
+    useEffect(() => {
+        loadOrganizations();
+    }, []);
+
     const handleSearch = async () => {
         setLoading(true);
         setError('');
@@ -1310,6 +1324,25 @@ const AdminDashboard = ({ user }) => {
             <h1>Admin Dashboard</h1>
             <p style={{ color: '#666', marginBottom: '24px' }}>Search for any user by email to view and edit their information.</p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '24px' }}>
+                <button
+                    style={{width: '200px'}}
+                    onClick={() => setSignUpModalOpen(true)}
+                >
+                    Create New User
+                </button>
+                <SignupModal
+                    isOpen={signUpModalOpen}
+                    onClose={() => setSignUpModalOpen(false)}
+                    possibleRoles={[
+                        { label: 'Driver', value: 'driver' },
+                        { label: 'Sponsor', value: 'sponsor' },
+                        { label: 'Admin', value: 'admin' },
+                    ]}
+                    orgs={organizations.map(org => ({
+                        label: org.name,
+                        value: org.sponsor_org_id,
+                    }))}
+                />
                 <input
                     type="email"
                     placeholder="Enter user email..."

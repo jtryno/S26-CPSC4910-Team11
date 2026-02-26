@@ -57,14 +57,16 @@ const Modal = ({ isOpen, onClose, onSave, title, children }) => {
                     >
                         Close
                     </button>
-                    <button 
-                        onClick={onSave}
-                        style={{
-                            
-                        }}
-                    >
-                        Save
-                    </button>
+                    {onSave ? 
+                        <button 
+                            onClick={onSave}
+                            style={{
+                                
+                            }}
+                        >
+                            Save
+                        </button> :
+                    null}
                 </div>
             </div>
         </div>

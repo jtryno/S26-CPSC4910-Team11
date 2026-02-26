@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import OrganizationSummary from '../OrganizationSummary/OrganizationSummary';
 import SortableTable from '../../../components/SortableTable';
+import InputField from '../../../components/InputField';
+import Field from '../../../components/Field';
 import { fetchOrganizations, createOrganization, deleteOrganization } from '../../../api/OrganizationApi';
 import Modal from '../../../components/Modal';
 
@@ -87,24 +89,17 @@ const Organizations = () => {
                 }}
                 children={
                     <div style={{ display: 'grid', direction: 'column', gap: '20px', paddingRight: '20px' }}>
-                        <div>
-                            <label style={{ display: 'block', marginBottom: '5px' }}>Organization Name</label>
-                            <input 
-                                type="text" 
-                                value={orgName}
-                                onChange={(e) => setOrgName(e.target.value)}
-                                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} 
-                            />
-                        </div>
-                        <div>
-                            <label style={{ display: 'block', marginBottom: '5px' }}>Point Value</label>
-                            <input 
-                                type="number"
-                                value={pointValue}
-                                onChange={(e) => setPointValue(e.target.value)}
-                                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} 
-                            />
-                        </div>
+                        <InputField
+                            label="Organization Name"
+                            value={orgName}
+                            onChange={(value) => setOrgName(value)}
+                        />
+                        <InputField
+                            label="Point Value"
+                            value={pointValue}
+                            onChange={(value) => setPointValue(value)}
+                            type="number"
+                        />
                     </div>
                 }
                 title="Create Organization" />

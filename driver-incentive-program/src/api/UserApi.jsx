@@ -65,4 +65,25 @@ async function dropDriver(driverId, dropReason) {
     }
 }
 
-export { removeFromOrganization, updateField, dropDriver };
+async function signUpUser(userData, userRole) {
+    console.log(userData);
+    try {
+        const response = await fetch('/api/signup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({...userData, userRole}),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to sign up user: ${response.status}`);
+        }
+        return "success"
+    } catch (error) {
+        console.error('Error signing up user:', error);
+        throw error;
+        return "error";
+    }
+}
+
+export { removeFromOrganization, updateField, signUpUser, dropDriver };

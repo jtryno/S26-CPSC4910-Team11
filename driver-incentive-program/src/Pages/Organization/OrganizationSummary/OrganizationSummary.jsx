@@ -42,9 +42,9 @@ const OrganizationSummary = () => {
             <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg} hasPendingApplication={hasPendingApplication}/>
             <div style={{ borderBottom: '1px solid #e0e0e0', marginBottom: '20px'}}/>
             <TabGroup tabs={[
-                { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg} /> },
+                { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg} orgId={orgId}/> },
                 ...(isSponsorOrAdmin ? [
-                    { label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg} /> },
+                    { label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg}/> },
                     { label: "Point Contests", content: <OrganizationContestsTab userData={userData} orgId={orgId} /> },
                     { label: "Catalog", content: <OrganizationCatalogTab orgId={orgId} userData={userData} /> },
                     { label: "Orders", content: <OrganizationOrdersTab orgId={orgId} userData={userData} /> },
