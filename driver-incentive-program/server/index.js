@@ -697,6 +697,24 @@ app.get('/api/session', async (req, res) => {
     }
 });
 
+// --- Signup Route ---
+app.post('/api/signup', async (req, res) => {
+    try {
+        const { firstName, lastName, phoneNumber, email, username, password, userRole, orgId } = req.body;
+        if (!isPasswordComplex(password)) {
+            return res.status(400).json({ message: 'Password does not meet complexity requirements.' });
+        }
+        const passwordHash = hashPassword(password);
+        await pool.query("INSERT INTO users (first_name, last_name, phone_number, email, username, password_hash, user_type, sponsor_org_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [firstName, lastName, phoneNumber, email, username, passwordHash, userRole, orgId],
+        );
+        res.json({ message: 'Signup successful' });
+    } catch (error) {
+        console.error('Signup error:', error);
+        res.status(500).json({ error: 'Server error during signup' });
+    }
+});
+
 // --- Logout Route ---
 app.post('/api/logout', (req, res) => {
     res.clearCookie('remember_me');

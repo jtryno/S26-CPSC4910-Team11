@@ -1,14 +1,34 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 import SortableTable from '../../../components/SortableTable';
+import SignupModal from '../../../components/SignupModal';
 import { removeFromOrganization } from '../../../api/UserApi';
 
-const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => {
+const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgId}) => {
+    const [signupModalOpen, setSignupModalOpen] = useState(false);
 
     const isSponsorOrAdmin = userData?.user_type === 'sponsor' || userData?.user_type === 'admin';
 
     return (
-        <div style={{ display: 'grid', direction: 'column', margin: '20px'}}>
+        <div style={{ display: 'grid', direction: 'column', margin: '20px', gap: '20px'}}>
+            { userData.user_type !== 'driver' &&
+                <button
+                    style={{ width: '200px'}}
+                    onClick={() => setSignupModalOpen(true)}
+                >
+                    Create Org User
+                </button>
+            }
+            <SignupModal
+                isOpen={signupModalOpen}
+                onClose={() => setSignupModalOpen(false)}
+                onSave={() => fetchOrg()}
+                possibleRoles={[
+                    { label: 'Driver', value: 'driver' },
+                    { label : 'Sponsor', value: 'sponsor' },
+                ]}
+                orgId={orgId}
+            />
             <SortableTable
                 columns={[
                     { key: 'user_id', label: 'User ID', sortable: true },

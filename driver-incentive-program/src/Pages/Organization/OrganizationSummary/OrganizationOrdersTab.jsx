@@ -123,7 +123,6 @@ const OrganizationOrdersTab = ({ orgId }) => {
             <Modal
                 isOpen={detailOpen}
                 onClose={handleClose}
-                onSave={handleClose}
                 title={`Order #${selectedOrderId} — Items`}
             >
                 {itemsLoading ? (
