@@ -286,6 +286,42 @@ function verifyScryptPassword(password, stored) {
   return crypto.timingSafeEqual(actual, expected);
 }
 
+//required notificationss
+const MANDATORY_CATEGORIES = ['dropped', 'password_changed'];
+//"extras" parameter is if it has a related_something in the db, if not present for that notification type pass in null
+async function createNotification(userId, category, message, extras = {}) {
+    try {
+        if(!MANDATORY_CATEGORIES.includes(category)) {
+
+            //null if not in preferences table
+            const prefColumnMap = {'points_changed': 'points_changed_enabled', 'order_placed': 'order_placed_enabled', 'application_status': null};
+
+            const prefColumn = prefColumnMap[category];
+
+            //if it has a corresponding spot in preferences table
+            if (prefColumn) {
+                const [prefRows] = await pool.query('SELECT ?? FROM notification_preferences WHERE user_id = ?',[prefColumn, userId]);
+
+                //first check makes sure new user has  enabled preferneces
+                if(prefRows.length > 0 && prefRows[0][prefColumn] === 0) {
+                    return;
+                }
+            }
+        }
+
+
+        const {related_order_id = null, related_transaction_id = null, related_application_id = null} = extras;
+
+        await pool.query(
+            `INSERT INTO notifications (user_id, category, message, related_order_id, related_transaction_id, related_application_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+            [userId, category, message, related_order_id, related_transaction_id, related_application_id]
+        );
+
+    } catch (error) {
+        console.error('Failed to create notification:', error);
+    }
+}
+
 // --- About Page Route ---
 app.get('/api/about', async (req, res) => {
     try {
@@ -335,6 +371,21 @@ app.put('/api/application/:application_id', async (req, res) => {
         );
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Application not found' });
+        }
+        if(status === 'approved' || status === 'rejected') {
+            const [appInfo] = await pool.query('SELECT driver_user_id, sponsor_org_id FROM driver_applications WHERE application_id = ?', [application_id]);
+            if(appInfo.length > 0) {
+                const {driver_user_id, sponsor_org_id} = appInfo[0];
+                const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
+                const orgName = orgRows[0].name;
+                let msg;
+                if (status === 'approved') {
+                    msg = `Your application to join ${orgName} was approved.`;
+                } else {
+                    msg = `Your application to join ${orgName} was rejected. Reason: ${decision_reason || 'No reason provided.'}`;
+                }
+                await createNotification(driver_user_id, 'application_status', msg, {related_application_id: Number(application_id)});
+            }
         }
         res.json({ message: 'Application updated successfully' });
     } catch (error) {
@@ -487,7 +538,6 @@ app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        // Parameterized query prevents SQL Injection
         const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
 
         if (users.length === 0) {
@@ -669,6 +719,8 @@ app.post('/api/password-reset/confirm', async (req, res) => {
             [newHash, tokens[0].user_id]
         );
         await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_id = ?', [tokens[0].token_id]);
+        
+        await createNotification(tokens[0].user_id, 'password_changed', 'Your password was successfully changed. If you did not initiate this, please contact support.');
 
         res.json({ message: 'Password reset successfully' });
     } catch (error) {
@@ -1039,6 +1091,16 @@ app.post('/api/sponsor/points', async (req, res) => {
             [txValues]
         );
 
+        let action;
+        if(pointAmount > 0) {
+            action = 'added to';
+        } else {
+            action = 'deducted from';
+        }
+        const absAmount = Math.abs(pointAmount);
+        for(const driverId of driverIds) {
+            await createNotification(driverId, 'points_changed', `${absAmount} point(s) were ${action} your account. Reason: ${reason}`);
+        }
         res.json({ message: `Points applied to ${driverIds.length} driver(s)` });
     } catch (error) {
         console.error('Error applying points:', error);
@@ -1152,6 +1214,135 @@ app.delete('/api/admin/user/:userId', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete user' });
     }
 });
+
+// --- notification route ---
+// --- get notification preferences ---
+app.get('/api/notifications/preferences/:userId', async (req, res) => {
+    const {userId} = req.params;
+    try {
+        const [preferences] = await pool.query('SELECT points_changed_enabled, order_placed_enabled FROM notification_preferences WHERE user_id = ?',
+            [userId]
+        );
+            //if preferences never changed manually everything is enabled 
+        if(preferences.length === 0) {
+            return res.json({points_changed_enabled: 1, order_placed_enabled: 1});
+        }
+
+        res.json(preferences[0])
+    } catch (error) {
+        console.error('Error getting notification preferences:', error);
+        res.status(500).json({error: 'Failed to fetch notification preferences'});
+    }
+});
+
+// --- get all notifications ---
+app.get('/api/notifications/:userId', async (req, res) => {
+    const {userId} = req.params;
+    try {
+        //sorted by newest first
+        const [notifications] = await pool.query(`SELECT notification_id, category, message, related_order_id, related_transaction_id, related_application_id, created_at, read_at
+             FROM notifications WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        res.json({notifications});
+    } catch (error) {
+        console.error('Error getting notificationls:', error);
+        res.status(500).json({error: 'Failed getting notifications'});
+    }
+});
+
+// --- mark a notification as read ---
+app.put('/api/notifications/:notificationId/read', async (req, res) => {
+    const {notificationId} = req.params;
+    try {
+        //NOW() is current time
+        await pool.query('UPDATE notifications SET read_at = NOW() WHERE notification_id = ? AND read_at IS NULL',
+            [notificationId]
+        );
+        res.json({message: 'Notification marked as read'});
+    } catch (error) {
+        console.error('Error marking notification as read:', error);
+        res.status(500).json({error: 'Failed to mark notification as read'});
+    }
+});
+
+// --- mark all notifications as read ---
+app.put('/api/notifications/user/:userId/read-all', async (req, res) => {
+    const {userId} = req.params;
+    try {
+        await pool.query('UPDATE notifications SET read_at = NOW() WHERE user_id = ? AND read_at IS NULL',
+            [userId]
+        );
+        res.json({message: 'All notifications marked as read'});
+    } catch (error) {
+        console.error('Error marking all notifications as read:', error);
+        res.status(500).json({error: 'Failed to mark all notifications as read'});
+    }
+});
+
+// --- update notification preferecnes ---
+app.put('/api/notifications/preferences/:userId', async (req, res) => {
+    const {userId} = req.params;
+    const {points_changed_enabled, order_placed_enabled} = req.body;
+    try {
+        await pool.query('UPDATE notification_preferences SET points_changed_enabled = ?, order_placed_enabled = ?, updated_at = NOW() WHERE user_id = ?',
+            [points_changed_enabled, order_placed_enabled, userId]
+        );
+        res.json({message: 'Preferences updated successfully'});
+    } catch (error) {
+        console.error('Error updating notification preferences:', error);
+        res.status(500).json({error: 'Failed to update notification preferences'});
+    }
+});
+
+// --- Drop driver from organization ---
+app.post('/api/driver/drop', async (req, res) => {
+    const {driverId, drop_reason} = req.body;
+
+    if(!driverId) {
+        return res.status(400).json({error: 'driverId is required'});
+    }
+
+    try {
+        //get users org id so we can get org name to show who dropped them
+        const [orgIdArray] = await pool.query('SELECT sponsor_org_id FROM driver_user WHERE user_id = ?',[driverId]);
+
+        if(orgIdArray.length === 0) {
+            return res.status(404).json({error: 'Driver not found'});
+        }
+
+        const sponsor_org_id = orgIdArray[0].sponsor_org_id;
+
+        if(sponsor_org_id === null) {
+            return res.status(400).json({error: 'Driver is not currently in an organization'});
+        }
+
+        const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
+
+        const orgName = orgRows[0].name;
+
+        await pool.query(
+            'UPDATE driver_user SET sponsor_org_id = NULL, driver_status = "dropped", dropped_at = NOW(), drop_reason = ? WHERE user_id = ?', [drop_reason || null, driverId]);
+
+        await pool.query(
+            'UPDATE users SET sponsor_org_id = NULL WHERE user_id = ?', [driverId]);
+
+        let msg;
+        if(drop_reason) {
+            msg = `You have been removed from ${orgName}. Reason: ${drop_reason}`;
+        } else {
+            msg = `You have been removed from ${orgName}.`;
+        }
+
+        await createNotification(driverId, 'dropped', msg);
+
+        res.json({message: 'Driver removed from organization'});
+    } catch (error) {
+        console.error('Error dropping driver:', error);
+        res.status(500).json({error: 'Failed to remove driver from organization'});
+    }
+});
+
 
 // --- Sponsor User Monthly Point Amount Awarded & Deducted Route ---
 app.get('/api/sponsor/monthly-points/:sponsorUserId', async (req, res) => {
