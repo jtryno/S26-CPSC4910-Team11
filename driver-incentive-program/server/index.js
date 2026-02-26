@@ -4,10 +4,12 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Buffer } from 'buffer';
 import cors from 'cors';
 import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
 import cookieParser from 'cookie-parser';
+import process from 'process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = path.join(__dirname, '.env');
@@ -28,38 +30,220 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 
-// Catalog API proxy to Fake Store API
-app.get('/api/catalog', async (req, res) => {
+// eBay API Configuration
+const EBAY_SANDBOX_TOKEN_URL = 'https://api.ebay.com/identity/v1/oauth2/token';
+const EBAY_SANDBOX_BROWSE_URL = 'https://api.ebay.com/buy/browse/v1/item_summary/search';
+const EBAY_CLIENT_ID = process.env.EBAY_CLIENT_ID;
+const EBAY_CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET;
+
+// Cache for eBay access token
+let ebayAccessToken = null;
+let ebayTokenExpiration = null;
+
+// Get eBay Access Token via OAuth2 Client Credentials Flow
+async function getEbayAccessToken() {
     try {
-        console.log("Fetching catalog from FakeStoreAPI...");
+        // Return cached token if still valid
+        if (ebayAccessToken && ebayTokenExpiration && Date.now() < ebayTokenExpiration) {
+            console.log('Using cached eBay access token');
+            return ebayAccessToken;
+        }
+
+        console.log('Requesting new eBay access token...');
         
-        const response = await fetch('https://fakestoreapi.com/products', {
-            method: 'GET',
+        // Encode credentials in base64
+        const credentials = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64');
+        
+        const response = await fetch(EBAY_SANDBOX_TOKEN_URL, {
+            method: 'POST',
             headers: {
-                // This header tells Cloudflare/FakeStore that the request is from a browser
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
+                'Authorization': `Basic ${credentials}`,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope'
         });
 
         if (!response.ok) {
-            // Log the specific status code to your EC2 terminal (e.g., 403)
-            console.error(`External API Error: ${response.status} ${response.statusText}`);
-            return res.status(502).json({ 
-                error: 'Failed to fetch catalog from external API.',
-                statusCode: response.status 
-            });
+            const errorData = await response.text();
+            console.error(`eBay token request failed: ${response.status} ${response.statusText}`, errorData);
+            throw new Error(`Failed to get eBay access token: ${response.statusText}`);
         }
 
-        const products = await response.json();
-        console.log(`Successfully fetched ${products.length} products.`);
+        const data = await response.json();
+        ebayAccessToken = data.access_token;
+        // Set expiration 5 minutes before actual expiration (typically 3600 seconds)
+        ebayTokenExpiration = Date.now() + ((data.expires_in - 300) * 1000);
+        
+        console.log('Successfully obtained eBay access token');
+        return ebayAccessToken;
+    } catch (err) {
+        console.error('Error getting eBay access token:', err);
+        throw err;
+    }
+}
+
+// Search eBay catalog and format response
+async function searchEbayCatalog(query = null, limit = 30) {
+    try {
+        const token = await getEbayAccessToken();
+        
+        // If no query provided, search clothing categories for variety
+        const searchQueries = query ? [query] : ['women clothing', 'men clothing', 'shoes', 'jackets', 'accessories', 'dresses'];
+        
+        console.log(`Searching eBay for queries: ${searchQueries.join(', ')}`);
+        
+        let allProducts = [];
+        
+        // Search each query and combine results
+        for (const searchQuery of searchQueries) {
+            try {
+                const searchUrl = `${EBAY_SANDBOX_BROWSE_URL}?q=${encodeURIComponent(searchQuery)}&limit=${limit}&sort=relevance`;
+                
+                const response = await fetch(searchUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.text();
+                    console.error(`eBay browse request failed for "${searchQuery}": ${response.status} ${response.statusText}`, errorData);
+                    continue;
+                }
+
+                const data = await response.json();
+                console.log(`Found ${(data.itemSummaries || []).length} items for query: "${searchQuery}"`);
+                
+                // Transform eBay response to match our expected format
+                // Use the image URL already included in the search summary response,
+                // routing it through our local proxy to avoid CORS and hotlink issues.
+                const productsFromQuery = (data.itemSummaries || []).map((item, index) => {
+                    const rawImageUrl = item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl;
+                    const image = rawImageUrl
+                        ? `/api/proxy-image?url=${encodeURIComponent(rawImageUrl)}`
+                        : `https://via.placeholder.com/100?text=No+Image`;
+                    return {
+                        id: item.itemId || `${searchQuery}-${index}`,
+                        title: item.title,
+                        description: item.shortDescription || item.condition || 'No description available',
+                        price: item.price?.value || '0.00',
+                        image,
+                        rawImageUrl: rawImageUrl || '',
+                        itemWebUrl: item.itemWebUrl || '',
+                        itemId: item.itemId
+                    };
+                });
+
+                allProducts = allProducts.concat(productsFromQuery);
+            } catch (err) {
+                console.error(`Error searching for "${searchQuery}":`, err);
+            }
+        }
+        
+        console.log(`Total items found across all queries: ${allProducts.length}`);
+
+        // Deduplicate by itemId (eBay's unique identifier)
+        const uniqueProducts = [];
+        const seenItemIds = new Set();
+        
+        for (const product of allProducts) {
+            if (!seenItemIds.has(product.id)) {
+                seenItemIds.add(product.id);
+                uniqueProducts.push(product);
+            }
+        }
+
+        // Shuffle results to avoid having all similar items bunched together
+        for (let i = uniqueProducts.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [uniqueProducts[i], uniqueProducts[j]] = [uniqueProducts[j], uniqueProducts[i]];
+        }
+
+        console.log(`Successfully fetched ${allProducts.length} products from eBay (${uniqueProducts.length} unique after deduplication).`);
+        return uniqueProducts;
+    } catch (err) {
+        console.error('Error searching eBay catalog:', err);
+        throw err;
+    }
+}
+
+// Catalog API endpoint - now using eBay API
+app.get('/api/catalog', async (req, res) => {
+    try {
+        const query = req.query.q || 'electronics';
+        const limit = req.query.limit || 30;
+        
+        console.log("Fetching catalog from eBay API...");
+        const products = await searchEbayCatalog(query, limit);
+        
+        // Log first product image URL for debugging
+        if (products.length > 0) {
+            console.log('First product image URL:', products[0].image);
+        }
+        
         res.json(products);
 
     } catch (err) {
-        // This catches network timeouts or DNS failures
+        // This catches network timeouts or eBay API errors
         console.error('Internal Catalog Route Error:', err);
-        res.status(500).json({ error: 'Internal server error.', details: err.message });
+        res.status(502).json({ error: 'Failed to fetch catalog from eBay API.', details: err.message });
+    }
+});
+
+// Image proxy endpoint to handle CORS issues with third-party seller images
+app.get('/api/proxy-image', async (req, res) => {
+    const { url } = req.query;
+    
+    if (!url) {
+        return res.status(400).json({ error: 'url parameter is required' });
+    }
+
+    try {
+        console.log('Proxying image:', url);
+        
+        // Create an abort controller for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.ebay.com/'
+            },
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            console.warn(`Failed to fetch image (${response.status}), returning placeholder:`, url);
+            // Return a simple SVG placeholder instead of failing
+            const placeholderSVG = '<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" fill="#f0f0f0"/><text x="50" y="50" font-size="12" text-anchor="middle" dominant-baseline="middle" fill="#999">No Image</text></svg>';
+            res.set('Content-Type', 'image/svg+xml');
+            res.set('Access-Control-Allow-Origin', '*');
+            return res.send(placeholderSVG);
+        }
+
+        // Get the image as a buffer
+        const imageBuffer = await response.arrayBuffer();
+        
+        // Set appropriate content-type and cache headers
+        const contentType = response.headers.get('content-type') || 'image/jpeg';
+        res.set('Content-Type', contentType);
+        res.set('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+        res.set('Access-Control-Allow-Origin', '*'); // Allow all origins to access
+        
+        // Send the image buffer
+        res.send(Buffer.from(imageBuffer));
+    } catch (err) {
+        console.error('Error proxying image:', err.message);
+        // Return SVG placeholder on error
+        const placeholderSVG = '<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" fill="#f0f0f0"/><text x="50" y="50" font-size="12" text-anchor="middle" dominant-baseline="middle" fill="#999">Error</text></svg>';
+        res.set('Content-Type', 'image/svg+xml');
+        res.set('Access-Control-Allow-Origin', '*');
+        res.send(placeholderSVG);
     }
 });
 
@@ -335,7 +519,13 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
     const { sponsor_org_id } = req.params;
 
     try {
-        const [users] = await pool.query('SELECT * FROM users WHERE sponsor_org_id = ?', [sponsor_org_id]);
+        const [users] = await pool.query(
+            `SELECT u.*, du.current_points_balance AS points
+             FROM users u
+             LEFT JOIN driver_user du ON u.user_id = du.user_id AND du.sponsor_org_id = ?
+             WHERE u.sponsor_org_id = ?`,
+            [sponsor_org_id, sponsor_org_id]
+        );
         res.json({ message: 'Organization users retrieved successfully', users });
     } catch (error) {
         console.error('Error fetching organization users:', error);
@@ -459,7 +649,7 @@ app.post('/api/login', async (req, res) => {
             return res.json({ requiresTwoFa: true, userId: user.user_id, twoFaCode: code });
         }
 
-        const { password_hash, ...userNoPassword } = user;
+        const { password_hash: _, ...userNoPassword } = user;
         if (req.body.rememberMe) {
             res.cookie('remember_me', user.user_id, { 
                 maxAge: 10 * 24 * 60 * 60 * 1000, // this is 10 daysm, time is just measured in ms
@@ -593,7 +783,7 @@ app.get('/api/admin/user', async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        const { password_hash, ...userWithoutPassword } = users[0];
+        const { password_hash: _, ...userWithoutPassword } = users[0];
         res.json({ user: userWithoutPassword });
     } catch (error) {
         console.error('Error fetching user:', error);
@@ -735,8 +925,6 @@ app.post('/api/driver/leave-sponsor', async (req, res) => {
 app.get('/api/sponsor/drivers/:sponsorUserId', async (req, res) => {
     const { sponsorUserId } = req.params;
     try {
-        const [allSponsors] = await pool.query('SELECT user_id, sponsor_org_id FROM sponsor_user');
-
         const [sponsorRows] = await pool.query(
             'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
             [sponsorUserId]
@@ -783,7 +971,7 @@ app.get('/api/sponsor/settings/:sponsorUserId', async (req, res) => {
         const { sponsor_org_id } = sponsorRows[0];
 
         const [orgRows] = await pool.query(
-            'SELECT point_upper_limit, point_lower_limit, monthly_point_limit FROM sponsor_organization WHERE sponsor_org_id = ?',
+            'SELECT point_upper_limit, point_lower_limit, monthly_point_limit, point_value FROM sponsor_organization WHERE sponsor_org_id = ?',
             [sponsor_org_id]
         );
         res.json(orgRows[0]);
@@ -953,7 +1141,7 @@ app.post('/api/2fa/verify', async (req, res) => {
         // Fetch full user row to return to the frontend (same as login)
         const [users] = await pool.query('SELECT * FROM users WHERE user_id = ?', [userId]);
         const user = users[0];
-        const { password_hash, ...userNoPassword } = user;
+        const { password_hash: _, ...userNoPassword } = user;
 
         // Set the remember me cookie now that 2FA passed (same as login)
         if (rememberMe) {
@@ -1155,6 +1343,599 @@ app.post('/api/driver/drop', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+
+// --- Sponsor User Monthly Point Amount Awarded & Deducted Route ---
+app.get('/api/sponsor/monthly-points/:sponsorUserId', async (req, res) => {
+    const { sponsorUserId } = req.params;
+    try {
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [sponsorUserId]
+        );
+        if (sponsorRows.length === 0) {
+            return res.status(404).json({ error: 'Sponsor org not found for this user' });
+        }
+        const { sponsor_org_id } = sponsorRows[0];
+
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+
+        const [[{ month_awarded, month_deducted }]] = await pool.query(
+            `SELECT 
+                COALESCE(SUM(CASE WHEN point_amount > 0 THEN point_amount ELSE 0 END), 0) AS month_awarded,
+                COALESCE(SUM(CASE WHEN point_amount < 0 THEN point_amount ELSE 0 END), 0) AS month_deducted
+             FROM point_transactions 
+             WHERE sponsor_org_id = ? 
+             AND created_by_user_id = ? 
+             AND created_at >= ?`,
+            [sponsor_org_id, sponsorUserId, monthStart]
+        );
+
+        res.json({ month_awarded, month_deducted });
+    } catch (error) {
+        console.error('Error fetching monthly points:', error);
+        res.status(500).json({ error: 'Failed to fetch monthly points' });
+    }
 });
+
+// Driver submit a contest
+app.post('/api/point-contest', async (req, res) => {
+    const { transaction_id, driver_user_id, sponsor_org_id, reason } = req.body;
+
+    if (!transaction_id || !driver_user_id || !sponsor_org_id || !reason?.trim()) {
+        return res.status(400).json({ error: 'transaction_id, driver_user_id, sponsor_org_id, and reason are required' });
+    }
+
+    try {
+        // Verify the transaction belongs to this driver and is a deduction
+        const [txRows] = await pool.query(
+            'SELECT * FROM point_transactions WHERE transaction_id = ? AND driver_user_id = ? AND point_amount < 0',
+            [transaction_id, driver_user_id]
+        );
+        if (txRows.length === 0) {
+            return res.status(404).json({ error: 'Transaction not found or is not a deduction' });
+        }
+
+        // Prevent duplicate pending contests for the same transaction
+        const [existing] = await pool.query(
+            'SELECT contest_id FROM point_contests WHERE transaction_id = ? AND status = "pending"',
+            [transaction_id]
+        );
+        if (existing.length > 0) {
+            return res.status(409).json({ error: 'A pending contest already exists for this transaction' });
+        }
+
+        const [result] = await pool.query(
+            'INSERT INTO point_contests (transaction_id, driver_user_id, sponsor_org_id, reason) VALUES (?, ?, ?, ?)',
+            [transaction_id, driver_user_id, sponsor_org_id, reason.trim()]
+        );
+
+        res.json({ message: 'Contest submitted successfully', contest_id: result.insertId });
+    } catch (error) {
+        console.error('Error submitting point contest:', error);
+        res.status(500).json({ error: 'Failed to submit point contest' });
+    }
+});
+
+// Get point contests for an organization (sponsor/admin)
+app.get('/api/point-contest/organization/:org_id', async (req, res) => {
+    const { org_id } = req.params;
+    const { status } = req.query;
+
+    try {
+        let query = `
+            SELECT 
+                pc.*,
+                pt.point_amount,
+                pt.reason AS transaction_reason,
+                pt.source,
+                pt.created_at AS transaction_date,
+                u.username AS driver_username
+            FROM point_contests pc
+            JOIN point_transactions pt ON pc.transaction_id = pt.transaction_id
+            JOIN users u ON pc.driver_user_id = u.user_id
+            WHERE pc.sponsor_org_id = ?
+        `;
+        const params = [org_id];
+
+        if (status) {
+            query += ' AND pc.status = ?';
+            params.push(status);
+        }
+
+        query += ' ORDER BY pc.created_at DESC';
+
+        const [contests] = await pool.query(query, params);
+        res.json({ contests });
+    } catch (error) {
+        console.error('Error fetching point contests:', error);
+        res.status(500).json({ error: 'Failed to fetch point contests' });
+    }
+});
+
+// Review a point contest (sponsor/admin)
+app.put('/api/point-contest/:contest_id', async (req, res) => {
+    const { contest_id } = req.params;
+    const { status, decision_reason, reviewed_by_user_id } = req.body;
+
+    if (!['approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ error: 'status must be "approved" or "rejected"' });
+    }
+    if (!reviewed_by_user_id) {
+        return res.status(400).json({ error: 'reviewed_by_user_id is required' });
+    }
+
+    try {
+        const [contestRows] = await pool.query(
+            'SELECT * FROM point_contests WHERE contest_id = ? AND status = "pending"',
+            [contest_id]
+        );
+        if (contestRows.length === 0) {
+            return res.status(404).json({ error: 'Contest not found or already reviewed' });
+        }
+
+        const contest = contestRows[0];
+
+        await pool.query(
+            'UPDATE point_contests SET status = ?, decision_reason = ?, reviewed_by_user_id = ?, reviewed_at = NOW() WHERE contest_id = ?',
+            [status, decision_reason || null, reviewed_by_user_id, contest_id]
+        );
+
+        // If approved, reverse the original deduction
+        if (status === 'approved') {
+            const [txRows] = await pool.query(
+                'SELECT * FROM point_transactions WHERE transaction_id = ?',
+                [contest.transaction_id]
+            );
+            if (txRows.length > 0) {
+                const original = txRows[0];
+                await pool.query(
+                    'INSERT INTO point_transactions (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+                    [
+                        original.driver_user_id,
+                        original.sponsor_org_id,
+                        Math.abs(original.point_amount), // reverse the deduction
+                        `Contest approved — reversal of transaction #${contest.transaction_id}`,
+                        'manual',
+                        reviewed_by_user_id,
+                    ]
+                );
+            }
+        }
+
+        res.json({ message: `Contest ${status} successfully` });
+    } catch (error) {
+        console.error('Error reviewing point contest:', error);
+        res.status(500).json({ error: 'Failed to review point contest' });
+    }
+});
+
+// ─── Catalog Management Routes ───────────────────────────────────────────────
+
+// GET /api/catalog/org/:sponsorOrgId — active items for a sponsor's catalog
+app.get('/api/catalog/org/:sponsorOrgId', async (req, res) => {
+    const { sponsorOrgId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT ci.*, so.point_value
+             FROM catalog_items ci
+             JOIN sponsor_organization so ON ci.sponsor_org_id = so.sponsor_org_id
+             WHERE ci.sponsor_org_id = ? AND ci.is_active = 1
+             ORDER BY ci.created_at DESC`,
+            [sponsorOrgId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching org catalog:', error);
+        res.status(500).json({ error: 'Failed to fetch catalog' });
+    }
+});
+
+// POST /api/catalog/org/:sponsorOrgId/items — sponsor adds eBay item to catalog
+app.post('/api/catalog/org/:sponsorOrgId/items', async (req, res) => {
+    const { sponsorOrgId } = req.params;
+    const { ebay_item_id, title, item_web_url, image_url, description, last_price_value } = req.body;
+    if (!ebay_item_id || !title || !last_price_value) {
+        return res.status(400).json({ error: 'ebay_item_id, title, and last_price_value are required' });
+    }
+    try {
+        const [orgRows] = await pool.query(
+            'SELECT point_value FROM sponsor_organization WHERE sponsor_org_id = ?',
+            [sponsorOrgId]
+        );
+        if (orgRows.length === 0) return res.status(404).json({ error: 'Organization not found' });
+
+        const { point_value } = orgRows[0];
+        const points_price = Math.ceil(parseFloat(last_price_value) / parseFloat(point_value));
+
+        const [result] = await pool.query(
+            `INSERT INTO catalog_items
+               (sponsor_org_id, ebay_item_id, title, item_web_url, image_url, description,
+                last_price_value, last_price_currency, availability_status, last_api_refresh_at,
+                points_price, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', 'in_stock', NOW(), ?, 1)`,
+            [sponsorOrgId, ebay_item_id, title, item_web_url || null, image_url || null,
+             description || null, last_price_value, points_price]
+        );
+        res.status(201).json({ message: 'Item added to catalog', item_id: result.insertId });
+    } catch (error) {
+        console.error('Error adding catalog item:', error);
+        res.status(500).json({ error: 'Failed to add item to catalog' });
+    }
+});
+
+// DELETE /api/catalog/items/:itemId — sponsor soft-removes item (is_active = 0)
+app.delete('/api/catalog/items/:itemId', async (req, res) => {
+    const { itemId } = req.params;
+    try {
+        await pool.query(
+            'UPDATE catalog_items SET is_active = 0, updated_at = NOW() WHERE item_id = ?',
+            [itemId]
+        );
+        res.json({ message: 'Item removed from catalog' });
+    } catch (error) {
+        console.error('Error removing catalog item:', error);
+        res.status(500).json({ error: 'Failed to remove item' });
+    }
+});
+
+// ─── Cart Routes ──────────────────────────────────────────────────────────────
+
+// POST /api/cart — get-or-create active cart for driver+org
+app.post('/api/cart', async (req, res) => {
+    const { driverUserId, sponsorOrgId } = req.body;
+    if (!driverUserId || !sponsorOrgId) {
+        return res.status(400).json({ error: 'driverUserId and sponsorOrgId are required' });
+    }
+    try {
+        const [existing] = await pool.query(
+            'SELECT cart_id FROM carts WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = "active" LIMIT 1',
+            [driverUserId, sponsorOrgId]
+        );
+        if (existing.length > 0) {
+            return res.json({ cart_id: existing[0].cart_id });
+        }
+        const [result] = await pool.query(
+            'INSERT INTO carts (driver_user_id, sponsor_org_id, created_by_user_id, status) VALUES (?, ?, ?, "active")',
+            [driverUserId, sponsorOrgId, driverUserId]
+        );
+        res.status(201).json({ cart_id: result.insertId });
+    } catch (error) {
+        console.error('Error creating cart:', error);
+        res.status(500).json({ error: 'Failed to create cart' });
+    }
+});
+
+// GET /api/cart/:cartId — contents of a cart
+app.get('/api/cart/:cartId', async (req, res) => {
+    const { cartId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT ci.*, cat.title, cat.image_url, cat.item_web_url, cat.description
+             FROM cart_items ci
+             JOIN catalog_items cat ON ci.item_id = cat.item_id
+             WHERE ci.cart_id = ?`,
+            [cartId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching cart:', error);
+        res.status(500).json({ error: 'Failed to fetch cart' });
+    }
+});
+
+// POST /api/cart/:cartId/items — add (or increment) an item in the cart
+app.post('/api/cart/:cartId/items', async (req, res) => {
+    const { cartId } = req.params;
+    const { itemId, quantity = 1 } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    try {
+        const [itemRows] = await pool.query(
+            'SELECT item_id, points_price, last_price_value, availability_status, is_active FROM catalog_items WHERE item_id = ? AND is_active = 1',
+            [itemId]
+        );
+        if (itemRows.length === 0) return res.status(404).json({ error: 'Item not found or unavailable' });
+        const item = itemRows[0];
+
+        const [existing] = await pool.query(
+            'SELECT cart_item_id, quantity FROM cart_items WHERE cart_id = ? AND item_id = ?',
+            [cartId, itemId]
+        );
+        if (existing.length > 0) {
+            await pool.query(
+                'UPDATE cart_items SET quantity = quantity + ? WHERE cart_item_id = ?',
+                [quantity, existing[0].cart_item_id]
+            );
+        } else {
+            await pool.query(
+                `INSERT INTO cart_items (cart_id, item_id, quantity, points_price_at_add, price_usd_at_add, availability_at_add)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [cartId, itemId, quantity, item.points_price, item.last_price_value, item.availability_status]
+            );
+        }
+        res.json({ message: 'Item added to cart' });
+    } catch (error) {
+        console.error('Error adding item to cart:', error);
+        res.status(500).json({ error: 'Failed to add item to cart' });
+    }
+});
+
+// DELETE /api/cart/:cartId/items/:itemId — remove item from cart
+app.delete('/api/cart/:cartId/items/:itemId', async (req, res) => {
+    const { cartId, itemId } = req.params;
+    try {
+        await pool.query('DELETE FROM cart_items WHERE cart_id = ? AND item_id = ?', [cartId, itemId]);
+        res.json({ message: 'Item removed from cart' });
+    } catch (error) {
+        console.error('Error removing cart item:', error);
+        res.status(500).json({ error: 'Failed to remove item from cart' });
+    }
+});
+
+// ─── Checkout / Order Routes ──────────────────────────────────────────────────
+
+// POST /api/orders — checkout cart (atomic transaction)
+app.post('/api/orders', async (req, res) => {
+    const { driverUserId, sponsorOrgId, cartId } = req.body;
+    if (!driverUserId || !sponsorOrgId || !cartId) {
+        return res.status(400).json({ error: 'driverUserId, sponsorOrgId, and cartId are required' });
+    }
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        // 1. Verify cart belongs to driver and is still active
+        const [[cartRow]] = await conn.query(
+            'SELECT cart_id FROM carts WHERE cart_id = ? AND driver_user_id = ? AND status = "active"',
+            [cartId, driverUserId]
+        );
+        if (!cartRow) {
+            await conn.rollback();
+            return res.status(400).json({ error: 'Cart not found or already checked out' });
+        }
+
+        // 2. Load cart items with current catalog prices
+        const [items] = await conn.query(
+            `SELECT ci.item_id, ci.quantity, cat.points_price, cat.last_price_value,
+                    cat.availability_status, cat.is_active
+             FROM cart_items ci
+             JOIN catalog_items cat ON ci.item_id = cat.item_id
+             WHERE ci.cart_id = ?`,
+            [cartId]
+        );
+        if (items.length === 0) {
+            await conn.rollback();
+            return res.status(400).json({ error: 'Cart is empty' });
+        }
+
+        // 3. Validate all items are still available
+        for (const item of items) {
+            if (!item.is_active || item.availability_status === 'out_of_stock') {
+                await conn.rollback();
+                return res.status(400).json({ error: `Item ${item.item_id} is no longer available` });
+            }
+        }
+
+        // 4. Calculate total points cost using current catalog prices
+        const totalPoints = items.reduce((sum, item) => sum + (item.points_price * item.quantity), 0);
+
+        // 5. Check driver has enough points
+        const [[driverRow]] = await conn.query(
+            'SELECT current_points_balance FROM driver_user WHERE user_id = ? AND sponsor_org_id = ?',
+            [driverUserId, sponsorOrgId]
+        );
+        if (!driverRow || driverRow.current_points_balance < totalPoints) {
+            await conn.rollback();
+            return res.status(400).json({
+                error: `Insufficient points. Need ${totalPoints}, have ${driverRow?.current_points_balance ?? 0}`
+            });
+        }
+
+        // 6. Create order record
+        const [orderResult] = await conn.query(
+            'INSERT INTO orders (driver_user_id, sponsor_org_id, placed_by_user_id, cart_id, status) VALUES (?, ?, ?, ?, "placed")',
+            [driverUserId, sponsorOrgId, driverUserId, cartId]
+        );
+        const orderId = orderResult.insertId;
+
+        // 7. Bulk insert order_items (snapshot prices at purchase time)
+        const orderItemValues = items.map(item => [
+            orderId, item.item_id, item.quantity, item.points_price, item.last_price_value
+        ]);
+        await conn.query(
+            'INSERT INTO order_items (order_id, item_id, quantity, points_price_at_purchase, price_usd_at_purchase) VALUES ?',
+            [orderItemValues]
+        );
+
+        // 8. Deduct points — DB trigger auto-updates driver_user.current_points_balance
+        await conn.query(
+            `INSERT INTO point_transactions
+               (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id)
+             VALUES (?, ?, ?, ?, 'order', ?)`,
+            [driverUserId, sponsorOrgId, -totalPoints, `Order #${orderId}`, driverUserId]
+        );
+
+        // 9. Mark cart as checked out
+        await conn.query(
+            'UPDATE carts SET status = "checked_out", updated_at = NOW() WHERE cart_id = ?',
+            [cartId]
+        );
+
+        await conn.commit();
+        res.json({ message: 'Order placed successfully', order_id: orderId, points_spent: totalPoints });
+    } catch (error) {
+        await conn.rollback();
+        console.error('Error placing order:', error);
+        res.status(500).json({ error: 'Failed to place order' });
+    } finally {
+        conn.release();
+    }
+});
+
+// ─── Order History Routes ─────────────────────────────────────────────────────
+
+// GET /api/orders/driver/:driverUserId — driver's purchase history
+app.get('/api/orders/driver/:driverUserId', async (req, res) => {
+    const { driverUserId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT o.order_id, o.status, o.created_at, o.cancel_reason, o.cancelled_at,
+                    so.name AS sponsor_name,
+                    SUM(oi.points_price_at_purchase * oi.quantity) AS total_points,
+                    SUM(oi.price_usd_at_purchase * oi.quantity) AS total_usd,
+                    COUNT(oi.order_item_id) AS item_count
+             FROM orders o
+             JOIN sponsor_organization so ON o.sponsor_org_id = so.sponsor_org_id
+             JOIN order_items oi ON o.order_id = oi.order_id
+             WHERE o.driver_user_id = ?
+             GROUP BY o.order_id
+             ORDER BY o.created_at DESC`,
+            [driverUserId]
+        );
+        res.json({ orders: rows });
+    } catch (error) {
+        console.error('Error fetching driver orders:', error);
+        res.status(500).json({ error: 'Failed to fetch order history' });
+    }
+});
+
+// GET /api/orders/:orderId/items — line items for a specific order
+app.get('/api/orders/:orderId/items', async (req, res) => {
+    const { orderId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT oi.*, cat.title, cat.image_url, cat.item_web_url, cat.description
+             FROM order_items oi
+             JOIN catalog_items cat ON oi.item_id = cat.item_id
+             WHERE oi.order_id = ?`,
+            [orderId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching order items:', error);
+        res.status(500).json({ error: 'Failed to fetch order items' });
+    }
+});
+
+// GET /api/orders/org/:sponsorOrgId — sponsor views all org orders, optional ?driverUserId filter
+app.get('/api/orders/org/:sponsorOrgId', async (req, res) => {
+    const { sponsorOrgId } = req.params;
+    const { driverUserId } = req.query;
+    try {
+        const params = [sponsorOrgId];
+        let driverFilter = '';
+        if (driverUserId) {
+            driverFilter = 'AND o.driver_user_id = ?';
+            params.push(driverUserId);
+        }
+        const [rows] = await pool.query(
+            `SELECT o.order_id, o.driver_user_id, o.status, o.created_at,
+                    o.cancel_reason, o.cancelled_at,
+                    u.username AS driver_username,
+                    SUM(oi.points_price_at_purchase * oi.quantity) AS total_points,
+                    SUM(oi.price_usd_at_purchase * oi.quantity) AS total_usd,
+                    COUNT(oi.order_item_id) AS item_count
+             FROM orders o
+             JOIN users u ON o.driver_user_id = u.user_id
+             JOIN order_items oi ON o.order_id = oi.order_id
+             WHERE o.sponsor_org_id = ? ${driverFilter}
+             GROUP BY o.order_id
+             ORDER BY o.created_at DESC`,
+            params
+        );
+        res.json({ orders: rows });
+    } catch (error) {
+        console.error('Error fetching org orders:', error);
+        res.status(500).json({ error: 'Failed to fetch orders' });
+    }
+});
+
+// Support Tickets
+
+// creates new support ticket, called when a driver or sponsor submits the form
+// sponsorOrgId can be null if the user isn't affiliated with an org
+app.post('/api/support-tickets', async (req, res) => {
+    const { userId, sponsorOrgId, title, description } = req.body;
+    // make sure both fields are filled in before inserting
+    if (!title || !title.trim()) {
+        return res.status(400).json({ error: 'Title is required.' });
+    }
+    if (!description || !description.trim()) {
+        return res.status(400).json({ error: 'Description is required.' });
+    }
+    try {
+        const [result] = await pool.query(
+            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description) VALUES (?, ?, ?, ?)',
+            [userId, sponsorOrgId || null, title.trim(), description.trim()]
+        );
+        res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
+    } catch (error) {
+        console.error('Error creating support ticket:', error);
+        res.status(500).json({ error: 'Failed to create support ticket.' });
+    }
+});
+
+// returns all tickets submitted by a specific user, used in driver/sponsor view
+app.get('/api/support-tickets/user/:userId', async (req, res) => {
+    try {
+        const [tickets] = await pool.query(
+            'SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC',
+            [req.params.userId]
+        );
+        res.json({ tickets });
+    } catch (error) {
+        console.error('Error fetching user support tickets:', error);
+        res.status(500).json({ error: 'Failed to fetch support tickets.' });
+    }
+});
+
+// updates the status of a ticket, only admins can do this (in progress or resolved)
+app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
+    const { status } = req.body;
+    const validStatuses = ['open', 'in_progress', 'resolved'];
+    if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({ error: 'Invalid status. Must be open, in_progress, or resolved.' });
+    }
+    try {
+        const [result] = await pool.query(
+            'UPDATE support_tickets SET status = ? WHERE ticket_id = ?',
+            [status, req.params.ticketId]
+        );
+        // if no rows were affected the ticket id doesn't exist
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        res.json({ message: 'Ticket updated successfully' });
+    } catch (error) {
+        console.error('Error updating support ticket status:', error);
+        res.status(500).json({ error: 'Failed to update ticket status.' });
+    }
+});
+
+// returns all tickets in the system for the admin view
+// JOINs on users and sponsor_organization so the admin can see who submitted each ticket and what org they're in
+app.get('/api/support-tickets', async (_req, res) => {
+    try {
+        const [tickets] = await pool.query(
+            `SELECT st.*, u.first_name, u.last_name, u.email,
+                    so.name AS org_name
+             FROM support_tickets st
+             JOIN users u ON st.user_id = u.user_id
+             LEFT JOIN sponsor_organization so ON st.sponsor_org_id = so.sponsor_org_id
+             ORDER BY st.created_at DESC`
+        );
+        res.json({ tickets });
+    } catch (error) {
+        console.error('Error fetching all support tickets:', error);
+        res.status(500).json({ error: 'Failed to fetch support tickets.' });
+    }
+});
+
+if (process.env.NODE_ENV !== 'test') {
+    app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+    });
+}
+
+export { app };

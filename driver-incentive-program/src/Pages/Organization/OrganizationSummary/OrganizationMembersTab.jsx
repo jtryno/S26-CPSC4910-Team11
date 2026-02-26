@@ -1,5 +1,5 @@
 import React from 'react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import SortableTable from '../../../components/SortableTable';
 import { dropDriver } from '../../../api/UserApi';
 import Modal from '../../../components/Modal';
@@ -16,6 +16,8 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
         setDropReason('');
     }
 
+    const isSponsorOrAdmin = userData?.user_type === 'sponsor' || userData?.user_type === 'admin';
+
     return (
         <div style={{ display: 'grid', direction: 'column', margin: '20px'}}>
             <SortableTable
@@ -23,6 +25,7 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
                     { key: 'user_id', label: 'User ID', sortable: true },
                     { key: 'username', label: 'Username', sortable: true },
                     { key: 'user_type', label: 'Role', sortable: true },
+                    ...(isSponsorOrAdmin ? [{ key: 'points', label: 'Points', sortable: true }] : []),
                 ]}
                 actions={(() => {
                     if(userData?.user_type !== 'driver') {
@@ -33,7 +36,12 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
                     }
                     return [];
                 })()}
-                data={orgUsers || []}
+                data={(orgUsers || []).map(user => ({
+                    ...user,
+                    points: user.user_type === 'driver'
+                        ? (user.points != null ? Number(user.points) : 0)
+                        : null,
+                }))}
             />
             <Modal
                 isOpen={isRemoveOpen}

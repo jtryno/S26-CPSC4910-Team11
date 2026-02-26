@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
+import SortableTable from '../components/SortableTable';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -10,6 +11,20 @@ const DriverDashboard = ({ user }) => {
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
     const [leaving, setLeaving] = useState(false);
     const [leaveMsg, setLeaveMsg] = useState(null);
+
+    const [contestModalOpen, setContestModalOpen] = useState(false);
+    const [contestTx, setContestTx] = useState(null);
+    const [contestReason, setContestReason] = useState('');
+    const [contestSubmitting, setContestSubmitting] = useState(false);
+    const [contestMsg, setContestMsg] = useState(null);
+    const [contestedTxIds, setContestedTxIds] = useState(new Set());
+    const [expandedReasons, setExpandedReasons] = useState(new Set());
+
+    const [orders, setOrders] = useState([]);
+    const [orderDetailOpen, setOrderDetailOpen] = useState(false);
+    const [selectedOrderItems, setSelectedOrderItems] = useState([]);
+    const [selectedOrderId, setSelectedOrderId] = useState(null);
+    const [orderItemsLoading, setOrderItemsLoading] = useState(false);
 
     const SOURCE_LABELS = {
         recurring: 'Recurring',
@@ -28,6 +43,28 @@ const DriverDashboard = ({ user }) => {
     };
 
     useEffect(() => { fetchData(); }, [user.user_id]);
+
+    useEffect(() => {
+        fetch(`/api/orders/driver/${user.user_id}`)
+            .then(res => res.ok ? res.json() : Promise.reject())
+            .then(d => setOrders(d.orders || []))
+            .catch(() => {});
+    }, [user.user_id]);
+
+    useEffect(() => {
+        if (!data || !data.sponsor_org_id) return;
+        fetch(`/api/point-contest/organization/${data.sponsor_org_id}`)
+            .then(r => r.json())
+            .then(d => {
+                const ids = new Set(
+                    (d.contests || [])
+                        .filter(c => c.driver_user_id === user.user_id)
+                        .map(c => c.transaction_id)
+                );
+                setContestedTxIds(ids);
+            })
+            .catch(() => {});
+    }, [data]);
 
     const handleLeave = async () => {
         setLeaving(true);
@@ -126,30 +163,297 @@ const DriverDashboard = ({ user }) => {
                 <div style={{ color: '#888' }}>No transactions found.</div>
             ) : (
                 <div style={{ textAlign: 'left' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr style={{ background: '#f5f5f5' }}>
-                                <th style={th}>Date</th>
-                                <th style={th}>Sponsor</th>
-                                <th style={th}>Source</th>
-                                <th style={th}>Reason</th>
-                                <th style={{ ...th, textAlign: 'right' }}>Points</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {data.transactions.map(tx => (
-                                <tr key={tx.transaction_id} style={{ borderBottom: '1px solid #eee' }}>
-                                    <td style={td}>{new Date(tx.created_at).toLocaleDateString()}</td>
-                                    <td style={td}>{tx.sponsor_name || '—'}</td>
-                                    <td style={td}>{SOURCE_LABELS[tx.source] || tx.source}</td>
-                                    <td style={td}>{tx.reason}</td>
-                                    <td style={{ ...td, textAlign: 'right', fontWeight: 'bold', color: tx.point_amount >= 0 ? '#2e7d32' : '#c62828' }}>
-                                        {tx.point_amount >= 0 ? '+' : ''}{tx.point_amount}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <SortableTable
+                        columns={[
+                            {
+                                key: 'transaction_id',
+                                label: 'Transaction ID',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{ color: '#888', fontSize: '12px' }}>{val}</span>
+                                ),
+                            },
+                            {
+                                key: 'created_at_display',
+                                label: 'Date',
+                                sortable: true,
+                                sortKey: 'created_at_sort',
+                            },
+                            {
+                                key: 'sponsor_name',
+                                label: 'Sponsor',
+                                sortable: true,
+                            },
+                            {
+                                key: 'source',
+                                label: 'Source',
+                                sortable: true,
+                                render: (val) => {
+                                    const colors = {
+                                        Manual:    { bg: '#e3f2fd', text: '#1565c0' },
+                                        Recurring: { bg: '#e8f5e9', text: '#2e7d32' },
+                                        Order:     { bg: '#fff3e0', text: '#e65100' },
+                                    };
+                                    const label = SOURCE_LABELS[val] || val;
+                                    const style = colors[label] || { bg: '#f5f5f5', text: '#444' };
+                                    return (
+                                        <span style={{
+                                            background: style.bg,
+                                            color: style.text,
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            fontSize: '12px',
+                                            fontWeight: '600',
+                                        }}>
+                                            {label}
+                                        </span>
+                                    );
+                                },
+                            },
+                            {
+                                key: 'reason',
+                                label: 'Reason',
+                                sortable: false,
+                                render: (val, row) => {
+                                    const isExpanded = expandedReasons.has(row.transaction_id);
+                                    const isLong = val?.length > 40;
+                                    return (
+                                        <span>
+                                            {isExpanded || !isLong ? val : `${val.slice(0, 40)}...`}
+                                            {isLong && (
+                                                <button
+                                                    onClick={() => setExpandedReasons(prev => {
+                                                        const next = new Set(prev);
+                                                        isExpanded ? next.delete(row.transaction_id) : next.add(row.transaction_id);
+                                                        return next;
+                                                    })}
+                                                    style={{
+                                                        marginLeft: '6px',
+                                                        background: 'none',
+                                                        border: 'none',
+                                                        color: '#1976d2',
+                                                        cursor: 'pointer',
+                                                        fontSize: '12px',
+                                                        padding: 0,
+                                                    }}
+                                                >
+                                                    {isExpanded ? 'less' : 'more'}
+                                                </button>
+                                            )}
+                                        </span>
+                                    );
+                                },
+                            },
+                            {
+                                key: 'point_amount',
+                                label: 'Points',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{
+                                        fontWeight: 'bold',
+                                        color: val >= 0 ? '#2e7d32' : '#c62828',
+                                    }}>
+                                        {val >= 0 ? '+' : ''}{val}
+                                    </span>
+                                ),
+                            },
+                        ]}
+                        data={data.transactions.map(tx => ({
+                            ...tx,
+                            sponsor_name: tx.sponsor_name || '—',
+                            // Separate display value from raw for correct date sorting
+                            created_at_display: new Date(tx.created_at).toLocaleDateString(),
+                            created_at_sort: new Date(tx.created_at).getTime(),
+                        }))}
+                        actions={[
+                            {
+                                label: 'Contest',
+                                color: null, // we'll override per-row below
+                                onClick: (row) => {
+                                    if (contestedTxIds.has(row.transaction_id)) return;
+                                    if (row.point_amount >= 0) return;
+                                    setContestTx(row);
+                                    setContestReason('');
+                                    setContestMsg(null);
+                                    setContestModalOpen(true);
+                                },
+                                render: (row) => row.point_amount < 0 ? (
+                                    <button
+                                        disabled={contestedTxIds.has(row.transaction_id)}
+                                        onClick={() => {
+                                            if (contestedTxIds.has(row.transaction_id)) return;
+                                            setContestTx(row);
+                                            setContestReason('');
+                                            setContestMsg(null);
+                                            setContestModalOpen(true);
+                                        }}
+                                        style={{
+                                            padding: '4px 10px',
+                                            borderRadius: '4px',
+                                            border: '1px solid #f57c00',
+                                            background: contestedTxIds.has(row.transaction_id) ? '#eee' : '#fff3e0',
+                                            color: contestedTxIds.has(row.transaction_id) ? '#aaa' : '#e65100',
+                                            cursor: contestedTxIds.has(row.transaction_id) ? 'not-allowed' : 'pointer',
+                                            fontSize: '12px',
+                                            fontWeight: '600',
+                                        }}
+                                    >
+                                        {contestedTxIds.has(row.transaction_id) ? 'Contested' : 'Contest'}
+                                    </button>
+                                ) : null,
+                            },
+                        ]}
+                    />
+                </div>
+            )}
+
+            {/* ── Purchase History ── */}
+            <h2 style={{ marginBottom: '12px', marginTop: '32px' }}>Purchase History</h2>
+            {orders.length === 0 ? (
+                <div style={{ color: '#888', marginBottom: '32px' }}>No purchases yet.</div>
+            ) : (
+                <div style={{ textAlign: 'left', marginBottom: '32px' }}>
+                    <SortableTable
+                        columns={[
+                            { key: 'order_id', label: 'Order ID', sortable: true },
+                            { key: 'sponsor_name', label: 'Sponsor', sortable: true },
+                            {
+                                key: 'created_at',
+                                label: 'Date',
+                                sortable: true,
+                                render: (val) => new Date(val).toLocaleDateString(),
+                            },
+                            {
+                                key: 'status',
+                                label: 'Status',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{
+                                        padding: '2px 8px',
+                                        borderRadius: '12px',
+                                        fontSize: '12px',
+                                        fontWeight: '600',
+                                        background: val === 'placed' ? '#e3f2fd' : '#f5f5f5',
+                                        color: val === 'placed' ? '#1565c0' : '#444',
+                                    }}>
+                                        {val}
+                                    </span>
+                                ),
+                            },
+                            { key: 'item_count', label: 'Items', sortable: true },
+                            {
+                                key: 'total_points',
+                                label: 'Points Spent',
+                                sortable: true,
+                                render: (val) => (
+                                    <span style={{ fontWeight: 'bold', color: '#c62828' }}>
+                                        -{Number(val).toLocaleString()}
+                                    </span>
+                                ),
+                            },
+                            {
+                                key: 'total_usd',
+                                label: 'USD Value',
+                                sortable: true,
+                                render: (val) => `$${parseFloat(val).toFixed(2)}`,
+                            },
+                        ]}
+                        actions={[
+                            {
+                                label: 'Details',
+                                onClick: async (row) => {
+                                    setSelectedOrderId(row.order_id);
+                                    setOrderItemsLoading(true);
+                                    setOrderDetailOpen(true);
+                                    try {
+                                        const res = await fetch(`/api/orders/${row.order_id}/items`);
+                                        const d = await res.json();
+                                        setSelectedOrderItems(d.items || []);
+                                    } catch {
+                                        setSelectedOrderItems([]);
+                                    } finally {
+                                        setOrderItemsLoading(false);
+                                    }
+                                },
+                            },
+                        ]}
+                        data={orders}
+                    />
+                </div>
+            )}
+
+            {/* ── Order Detail Modal ── */}
+            {orderDetailOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '480px',
+                        maxWidth: '95vw',
+                        maxHeight: '80vh',
+                        overflowY: 'auto',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Order #{selectedOrderId}</h2>
+
+                        {orderItemsLoading ? (
+                            <p>Loading items...</p>
+                        ) : selectedOrderItems.length === 0 ? (
+                            <p style={{ color: '#888' }}>No items found.</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '16px' }}>
+                                {selectedOrderItems.map((item) => (
+                                    <div key={item.order_item_id} style={{
+                                        display: 'flex', gap: '12px', alignItems: 'flex-start',
+                                        borderBottom: '1px solid #f0f0f0', paddingBottom: '12px',
+                                    }}>
+                                        <img
+                                            src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/60?text=?'}
+                                            alt={item.title}
+                                            style={{ width: '60px', height: '60px', objectFit: 'contain', flexShrink: 0 }}
+                                            onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/60?text=?'; }}
+                                        />
+                                        <div>
+                                            <div style={{ fontWeight: '600', fontSize: '14px', marginBottom: '4px' }}>{item.title}</div>
+                                            <div style={{ fontSize: '13px', color: '#555' }}>Qty: {item.quantity}</div>
+                                            <div style={{ fontSize: '13px', color: '#555' }}>
+                                                {Number(item.points_price_at_purchase).toLocaleString()} pts · ${parseFloat(item.price_usd_at_purchase).toFixed(2)}
+                                            </div>
+                                            {item.item_web_url && (
+                                                <a
+                                                    href={item.item_web_url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{ fontSize: '12px', color: '#1976d2' }}
+                                                >
+                                                    View on eBay ↗
+                                                </a>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+                            <button
+                                onClick={() => { setOrderDetailOpen(false); setSelectedOrderId(null); setSelectedOrderItems([]); }}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px',
+                                    border: '1px solid #ccc', background: '#f5f5f5',
+                                    color: '#1a1a1a', cursor: 'pointer',
+                                }}
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -221,6 +525,122 @@ const DriverDashboard = ({ user }) => {
                     </div>
                 </div>
             )}
+
+            {contestModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '440px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Contest Point Deduction</h2>
+
+                        <div style={{ marginBottom: '12px', fontSize: '14px', color: '#444' }}>
+                            <div><strong>Transaction ID:</strong> {contestTx?.transaction_id}</div>
+                            <div><strong>Points:</strong> <span style={{ color: '#c62828', fontWeight: 'bold' }}>{contestTx?.point_amount}</span></div>
+                            <div><strong>Reason:</strong> {contestTx?.reason}</div>
+                            <div><strong>Date:</strong> {contestTx ? new Date(contestTx.created_at).toLocaleDateString() : ''}</div>
+                        </div>
+
+                        <label style={labelStyle}>
+                            Your Reason for Contesting <span style={{ color: '#c62828' }}>*</span>
+                        </label>
+                        <textarea
+                            value={contestReason}
+                            onChange={e => setContestReason(e.target.value)}
+                            placeholder="Explain why you believe this deduction was incorrect..."
+                            rows={4}
+                            style={{ ...inputStyle, resize: 'vertical' }}
+                        />
+
+                        {contestMsg && (
+                            <div style={{
+                                marginTop: '12px',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                background: contestMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: contestMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '14px',
+                            }}>
+                                {contestMsg.text}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '20px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => {
+                                    setContestModalOpen(false);
+                                    setContestTx(null);
+                                    setContestMsg(null);
+                                    setContestReason('');
+                                }}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ccc',
+                                    background: '#f5f5f5',
+                                    color: '#1a1a1a',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                {contestMsg?.type === 'success' ? 'Close' : 'Cancel'}
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    if (!contestReason.trim()) {
+                                        setContestMsg({ type: 'error', text: 'Please provide a reason for your contest.' });
+                                        return;
+                                    }
+                                    setContestSubmitting(true);
+                                    try {
+                                        const res = await fetch('/api/point-contest', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                                transaction_id: contestTx.transaction_id,
+                                                driver_user_id: user.user_id,
+                                                sponsor_org_id: contestTx.sponsor_org_id,
+                                                reason: contestReason.trim(),
+                                            }),
+                                        });
+                                        const json = await res.json();
+                                        if (res.ok) {
+                                            setContestMsg({ type: 'success', text: 'Contest submitted successfully!' });
+                                            setContestedTxIds(prev => new Set([...prev, contestTx.transaction_id]));
+                                        } else {
+                                            setContestMsg({ type: 'error', text: json.error || 'Failed to submit contest.' });
+                                        }
+                                    } catch {
+                                        setContestMsg({ type: 'error', text: 'Network error. Please try again.' });
+                                    } finally {
+                                        setContestSubmitting(false);
+                                    }
+                                }}
+                                disabled={contestSubmitting || contestMsg?.type === 'success'}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: contestSubmitting || contestMsg?.type === 'success' ? '#ffcc80' : '#f57c00',
+                                    color: '#fff',
+                                    cursor: contestSubmitting || contestMsg?.type === 'success' ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {contestSubmitting ? 'Submitting...' : 'Submit Contest'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };
@@ -229,6 +649,9 @@ const SponsorDashboard = ({ user }) => {
     const [drivers, setDrivers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [monthlyAwarded, setMonthlyAwarded] = useState(null);
+    const [monthlyDeducted, setMonthlyDeducted] = useState(null);
+    const [monthlyLimit, setMonthlyLimit] = useState(null);
 
     // Modal state
     const [modalOpen, setModalOpen] = useState(false);
@@ -259,16 +682,29 @@ const SponsorDashboard = ({ user }) => {
             .catch(err => { setError(err.message); setLoading(false); });
     };
 
-    useEffect(() => { fetchDrivers(); }, [user.user_id]);
+    const fetchMonthlyPoints = () => {
+        fetch(`/api/sponsor/monthly-points/${user.user_id}`)
+            .then(res => res.ok ? res.json() : Promise.reject())
+            .then(d => {
+                setMonthlyAwarded(d.month_awarded);
+                setMonthlyDeducted(d.month_deducted);
+            })
+            .catch(() => {});
+    };
+
+    useEffect(() => { fetchDrivers(); fetchMonthlyPoints(); }, [user.user_id]);
 
     useEffect(() => {
         fetch(`/api/sponsor/settings/${user.user_id}`)
             .then(res => res.ok ? res.json() : Promise.reject())
-            .then(d => setSettings({
-                point_upper_limit: d.point_upper_limit ?? '',
-                point_lower_limit: d.point_lower_limit ?? '',
-                monthly_point_limit: d.monthly_point_limit ?? '',
-            }))
+            .then(d => {
+                setSettings({
+                    point_upper_limit: d.point_upper_limit ?? '',
+                    point_lower_limit: d.point_lower_limit ?? '',
+                    monthly_point_limit: d.monthly_point_limit ?? '',
+                });
+                setMonthlyLimit(d.monthly_point_limit ?? null);
+            })
             .catch(() => {});
     }, [user.user_id]);
 
@@ -333,6 +769,7 @@ const SponsorDashboard = ({ user }) => {
             setSubmitMsg({ type: 'success', text: data.message });
             setSelectedIds(new Set());
             fetchDrivers();
+            fetchMonthlyPoints();
         } catch (err) {
             setSubmitMsg({ type: 'error', text: err.message });
         } finally {
@@ -384,9 +821,77 @@ const SponsorDashboard = ({ user }) => {
         </button>
     );
 
+    const MonthlyPointsSummary = () => (
+        monthlyAwarded !== null && monthlyDeducted !== null && (
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
+
+                {/* Points Awarded Card */}
+                <div style={{
+                    display: 'inline-flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    background: '#f0fff0',
+                    border: '1px solid #a5d6a7',
+                    borderRadius: '8px',
+                    padding: '12px 32px',
+                }}>
+                    <div style={{ fontSize: '13px', color: '#555', whiteSpace: 'nowrap' }}>
+                        Points Awarded This Month
+                    </div>
+                    <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#2e7d32' }}>
+                        {monthlyAwarded}
+                        {monthlyLimit !== null && (
+                            <span style={{ fontSize: '16px', color: '#666', fontWeight: 'normal' }}>
+                                {' '}/ {monthlyLimit} limit
+                            </span>
+                        )}
+                    </div>
+                    {monthlyLimit !== null && (
+                        <div style={{ width: '100%', marginTop: '8px' }}>
+                            <div style={{ height: '8px', borderRadius: '4px', background: '#ddd', overflow: 'hidden' }}>
+                                <div style={{
+                                    height: '100%',
+                                    borderRadius: '4px',
+                                    width: `${Math.min((monthlyAwarded / monthlyLimit) * 100, 100)}%`,
+                                    background: (monthlyAwarded / monthlyLimit) >= 0.9 ? '#c62828' :
+                                                (monthlyAwarded / monthlyLimit) >= 0.7 ? '#f57c00' : '#1976d2',
+                                    transition: 'width 0.3s ease',
+                                }} />
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#888', marginTop: '4px', textAlign: 'right' }}>
+                                {`${Math.round((monthlyAwarded / monthlyLimit) * 100)}%`}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Points Deducted Card */}
+                <div style={{
+                    display: 'inline-flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    background: '#fff5f5',
+                    border: '1px solid #ffb3b3',
+                    borderRadius: '8px',
+                    padding: '12px 32px',
+                }}>
+                    <div style={{ fontSize: '13px', color: '#555', whiteSpace: 'nowrap' }}>
+                        Points Deducted This Month
+                    </div>
+                    <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#c62828' }}>
+                        {monthlyDeducted}
+                    </div>
+                </div>
+
+            </div>
+        )
+    );
+
     return (
         <>
             <h1>Sponsor Dashboard</h1>
+
+            <MonthlyPointsSummary  />
 
             <div style={{ marginBottom: '-1px', textAlign: 'left' }}>
                 {tabBtn('individual', 'Individual Points')}
