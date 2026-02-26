@@ -381,6 +381,10 @@ app.put('/api/application/:application_id', async (req, res) => {
                 let msg;
                 if (status === 'approved') {
                     msg = `Your application to join ${orgName} was approved.`;
+                    await pool.query(
+                        'UPDATE driver_user SET sponsor_org_id = ?, driver_status = "active", dropped_at = NULL, drop_reason = NULL WHERE user_id = ?',
+                        [sponsor_org_id, driver_user_id]
+                    );
                 } else {
                     msg = `Your application to join ${orgName} was rejected. Reason: ${decision_reason || 'No reason provided.'}`;
                 }
@@ -923,7 +927,7 @@ app.post('/api/driver/leave-sponsor', async (req, res) => {
         const { sponsor_org_id } = rows[0];
 
         await pool.query(
-            'UPDATE driver_user SET driver_status = ?, dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
+            'UPDATE driver_user SET driver_status = ?, sponsor_org_id = NULL, dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
             ['dropped', driverUserId, sponsor_org_id]
         );
 
