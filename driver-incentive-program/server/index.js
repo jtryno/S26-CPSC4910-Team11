@@ -522,9 +522,9 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
         const [users] = await pool.query(
             `SELECT u.*, du.current_points_balance AS points
              FROM users u
-             LEFT JOIN driver_user du ON u.user_id = du.user_id AND du.sponsor_org_id = ?
+             LEFT JOIN driver_user du ON u.user_id = du.user_id
              WHERE u.sponsor_org_id = ?`,
-            [sponsor_org_id, sponsor_org_id]
+            [sponsor_org_id]
         );
         res.json({ message: 'Organization users retrieved successfully', users });
     } catch (error) {
