@@ -1660,6 +1660,87 @@ app.get('/api/orders/org/:sponsorOrgId', async (req, res) => {
     }
 });
 
+// Support Tickets
+
+// creates new support ticket, called when a driver or sponsor submits the form
+// sponsorOrgId can be null if the user isn't affiliated with an org
+app.post('/api/support-tickets', async (req, res) => {
+    const { userId, sponsorOrgId, title, description } = req.body;
+    // make sure both fields are filled in before inserting
+    if (!title || !title.trim()) {
+        return res.status(400).json({ error: 'Title is required.' });
+    }
+    if (!description || !description.trim()) {
+        return res.status(400).json({ error: 'Description is required.' });
+    }
+    try {
+        const [result] = await pool.query(
+            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description) VALUES (?, ?, ?, ?)',
+            [userId, sponsorOrgId || null, title.trim(), description.trim()]
+        );
+        res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
+    } catch (error) {
+        console.error('Error creating support ticket:', error);
+        res.status(500).json({ error: 'Failed to create support ticket.' });
+    }
+});
+
+// returns all tickets submitted by a specific user, used in driver/sponsor view
+app.get('/api/support-tickets/user/:userId', async (req, res) => {
+    try {
+        const [tickets] = await pool.query(
+            'SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC',
+            [req.params.userId]
+        );
+        res.json({ tickets });
+    } catch (error) {
+        console.error('Error fetching user support tickets:', error);
+        res.status(500).json({ error: 'Failed to fetch support tickets.' });
+    }
+});
+
+// updates the status of a ticket, only admins can do this (in progress or resolved)
+app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
+    const { status } = req.body;
+    const validStatuses = ['open', 'in_progress', 'resolved'];
+    if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({ error: 'Invalid status. Must be open, in_progress, or resolved.' });
+    }
+    try {
+        const [result] = await pool.query(
+            'UPDATE support_tickets SET status = ? WHERE ticket_id = ?',
+            [status, req.params.ticketId]
+        );
+        // if no rows were affected the ticket id doesn't exist
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        res.json({ message: 'Ticket updated successfully' });
+    } catch (error) {
+        console.error('Error updating support ticket status:', error);
+        res.status(500).json({ error: 'Failed to update ticket status.' });
+    }
+});
+
+// returns all tickets in the system for the admin view
+// JOINs on users and sponsor_organization so the admin can see who submitted each ticket and what org they're in
+app.get('/api/support-tickets', async (_req, res) => {
+    try {
+        const [tickets] = await pool.query(
+            `SELECT st.*, u.first_name, u.last_name, u.email,
+                    so.name AS org_name
+             FROM support_tickets st
+             JOIN users u ON st.user_id = u.user_id
+             LEFT JOIN sponsor_organization so ON st.sponsor_org_id = so.sponsor_org_id
+             ORDER BY st.created_at DESC`
+        );
+        res.json({ tickets });
+    } catch (error) {
+        console.error('Error fetching all support tickets:', error);
+        res.status(500).json({ error: 'Failed to fetch support tickets.' });
+    }
+});
+
 if (process.env.NODE_ENV !== 'test') {
     app.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
