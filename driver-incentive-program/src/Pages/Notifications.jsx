@@ -282,7 +282,7 @@ const Notifications = () => {
     }
 
     if (!userData) return <div style={{padding: '40px'}}>Please log in.</div>;
-    if (loading) return <div style={{padding: '40px', color: '#888'}}>Loading notifications...</div>;
+    if (loading) return <div style={{padding: '40px', color: '#888'}}>Loading notifications</div>;
 
     return (
         <div style={{maxWidth: '800px', margin: '0 auto'}}>
@@ -397,7 +397,7 @@ const Notifications = () => {
                         </button>
                     </div>
                     <PreferenceRow label="Removed from organization" enabled={true} mandatory={true} />
-                    <PreferenceRow label="Password changedd" enabled={true} mandatory={true} />
+                    <PreferenceRow label="Password changed" enabled={true} mandatory={true} />
                     <PreferenceRow
                         label="Points added or removed"
                         enabled={prefs.points_changed_enabled === 1}
