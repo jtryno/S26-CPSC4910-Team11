@@ -12,6 +12,7 @@ import OrganizationSummary from './Pages/Organization/OrganizationSummary/Organi
 import Catalog from './Pages/Catalog'
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
+import Notifications from './Pages/Notifications'
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -354,6 +355,7 @@ useEffect(() => {
               <>
                 <li><Link to="/dashboard">Dashboard</Link></li>
                 <li><Link to="/catalog">Catalog</Link></li>
+                <li><Link to="/notifications">Notifications</Link></li>
               </>
             )}
           </ul>
@@ -392,6 +394,7 @@ useEffect(() => {
           <Route path="/organization" element={<Organizations />} />
           <Route path="/organization/:orgId" element={<OrganizationSummary />} />
           <Route path="/catalog" element={<Catalog />} />
+          <Route path="/notifications" element={<Notifications />} />
         </Routes>
       </main>
 
