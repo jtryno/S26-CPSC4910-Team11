@@ -1763,6 +1763,7 @@ app.post('/api/orders', async (req, res) => {
         );
 
         await conn.commit();
+        await createNotification(driverUserId, 'order_placed', `Your order #${orderId} was placed successfully for ${totalPoints.toLocaleString()} points.`, {related_order_id: orderId});
         res.json({ message: 'Order placed successfully', order_id: orderId, points_spent: totalPoints });
     } catch (error) {
         await conn.rollback();
