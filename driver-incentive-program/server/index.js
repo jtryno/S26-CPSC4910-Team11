@@ -760,14 +760,31 @@ app.get('/api/session', async (req, res) => {
 // --- Signup Route ---
 app.post('/api/signup', async (req, res) => {
     try {
-        const { firstName, lastName, phoneNumber, email, username, password, userRole, orgId } = req.body;
+        const { firstName, lastName, phoneNumber, email, username, password, userRole, orgId, createdByUserId } = req.body;
         if (!isPasswordComplex(password)) {
             return res.status(400).json({ message: 'Password does not meet complexity requirements.' });
         }
         const passwordHash = hashPassword(password);
-        await pool.query("INSERT INTO users (first_name, last_name, phone_number, email, username, password_hash, user_type, sponsor_org_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [firstName, lastName, phoneNumber, email, username, passwordHash, userRole, orgId],
+        const [result] = await pool.query(
+            "INSERT INTO users (first_name, last_name, phone_number, email, username, password_hash, user_type, sponsor_org_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [firstName, lastName, phoneNumber, email, username, passwordHash, userRole, orgId || null],
         );
+        const newUserId = result.insertId;
+
+        if (userRole === 'driver') {
+            const driverStatus = orgId ? 'active' : 'unaffiliated';
+            const affiliatedAt = orgId ? new Date() : null;
+            await pool.query(
+                'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, ?)',
+                [newUserId, orgId || null, driverStatus, affiliatedAt]
+            );
+        } else if (userRole === 'sponsor') {
+            await pool.query(
+                'INSERT INTO sponsor_user (user_id, sponsor_org_id, created_by_user_id) VALUES (?, ?, ?)',
+                [newUserId, orgId || null, createdByUserId || null]
+            );
+        }
+
         res.json({ message: 'Signup successful' });
     } catch (error) {
         console.error('Signup error:', error);

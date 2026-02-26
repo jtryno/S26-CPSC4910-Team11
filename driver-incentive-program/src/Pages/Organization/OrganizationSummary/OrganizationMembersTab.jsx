@@ -40,6 +40,7 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                     { label : 'Sponsor', value: 'sponsor' },
                 ]}
                 orgId={orgId}
+                createdByUserId={userData?.user_id}
             />
             <SortableTable
                 columns={[
