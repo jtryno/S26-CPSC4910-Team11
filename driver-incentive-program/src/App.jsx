@@ -11,8 +11,10 @@ import Dashboard from './Pages/Dashboard'
 import Organizations from './Pages/Organization/Organizations/Organizations';
 import OrganizationSummary from './Pages/Organization/OrganizationSummary/OrganizationSummary';
 import Catalog from './Pages/Catalog'
+import SupportTickets from './Pages/SupportTickets'
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
+import Notifications from './Pages/Notifications'
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -355,6 +357,8 @@ useEffect(() => {
               <>
                 <li><Link to="/dashboard">Dashboard</Link></li>
                 <li><Link to="/catalog">Catalog</Link></li>
+                <li><Link to="/notifications">Notifications</Link></li>
+                <li><Link to="/support-tickets">Support</Link></li>
               </>
             )}
           </ul>
@@ -395,6 +399,8 @@ useEffect(() => {
           <Route path="/organization" element={<Organizations />} />
           <Route path="/organization/:orgId" element={<OrganizationSummary />} />
           <Route path="/catalog" element={<Catalog />} />
+          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/support-tickets" element={<SupportTickets userData={userData} />} />
         </Routes>
       </main>
 

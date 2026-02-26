@@ -50,6 +50,20 @@ async function updateField(userId, field, value) {
         throw error;
     }
 }
+async function dropDriver(driverId, dropReason) {
+    try {
+        const response = await fetch('/api/driver/drop', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({driverId, drop_reason: dropReason || null}),
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error dropping driver:', error);
+        throw error;
+    }
+}
 
 async function signUpUser(userData, userRole) {
     console.log(userData);
@@ -72,4 +86,4 @@ async function signUpUser(userData, userRole) {
     }
 }
 
-export { removeFromOrganization, updateField, signUpUser };
+export { removeFromOrganization, updateField, signUpUser, dropDriver };
