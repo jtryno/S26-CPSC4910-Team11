@@ -1,12 +1,16 @@
 async function removeFromOrganization(userId) {
+    const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+    const userType = storedUser ? JSON.parse(storedUser)?.user_type : null;
+
     try {
-        const response = await fetch('/api/user', {
-            method: 'PUT',
+        const response = await fetch('/api/user/leave-organization', {
+            method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ user_id: userId, field: 'sponsor_org_id', value: null }),
+            body: JSON.stringify({ user_id: userId, user_type: userType }),
         });
+        if (!response.ok) throw new Error('Failed to leave organization');
     } catch (error) {
         console.error('Error leaving organization:', error);
         throw error;
