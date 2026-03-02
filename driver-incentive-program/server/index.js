@@ -322,6 +322,24 @@ async function createNotification(userId, category, message, extras = {}) {
     }
 }
 
+// Helper: Get sponsor_org_id from the appropriate role table (not from users)
+async function getSponsorOrgId(userId, userType) {
+    if (userType === 'driver') {
+        const [rows] = await pool.query(
+            'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active"',
+            [userId]
+        );
+        return rows.length > 0 ? rows[0].sponsor_org_id : null;
+    } else if (userType === 'sponsor') {
+        const [rows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [userId]
+        );
+        return rows.length > 0 ? rows[0].sponsor_org_id : null;
+    }
+    return null;
+}
+
 // --- About Page Route ---
 app.get('/api/about', async (req, res) => {
     try {
@@ -382,11 +400,7 @@ app.put('/api/application/:application_id', async (req, res) => {
                 if (status === 'approved') {
                     msg = `Your application to join ${orgName} was approved.`;
                     await pool.query(
-                        'UPDATE driver_user SET sponsor_org_id = ?, driver_status = "active", dropped_at = NULL, drop_reason = NULL WHERE user_id = ?',
-                        [sponsor_org_id, driver_user_id]
-                    );
-                    await pool.query(
-                        'UPDATE users SET sponsor_org_id = ? WHERE user_id = ?',
+                        'UPDATE driver_user SET sponsor_org_id = ?, driver_status = "active", affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL WHERE user_id = ?',
                         [sponsor_org_id, driver_user_id]
                     );
                 } else {
@@ -494,8 +508,15 @@ app.get('/api/organization/:sponsor_org_id/count', async (req, res) => {
     const { sponsor_org_id } = req.params;
 
     try {
-        const response = await pool.query('SELECT COUNT(*) AS count FROM users WHERE sponsor_org_id = ?', [sponsor_org_id]);
-        const count = response[0][0].count;
+        const [[{ driverCount }]] = await pool.query(
+            'SELECT COUNT(*) AS driverCount FROM driver_user WHERE sponsor_org_id = ? AND driver_status = "active"',
+            [sponsor_org_id]
+        );
+        const [[{ sponsorCount }]] = await pool.query(
+            'SELECT COUNT(*) AS sponsorCount FROM sponsor_user WHERE sponsor_org_id = ?',
+            [sponsor_org_id]
+        );
+        const count = Number(driverCount) + Number(sponsorCount);
         res.json({ message: 'Organization member count retrieved successfully', count });
     } catch (error) {
         res.status(500).json({ error: 'Failed to retrieve organization member count' });
@@ -530,9 +551,12 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
         const [users] = await pool.query(
             `SELECT u.*, du.current_points_balance AS points
              FROM users u
-             LEFT JOIN driver_user du ON u.user_id = du.user_id
-             WHERE u.sponsor_org_id = ?`,
-            [sponsor_org_id]
+             JOIN driver_user du ON u.user_id = du.user_id AND du.sponsor_org_id = ? AND du.driver_status = 'active'
+             UNION
+             SELECT u.*, NULL AS points
+             FROM users u
+             JOIN sponsor_user su ON u.user_id = su.user_id AND su.sponsor_org_id = ?`,
+            [sponsor_org_id, sponsor_org_id]
         );
         res.json({ message: 'Organization users retrieved successfully', users });
     } catch (error) {
@@ -669,7 +693,8 @@ app.post('/api/login', async (req, res) => {
         await pool.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE user_id = ?', [user.user_id]);
         await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${email}`]);
         
-        return res.json({ message: 'Login successful', user: userNoPassword });
+        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+        return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
 
     } catch (error) {
         console.error('Login error:', error);
@@ -746,9 +771,11 @@ app.get('/api/session', async (req, res) => {
     }
 
     try {
-        const [users] = await pool.query('SELECT user_id, email, username FROM users WHERE user_id = ?', [userId]);
+        const [users] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [userId]);
         if (users.length > 0) {
-            res.json({ loggedIn: true, user: users[0] });
+            const user = users[0];
+            const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+            res.json({ loggedIn: true, user: { ...user, sponsor_org_id } });
         } else {
             res.status(401).json({ loggedIn: false });
         }
@@ -766,8 +793,8 @@ app.post('/api/signup', async (req, res) => {
         }
         const passwordHash = hashPassword(password);
         const [result] = await pool.query(
-            "INSERT INTO users (first_name, last_name, phone_number, email, username, password_hash, user_type, sponsor_org_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [firstName, lastName, phoneNumber, email, username, passwordHash, userRole, orgId || null],
+            "INSERT INTO users (first_name, last_name, phone_number, email, username, password_hash, user_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [firstName, lastName, phoneNumber, email, username, passwordHash, userRole],
         );
         const newUserId = result.insertId;
 
@@ -802,12 +829,55 @@ app.post('/api/logout', (req, res) => {
 app.put('/api/user', async (req, res) => {
     const {user_id, field, value } = req.body;
 
+    if (field === 'sponsor_org_id') {
+        return res.status(400).json({ error: 'Use dedicated org membership endpoints to manage organization membership.' });
+    }
+
     try {
         await pool.query(`UPDATE users SET ${field} = ? WHERE user_id = ?`, [value, user_id]);
         res.json({ message: 'User field updated successfully' });
     } catch (error) {
         console.error('Error updating user field:', error);
         res.status(500).json({ error: 'Failed to update user information' });
+    }
+});
+
+// --- Leave Organization Route ---
+app.post('/api/user/leave-organization', async (req, res) => {
+    const { user_id, user_type } = req.body;
+    if (!user_id || !user_type) {
+        return res.status(400).json({ error: 'user_id and user_type are required' });
+    }
+    try {
+        if (user_type === 'driver') {
+            const [rows] = await pool.query(
+                'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active"',
+                [user_id]
+            );
+            if (rows.length === 0) {
+                return res.status(404).json({ error: 'No active organization found for this driver' });
+            }
+            const { sponsor_org_id } = rows[0];
+            await pool.query(
+                'UPDATE driver_user SET sponsor_org_id = NULL, driver_status = "dropped", dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
+                [user_id, sponsor_org_id]
+            );
+            await pool.query(
+                'UPDATE driver_applications SET status = "withdrawn", reviewed_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = "approved"',
+                [user_id, sponsor_org_id]
+            );
+        } else if (user_type === 'sponsor') {
+            await pool.query(
+                'UPDATE sponsor_user SET sponsor_org_id = NULL WHERE user_id = ?',
+                [user_id]
+            );
+        } else {
+            return res.status(400).json({ error: 'Invalid user_type' });
+        }
+        res.json({ message: 'Successfully left organization' });
+    } catch (error) {
+        console.error('Error leaving organization:', error);
+        res.status(500).json({ error: 'Failed to leave organization' });
     }
 });
 
@@ -950,11 +1020,6 @@ app.post('/api/driver/leave-sponsor', async (req, res) => {
         await pool.query(
             'UPDATE driver_user SET driver_status = ?, sponsor_org_id = NULL, dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
             ['dropped', driverUserId, sponsor_org_id]
-        );
-
-        await pool.query(
-            'UPDATE users SET sponsor_org_id = NULL WHERE user_id = ?',
-            [driverUserId]
         );
 
         await pool.query(
@@ -1204,7 +1269,8 @@ app.post('/api/2fa/verify', async (req, res) => {
         await pool.query('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
         await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${user.email}`]);
 
-        return res.json({ message: 'Login successful', user: userNoPassword });
+        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+        return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
     } catch (error) {
         console.error('2FA verify error:', error);
         res.status(500).json({ error: 'Server error during 2FA verification' });
@@ -1371,9 +1437,6 @@ app.post('/api/driver/drop', async (req, res) => {
 
         await pool.query(
             'UPDATE driver_user SET sponsor_org_id = NULL, driver_status = "dropped", dropped_at = NOW(), drop_reason = ? WHERE user_id = ?', [drop_reason || null, driverId]);
-
-        await pool.query(
-            'UPDATE users SET sponsor_org_id = NULL WHERE user_id = ?', [driverId]);
 
         let msg;
         if(drop_reason) {
