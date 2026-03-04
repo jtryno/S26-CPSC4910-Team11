@@ -2100,6 +2100,82 @@ app.put('/api/orders/:orderId/delivery', async (req, res) => {
     }
 });
 
+// --- Transaction Comments Routes -----------------------------------------------------
+
+// GET /api/transaction-comments/:transactionId - returns all comments for a transaction,
+// ordered oldest first so the UI shows them as a chronological thread
+app.get('/api/transaction-comments/:transactionId', async (req, res) => {
+    const { transactionId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT tc.comment_id, tc.user_id, tc.body, tc.created_at,
+                    u.username, u.first_name, u.last_name, u.user_type
+             FROM transaction_comments tc
+             JOIN users u ON tc.user_id = u.user_id
+             WHERE tc.transaction_id = ?
+             ORDER BY tc.created_at ASC`,
+            [transactionId]
+        );
+        res.json({ comments: rows });
+    } catch (error) {
+        console.error('Error fetching transaction comments:', error);
+        res.status(500).json({ error: 'Failed to fetch comments' });
+    }
+});
+
+// POST /api/transaction-comments - inserts a new comment and returns it with full user info
+app.post('/api/transaction-comments', async (req, res) => {
+    const { transaction_id, user_id, body } = req.body;
+    if (!transaction_id || !user_id || !body?.trim()) {
+        return res.status(400).json({ error: 'transaction_id, user_id, and body are required' });
+    }
+    try {
+        const [result] = await pool.query(
+            'INSERT INTO transaction_comments (transaction_id, user_id, body) VALUES (?, ?, ?)',
+            [transaction_id, user_id, body.trim()]
+        );
+        // Re-fetch the inserted row so we can return enriched user fields in one response
+        const [[comment]] = await pool.query(
+            `SELECT tc.comment_id, tc.user_id, tc.body, tc.created_at,
+                    u.username, u.first_name, u.last_name, u.user_type
+             FROM transaction_comments tc
+             JOIN users u ON tc.user_id = u.user_id
+             WHERE tc.comment_id = ?`,
+            [result.insertId]
+        );
+        res.status(201).json({ comment });
+    } catch (error) {
+        console.error('Error adding transaction comment:', error);
+        res.status(500).json({ error: 'Failed to add comment' });
+    }
+});
+
+// GET /api/sponsor/transaction-comments/:sponsorOrgId - returns transactions that have at least
+// one comment
+app.get('/api/sponsor/transaction-comments/:sponsorOrgId', async (req, res) => {
+    const { sponsorOrgId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT pt.transaction_id, pt.driver_user_id, pt.point_amount, pt.reason,
+                    pt.source, pt.created_at,
+                    u.username, u.first_name, u.last_name,
+                    COUNT(tc.comment_id) AS comment_count,
+                    MAX(tc.created_at) AS last_comment_at
+             FROM point_transactions pt
+             JOIN transaction_comments tc ON pt.transaction_id = tc.transaction_id
+             JOIN users u ON pt.driver_user_id = u.user_id
+             WHERE pt.sponsor_org_id = ?
+             GROUP BY pt.transaction_id
+             ORDER BY last_comment_at DESC`,
+            [sponsorOrgId]
+        );
+        res.json({ transactions: rows });
+    } catch (error) {
+        console.error('Error fetching sponsor transaction comments:', error);
+        res.status(500).json({ error: 'Failed to fetch transaction comments' });
+    }
+});
+
 if (process.env.NODE_ENV !== 'test') {
     // Run migration to add delivery columns if they don't exist
     (async () => {
