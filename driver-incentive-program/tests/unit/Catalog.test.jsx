@@ -132,3 +132,114 @@ describe('Catalog Page UI Component', () => {
         expect(screen.getByText(/Join an organization/i)).toBeInTheDocument();
     });
 });
+
+// ---------------------------------------------------------------------------
+// Order Review Modal
+// ---------------------------------------------------------------------------
+
+const makeCartItem = (overrides = {}) => ({
+    item_id: 1,
+    title: 'Test Cart Item',
+    quantity: 1,
+    points_price_at_add: 300,
+    image_url: null,
+    ...overrides,
+});
+
+/**
+ * Init mocks where the cart already has items and the driver has enough balance.
+ */
+const mockInitFetchWithCart = (cartItems = [], balance = 5000) => {
+    fetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [makeCatalogItem()] }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ cart_id: 1 }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: cartItems }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: balance }) });
+};
+
+describe('Order Review Modal', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.setItem('user', JSON.stringify(mockUser));
+    });
+
+    afterEach(() => {
+        localStorage.clear();
+    });
+
+    /** Helper: load catalog+cart, open cart sidebar, click Checkout, wait for review modal */
+    const openReviewModal = async () => {
+        await waitFor(() => expect(screen.getByText('Test Reward Item')).toBeInTheDocument());
+        screen.getAllByRole('button', { name: /Cart/i })[0].click();
+        await waitFor(() => expect(screen.getByRole('button', { name: /Checkout/i })).not.toBeDisabled());
+        screen.getByRole('button', { name: /Checkout/i }).click();
+        await waitFor(() => expect(screen.getByText(/Review Your Order/i)).toBeInTheDocument());
+    };
+
+    it('opens the review modal when Checkout is clicked', async () => {
+        mockInitFetchWithCart([makeCartItem()]);
+        render(<Catalog />);
+        await openReviewModal();
+        expect(screen.getByText(/Review Your Order/i)).toBeInTheDocument();
+    });
+
+    it('shows cart items in the review modal', async () => {
+        mockInitFetchWithCart([makeCartItem({ title: 'Awesome Reward' })]);
+        render(<Catalog />);
+        await openReviewModal();
+        expect(screen.getAllByText('Awesome Reward').length).toBeGreaterThan(0);
+    });
+
+    it('shows correct point total and remaining balance in the review modal', async () => {
+        mockInitFetchWithCart([makeCartItem({ points_price_at_add: 300 })], 1000);
+        render(<Catalog />);
+        await openReviewModal();
+
+        // "300 pts" appears in both cart sidebar and review modal total row
+        expect(screen.getAllByText('300 pts').length).toBeGreaterThanOrEqual(1);
+        // Remaining balance "700 pts" is unique to the review modal
+        expect(screen.getByText('700 pts')).toBeInTheDocument();
+    });
+
+    it('closes the review modal when Back is clicked', async () => {
+        mockInitFetchWithCart([makeCartItem()]);
+        render(<Catalog />);
+        await openReviewModal();
+
+        screen.getByRole('button', { name: /Back/i }).click();
+
+        await waitFor(() => {
+            expect(screen.queryByText(/Review Your Order/i)).not.toBeInTheDocument();
+        });
+    });
+
+    it('calls the orders API when Confirm Order is clicked', async () => {
+        mockInitFetchWithCart([makeCartItem()]);
+        render(<Catalog />);
+        await openReviewModal();
+
+        fetch
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ order_id: 99, points_spent: 300 }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ cart_id: 2 }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 700 }) });
+
+        screen.getByRole('button', { name: /Confirm Order/i }).click();
+
+        await waitFor(() => {
+            expect(fetch).toHaveBeenCalledWith('/api/orders', expect.objectContaining({ method: 'POST' }));
+        });
+    });
+
+    it('shows an error message in the review modal when checkout fails', async () => {
+        mockInitFetchWithCart([makeCartItem()]);
+        render(<Catalog />);
+        await openReviewModal();
+
+        fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'Insufficient points' }) });
+        screen.getByRole('button', { name: /Confirm Order/i }).click();
+
+        await waitFor(() => {
+            expect(screen.getAllByText(/Insufficient points/i).length).toBeGreaterThan(0);
+        });
+    });
+});
