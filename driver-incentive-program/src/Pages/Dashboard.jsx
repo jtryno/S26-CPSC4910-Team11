@@ -28,6 +28,12 @@ const DriverDashboard = ({ user }) => {
     const [selectedOrderId, setSelectedOrderId] = useState(null);
     const [orderItemsLoading, setOrderItemsLoading] = useState(false);
 
+    const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
+    const [selectedDeliveryOrder, setSelectedDeliveryOrder] = useState(null);
+    const [deliveryForm, setDeliveryForm] = useState({ delivery_name: '', delivery_address: '', delivery_city: '', delivery_state: '', delivery_zip: '' });
+    const [deliverySaving, setDeliverySaving] = useState(false);
+    const [deliveryMsg, setDeliveryMsg] = useState(null);
+
     const SOURCE_LABELS = {
         recurring: 'Recurring',
         manual: 'Manual',
@@ -378,6 +384,21 @@ const DriverDashboard = ({ user }) => {
                                     }
                                 },
                             },
+                            {
+                                label: 'Delivery',
+                                onClick: (row) => {
+                                    setSelectedDeliveryOrder(row);
+                                    setDeliveryForm({
+                                        delivery_name: row.delivery_name || '',
+                                        delivery_address: row.delivery_address || '',
+                                        delivery_city: row.delivery_city || '',
+                                        delivery_state: row.delivery_state || '',
+                                        delivery_zip: row.delivery_zip || '',
+                                    });
+                                    setDeliveryMsg(null);
+                                    setDeliveryModalOpen(true);
+                                },
+                            },
                         ]}
                         data={orders}
                     />
@@ -453,6 +474,109 @@ const DriverDashboard = ({ user }) => {
                                 }}
                             >
                                 Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Delivery Details Modal ── */}
+            {deliveryModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '440px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Delivery Details — Order #{selectedDeliveryOrder?.order_id}</h2>
+                        <p style={{ color: '#555', fontSize: '14px', marginTop: 0 }}>
+                            Enter where you'd like this order shipped.
+                        </p>
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                            {[
+                                { field: 'delivery_name', label: 'Full Name' },
+                                { field: 'delivery_address', label: 'Street Address' },
+                                { field: 'delivery_city', label: 'City' },
+                                { field: 'delivery_state', label: 'State' },
+                                { field: 'delivery_zip', label: 'ZIP Code' },
+                            ].map(({ field, label }) => (
+                                <div key={field}>
+                                    <label style={{ display: 'block', fontSize: '13px', color: '#444', marginBottom: '4px' }}>{label}</label>
+                                    <input
+                                        type="text"
+                                        value={deliveryForm[field]}
+                                        onChange={(e) => setDeliveryForm(prev => ({ ...prev, [field]: e.target.value }))}
+                                        style={{
+                                            width: '100%', padding: '8px 10px',
+                                            borderRadius: '4px', border: '1px solid #ccc',
+                                            fontSize: '14px', boxSizing: 'border-box',
+                                        }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        {deliveryMsg && (
+                            <div style={{
+                                marginTop: '12px', padding: '8px 12px', borderRadius: '4px',
+                                background: deliveryMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: deliveryMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '13px',
+                            }}>
+                                {deliveryMsg.text}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                            <button
+                                onClick={() => { setDeliveryModalOpen(false); setSelectedDeliveryOrder(null); setDeliveryMsg(null); }}
+                                style={{ padding: '8px 20px', borderRadius: '4px', border: '1px solid #ccc', background: '#f5f5f5', cursor: 'pointer' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                disabled={deliverySaving}
+                                onClick={async () => {
+                                    setDeliverySaving(true);
+                                    setDeliveryMsg(null);
+                                    try {
+                                        const res = await fetch(`/api/orders/${selectedDeliveryOrder.order_id}/delivery`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ driverUserId: user.user_id, ...deliveryForm }),
+                                        });
+                                        const json = await res.json();
+                                        if (res.ok) {
+                                            setDeliveryMsg({ type: 'success', text: 'Delivery details saved.' });
+                                            setOrders(prev => prev.map(o =>
+                                                o.order_id === selectedDeliveryOrder.order_id
+                                                    ? { ...o, ...deliveryForm }
+                                                    : o
+                                            ));
+                                        } else {
+                                            setDeliveryMsg({ type: 'error', text: json.error || 'Failed to save.' });
+                                        }
+                                    } catch {
+                                        setDeliveryMsg({ type: 'error', text: 'Network error. Please try again.' });
+                                    } finally {
+                                        setDeliverySaving(false);
+                                    }
+                                }}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px', border: 'none',
+                                    background: deliverySaving ? '#e0e0e0' : '#1976d2',
+                                    color: deliverySaving ? '#999' : '#fff',
+                                    cursor: deliverySaving ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {deliverySaving ? 'Saving...' : 'Save'}
                             </button>
                         </div>
                     </div>

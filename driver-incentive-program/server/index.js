@@ -1893,6 +1893,7 @@ app.get('/api/orders/driver/:driverUserId', async (req, res) => {
     try {
         const [rows] = await pool.query(
             `SELECT o.order_id, o.status, o.created_at, o.cancel_reason, o.cancelled_at,
+                    o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state, o.delivery_zip,
                     so.name AS sponsor_name,
                     SUM(oi.points_price_at_purchase * oi.quantity) AS total_points,
                     SUM(oi.price_usd_at_purchase * oi.quantity) AS total_usd,
@@ -2044,7 +2045,59 @@ app.get('/api/support-tickets', async (_req, res) => {
     }
 });
 
+// ─── Delivery Details Routes ──────────────────────────────────────────────────
+
+// PUT /api/orders/:orderId/delivery — driver updates delivery details for an order
+app.put('/api/orders/:orderId/delivery', async (req, res) => {
+    const { orderId } = req.params;
+    const { driverUserId, delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip } = req.body;
+    if (!driverUserId) return res.status(400).json({ error: 'driverUserId is required' });
+    try {
+        const [[order]] = await pool.query(
+            'SELECT order_id FROM orders WHERE order_id = ? AND driver_user_id = ?',
+            [orderId, driverUserId]
+        );
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        await pool.query(
+            `UPDATE orders SET delivery_name = ?, delivery_address = ?, delivery_city = ?,
+             delivery_state = ?, delivery_zip = ? WHERE order_id = ?`,
+            [delivery_name || null, delivery_address || null, delivery_city || null,
+             delivery_state || null, delivery_zip || null, orderId]
+        );
+        res.json({ message: 'Delivery details updated' });
+    } catch (error) {
+        console.error('Error updating delivery details:', error);
+        res.status(500).json({ error: 'Failed to update delivery details' });
+    }
+});
+
 if (process.env.NODE_ENV !== 'test') {
+    // Run migration to add delivery columns if they don't exist
+    (async () => {
+        try {
+            const deliveryCols = [
+                { name: 'delivery_name', type: 'VARCHAR(200) NULL' },
+                { name: 'delivery_address', type: 'VARCHAR(500) NULL' },
+                { name: 'delivery_city', type: 'VARCHAR(100) NULL' },
+                { name: 'delivery_state', type: 'VARCHAR(50) NULL' },
+                { name: 'delivery_zip', type: 'VARCHAR(20) NULL' },
+            ];
+            for (const col of deliveryCols) {
+                const [rows] = await pool.query(
+                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?`,
+                    [col.name]
+                );
+                if (rows.length === 0) {
+                    await pool.query(`ALTER TABLE orders ADD COLUMN ${col.name} ${col.type}`);
+                    console.log(`Added column orders.${col.name}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Delivery columns migration failed:', e.message);
+        }
+    })();
+
     app.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
     });
