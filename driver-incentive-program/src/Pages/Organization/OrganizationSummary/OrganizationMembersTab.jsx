@@ -6,12 +6,14 @@ import { removeFromOrganization } from '../../../api/UserApi';
 import { dropDriver } from '../../../api/UserApi';
 import Modal from '../../../components/Modal';
 import InputField from '../../../components/InputField';
+import SponsorPurchaseModal from './SponsorPurchaseModal';
 
 const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgId}) => {
     const [signupModalOpen, setSignupModalOpen] = useState(false);
     const [isRemoveOpen, setRemoveOpen] = useState(false);
     const [selectedMember, setSelectedMember] = useState(null);
     const [dropReason, setDropReason] = useState('');
+    const [purchaseDriver, setPurchaseDriver] = useState(null);
 
     function handleDropClose() {
         setRemoveOpen(false);
@@ -51,10 +53,26 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                 ]}
                 actions={(() => {
                     if(userData?.user_type !== 'driver') {
-                        return [{ label: 'Remove', onClick: (row) => {
-                            setSelectedMember(row);
-                            setRemoveOpen(true);
-                        }}];
+                        return [
+                            {
+                                label: 'Purchase for Driver',
+                                render: (row) => row.user_type === 'driver' ? (
+                                    <button
+                                        onClick={() => setPurchaseDriver(row)}
+                                        style={{ backgroundColor: '#1976d2', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}
+                                    >
+                                        Purchase
+                                    </button>
+                                ) : null,
+                            },
+                            {
+                                label: 'Remove',
+                                onClick: (row) => {
+                                    setSelectedMember(row);
+                                    setRemoveOpen(true);
+                                },
+                            },
+                        ];
                     }
                     return [];
                 })()}
@@ -91,6 +109,13 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                     />
                 </div>
             </Modal>
+            <SponsorPurchaseModal
+                isOpen={!!purchaseDriver}
+                onClose={() => setPurchaseDriver(null)}
+                driver={purchaseDriver}
+                orgId={orgId}
+                sponsorUserId={userData?.user_id}
+            />
         </div>
     );
 }

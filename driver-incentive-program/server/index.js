@@ -1695,7 +1695,7 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
 
 // POST /api/cart — get-or-create active cart for driver+org
 app.post('/api/cart', async (req, res) => {
-    const { driverUserId, sponsorOrgId } = req.body;
+    const { driverUserId, sponsorOrgId, createdByUserId } = req.body;
     if (!driverUserId || !sponsorOrgId) {
         return res.status(400).json({ error: 'driverUserId and sponsorOrgId are required' });
     }
@@ -1709,7 +1709,7 @@ app.post('/api/cart', async (req, res) => {
         }
         const [result] = await pool.query(
             'INSERT INTO carts (driver_user_id, sponsor_org_id, created_by_user_id, status) VALUES (?, ?, ?, "active")',
-            [driverUserId, sponsorOrgId, driverUserId]
+            [driverUserId, sponsorOrgId, createdByUserId || driverUserId]
         );
         res.status(201).json({ cart_id: result.insertId });
     } catch (error) {
@@ -1788,7 +1788,7 @@ app.delete('/api/cart/:cartId/items/:itemId', async (req, res) => {
 
 // POST /api/orders — checkout cart (atomic transaction)
 app.post('/api/orders', async (req, res) => {
-    const { driverUserId, sponsorOrgId, cartId } = req.body;
+    const { driverUserId, sponsorOrgId, cartId, placedByUserId } = req.body;
     if (!driverUserId || !sponsorOrgId || !cartId) {
         return res.status(400).json({ error: 'driverUserId, sponsorOrgId, and cartId are required' });
     }
@@ -1846,7 +1846,7 @@ app.post('/api/orders', async (req, res) => {
         // 6. Create order record
         const [orderResult] = await conn.query(
             'INSERT INTO orders (driver_user_id, sponsor_org_id, placed_by_user_id, cart_id, status) VALUES (?, ?, ?, ?, "placed")',
-            [driverUserId, sponsorOrgId, driverUserId, cartId]
+            [driverUserId, sponsorOrgId, placedByUserId || driverUserId, cartId]
         );
         const orderId = orderResult.insertId;
 
@@ -1864,7 +1864,7 @@ app.post('/api/orders', async (req, res) => {
             `INSERT INTO point_transactions
                (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id)
              VALUES (?, ?, ?, ?, 'order', ?)`,
-            [driverUserId, sponsorOrgId, -totalPoints, `Order #${orderId}`, driverUserId]
+            [driverUserId, sponsorOrgId, -totalPoints, `Order #${orderId}`, placedByUserId || driverUserId]
         );
 
         // 9. Mark cart as checked out
