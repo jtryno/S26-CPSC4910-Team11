@@ -565,6 +565,35 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
     }
 });
 
+// GET /api/organization/:sponsor_org_id/monthly-redeemed-points — total points redeemed via catalog orders this month
+app.get('/api/organization/:sponsor_org_id/monthly-redeemed-points', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+    try {
+        // first day of the current month at midnight
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        // sum negative order transactions this month, excluding any that have an approved contest
+        // (approved contests indicate the points were reversed and should not count as redeemed)
+        const [[{ total_redeemed }]] = await pool.query(
+            `SELECT COALESCE(SUM(point_amount), 0) AS total_redeemed
+             FROM point_transactions
+             WHERE sponsor_org_id = ?
+               AND source = 'order'
+               AND point_amount < 0
+               AND created_at >= ?
+               AND transaction_id NOT IN (
+                   SELECT transaction_id FROM point_contests WHERE status = 'approved'
+               )`,
+            [sponsor_org_id, monthStart]
+        );
+        res.json({ total_redeemed: Math.abs(Number(total_redeemed)) });
+    } catch (error) {
+        console.error('Error fetching monthly redeemed points:', error);
+        res.status(500).json({ error: 'Failed to fetch monthly redeemed points' });
+    }
+});
+
 // --- Login Route  ---
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
