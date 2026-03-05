@@ -4,6 +4,7 @@ import './App.css'
 import Home from './Pages/Home'
 import About from './Pages/About'
 import Login from './Pages/Login'
+import DriverSignup from './Pages/DriverSignup'
 import Account from './Pages/Account'
 import PasswordReset from './Pages/PasswordReset'
 import Dashboard from './Pages/Dashboard'
@@ -12,7 +13,10 @@ import OrganizationSummary from './Pages/Organization/OrganizationSummary/Organi
 import Catalog from './Pages/Catalog'
 import SupportTickets from './Pages/SupportTickets'
 import InactivityModal from './components/InactivityModal'
+import Reports from './Pages/Reports/Reports'
 import { FaUser } from 'react-icons/fa';
+import Notifications from './Pages/Notifications'
+import Messages from './Pages/Messages'
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -355,13 +359,17 @@ useEffect(() => {
               <>
                 <li><Link to="/dashboard">Dashboard</Link></li>
                 <li><Link to="/catalog">Catalog</Link></li>
+                <li><Link to="/notifications">Notifications</Link></li>
                 <li><Link to="/support-tickets">Support</Link></li>
+                <li><Link to="/messages">Messages</Link></li>
               </>
             )}
+            {userData?.user_type != "driver" && isLoggedIn && <li><Link to={`/reports/${userData?.user_type}`}>Reports</Link></li>}
           </ul>
         </div>
         <ul className="nav-auth">
           {!isLoggedIn && <li><Link to="/login">Login</Link></li>}
+          {!isLoggedIn && <li><Link to="/driver-signup">Sign Up</Link></li>}
           {isLoggedIn && (
             <div style={{display: 'flex', alignItems: 'center', gap: '20px'}}>
               <Link to="/account" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
@@ -389,12 +397,16 @@ useEffect(() => {
           <Route path="/about" element={<About />} />
           <Route path="/password-reset" element={<PasswordReset />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/driver-signup" element={<DriverSignup />} />
           <Route path="/account" element={<Account />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/organization" element={<Organizations />} />
           <Route path="/organization/:orgId" element={<OrganizationSummary />} />
           <Route path="/catalog" element={<Catalog />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="/support-tickets" element={<SupportTickets userData={userData} />} />
+          <Route path="/messages" element={<Messages />} />
+          <Route path="/reports/:user_type" element={<Reports />} />
         </Routes>
       </main>
 

@@ -1,14 +1,49 @@
 import React from 'react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import SortableTable from '../../../components/SortableTable';
+import SignupModal from '../../../components/SignupModal';
 import { removeFromOrganization } from '../../../api/UserApi';
+import { dropDriver } from '../../../api/UserApi';
+import Modal from '../../../components/Modal';
+import InputField from '../../../components/InputField';
+import SponsorPurchaseModal from './SponsorPurchaseModal';
 
-const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => {
+const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgId}) => {
+    const [signupModalOpen, setSignupModalOpen] = useState(false);
+    const [isRemoveOpen, setRemoveOpen] = useState(false);
+    const [selectedMember, setSelectedMember] = useState(null);
+    const [dropReason, setDropReason] = useState('');
+    const [purchaseDriver, setPurchaseDriver] = useState(null);
+
+    function handleDropClose() {
+        setRemoveOpen(false);
+        setSelectedMember(null);
+        setDropReason('');
+    }
 
     const isSponsorOrAdmin = userData?.user_type === 'sponsor' || userData?.user_type === 'admin';
 
     return (
-        <div style={{ display: 'grid', direction: 'column', margin: '20px'}}>
+        <div style={{ display: 'grid', direction: 'column', margin: '20px', gap: '20px'}}>
+            { userData.user_type !== 'driver' &&
+                <button
+                    style={{ width: '200px'}}
+                    onClick={() => setSignupModalOpen(true)}
+                >
+                    Create Org User
+                </button>
+            }
+            <SignupModal
+                isOpen={signupModalOpen}
+                onClose={() => setSignupModalOpen(false)}
+                onSave={() => fetchOrg()}
+                possibleRoles={[
+                    { label: 'Driver', value: 'driver' },
+                    { label : 'Sponsor', value: 'sponsor' },
+                ]}
+                orgId={orgId}
+                createdByUserId={userData?.user_id}
+            />
             <SortableTable
                 columns={[
                     { key: 'user_id', label: 'User ID', sortable: true },
@@ -16,23 +51,70 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg}) => 
                     { key: 'user_type', label: 'Role', sortable: true },
                     ...(isSponsorOrAdmin ? [{ key: 'points', label: 'Points', sortable: true }] : []),
                 ]}
-                actions={userData?.user_type !== 'driver' ? [
-                    { label: 'Remove', onClick: async (row) => {
-                        if (window.confirm(`Are you sure you want to remove ${row.username} from the organization?`)) {
-                            await removeFromOrganization(row.user_id);
-                            fetchOrg();
-                            if (row.user_id === userData.user_id) {
-                                setUserData(prev => ({ ...prev, sponsor_org_id: null }));
-                            }
-                        }
-                    }}
-                ] : []}
+                actions={(() => {
+                    if(userData?.user_type !== 'driver') {
+                        return [
+                            {
+                                label: 'Purchase for Driver',
+                                render: (row) => row.user_type === 'driver' ? (
+                                    <button
+                                        onClick={() => setPurchaseDriver(row)}
+                                        style={{ backgroundColor: '#1976d2', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}
+                                    >
+                                        Purchase
+                                    </button>
+                                ) : null,
+                            },
+                            {
+                                label: 'Remove',
+                                onClick: (row) => {
+                                    setSelectedMember(row);
+                                    setRemoveOpen(true);
+                                },
+                            },
+                        ];
+                    }
+                    return [];
+                })()}
                 data={(orgUsers || []).map(user => ({
                     ...user,
                     points: user.user_type === 'driver'
                         ? (user.points != null ? Number(user.points) : 0)
                         : null,
                 }))}
+            />
+            <Modal
+                isOpen={isRemoveOpen}
+                onClose={handleDropClose}
+                title={`Remove ${selectedMember?.username || 'Member'}`}
+                onSave={async () => {
+                    if (window.confirm(`Are you sure you want to remove ${selectedMember?.username} from the organization?`)) {
+                        await dropDriver(selectedMember.user_id, dropReason);
+                        fetchOrg();
+                        if (selectedMember.user_id === userData.user_id) {
+                            setUserData(prev => ({...prev, sponsor_org_id: null}));
+                        }
+                        handleDropClose();
+                    }
+                }}
+            >
+                <div style={{ display: 'grid', gap: '10px' }}>
+                    <p style={{ margin: 0, color: '#444', fontSize: '14px' }}>
+                        You are removing <strong>{selectedMember?.username}</strong> from the organization. You can choose to provide a reason.
+                    </p>
+                    <InputField
+                        label="Reason (optional)"
+                        value={dropReason}
+                        onChange={(value) => setDropReason(value)}
+                    />
+                </div>
+            </Modal>
+            <SponsorPurchaseModal
+                isOpen={!!purchaseDriver}
+                onClose={() => setPurchaseDriver(null)}
+                driver={purchaseDriver}
+                orgId={orgId}
+                sponsorUserId={userData?.user_id}
             />
         </div>
     );

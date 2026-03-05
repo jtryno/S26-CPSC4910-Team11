@@ -139,7 +139,7 @@ const Login = () => {
 
   return (
     <div style={{ maxWidth: '440px', margin: '60px auto', padding: '40px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)' }}>
-      <h2 style={{ textAlign: 'center', color: '#1a1a1a', marginBottom: '30px', fontSize: '1.8em' }}>Sign In</h2>
+      <h2 style={{ textAlign: 'center', color: '#1a1a1a', marginBottom: '30px', fontSize: '1.8em' }}>Log In</h2>
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: '20px' }}>
           <input
@@ -188,7 +188,7 @@ const Login = () => {
           </label>
         </div>
         <button type="submit" style={{ width: '100%', padding: '12px', background: '#0066cc', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '1em', transition: 'background-color 0.2s' }}>
-          Sign In
+          Log In
         </button>
       </form>
     </div>

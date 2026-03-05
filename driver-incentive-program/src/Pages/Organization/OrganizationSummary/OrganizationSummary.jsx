@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import OrganizationHeader from './OrganizationHeader';
 import OrganizationMembersTab from './OrganizationMembersTab';
-import { fetchOrgData, fetchOrgUsers } from '../../../api/OrganizationApi';
+import { fetchOrgData, fetchOrgUsers, fetchDropLogs } from '../../../api/OrganizationApi';
 import { featchApplicationsUser } from '../../../api/ApplicationApi';
 import TabGroup from '../../../components/TabGroup';
 import OrganizationApplicationsTab from './OrganizationApplicationsTab';
 import OrganizationContestsTab from './OrganizationContestsTab';
 import OrganizationCatalogTab from './OrganizationCatalogTab';
 import OrganizationOrdersTab from './OrganizationOrdersTab';
+import OrganizationDropsTab from './OrganizationDropsTab';
 
 const OrganizationSummary = () => {
     const [userData, setUserData] = useState(() => {
@@ -19,6 +20,7 @@ const OrganizationSummary = () => {
     const [orgData, setOrgData] = useState(null);
     const [orgUsers, setOrgUsers] = useState(null);
     const [hasPendingApplication, setHasPendingApplication] = useState(true);
+    const [dropData, setDropData] = useState([]);
 
     async function fetchOrg() {
         const org = await fetchOrgData(orgId);
@@ -27,6 +29,8 @@ const OrganizationSummary = () => {
         setOrgUsers(users);
         const applications = await featchApplicationsUser(userData.user_id, 'pending');
         setHasPendingApplication(applications.length > 0);
+        const drops = await fetchDropLogs(orgId);
+        setDropData(drops);
     }
 
     useEffect(() => {
@@ -42,12 +46,14 @@ const OrganizationSummary = () => {
             <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg} hasPendingApplication={hasPendingApplication}/>
             <div style={{ borderBottom: '1px solid #e0e0e0', marginBottom: '20px'}}/>
             <TabGroup tabs={[
-                { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg} /> },
+                { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg} orgId={orgId}/> },
                 ...(isSponsorOrAdmin ? [
-                    { label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg} /> },
+                    { label: "Applications", content: <OrganizationApplicationsTab userData={userData} setUserData={setUserData} orgId={orgId} fetchOrg={fetchOrg}/> },
+                    { label: "Drop Logs", content: <OrganizationDropsTab dropData={dropData} /> },
                     { label: "Point Contests", content: <OrganizationContestsTab userData={userData} orgId={orgId} /> },
                     { label: "Catalog", content: <OrganizationCatalogTab orgId={orgId} userData={userData} /> },
                     { label: "Orders", content: <OrganizationOrdersTab orgId={orgId} userData={userData} /> },
+
                 ] : [])
             ]} />
         </div>

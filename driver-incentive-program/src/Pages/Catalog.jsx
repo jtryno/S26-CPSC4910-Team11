@@ -15,6 +15,7 @@ const Catalog = () => {
     const [checkoutMsg, setCheckoutMsg] = useState(null);
     const [checkingOut, setCheckingOut] = useState(false);
     const [addingIds, setAddingIds] = useState(new Set());
+    const [reviewOpen, setReviewOpen] = useState(false);
 
     const sponsorOrgId = user?.sponsor_org_id;
     const driverUserId = user?.user_id;
@@ -109,7 +110,7 @@ const Catalog = () => {
     const canCheckout = cartItems.length > 0 && cartTotal <= balance;
 
     const handleCheckout = async () => {
-        if (!canCheckout) return;
+        if (!canCheckout) return false;
         setCheckingOut(true);
         setCheckoutMsg(null);
         try {
@@ -124,7 +125,6 @@ const Catalog = () => {
                 setCartItems([]);
                 setCartId(null);
                 await fetchBalance();
-                // Create a new cart for future use
                 const newCartRes = await fetch('/api/cart', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -134,11 +134,14 @@ const Catalog = () => {
                     const nc = await newCartRes.json();
                     setCartId(nc.cart_id);
                 }
+                return true;
             } else {
                 setCheckoutMsg({ type: 'error', text: json.error || 'Checkout failed.' });
+                return false;
             }
         } catch {
             setCheckoutMsg({ type: 'error', text: 'Network error. Please try again.' });
+            return false;
         } finally {
             setCheckingOut(false);
         }
@@ -327,28 +330,127 @@ const Catalog = () => {
                         )}
 
                         <button
-                            onClick={handleCheckout}
-                            disabled={!canCheckout || checkingOut}
+                            onClick={() => { setCheckoutMsg(null); setReviewOpen(true); }}
+                            disabled={!canCheckout}
                             style={{
                                 width: '100%',
                                 padding: '10px',
                                 borderRadius: '4px',
                                 border: 'none',
-                                background: !canCheckout || checkingOut ? '#e0e0e0' : '#2e7d32',
-                                color: !canCheckout || checkingOut ? '#999' : '#fff',
-                                cursor: !canCheckout || checkingOut ? 'not-allowed' : 'pointer',
+                                background: !canCheckout ? '#e0e0e0' : '#2e7d32',
+                                color: !canCheckout ? '#999' : '#fff',
+                                cursor: !canCheckout ? 'not-allowed' : 'pointer',
                                 fontWeight: '600',
                                 fontSize: '14px',
                             }}
                         >
-                            {checkingOut ? 'Placing Order...'
-                                : cartTotal > balance ? 'Insufficient Points'
+                            {cartTotal > balance ? 'Insufficient Points'
                                 : cartItems.length === 0 ? 'Cart is Empty'
                                 : 'Checkout'}
                         </button>
                     </div>
                 )}
             </div>
+
+            {/* ── Order Review Modal ── */}
+            {reviewOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '480px',
+                        maxWidth: '95vw',
+                        maxHeight: '80vh',
+                        overflowY: 'auto',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Review Your Order</h2>
+                        <p style={{ color: '#555', fontSize: '14px', margin: '0 0 16px' }}>
+                            Please confirm the items below before placing your order.
+                        </p>
+
+                        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {cartItems.map((ci) => (
+                                <li key={ci.item_id} style={{
+                                    display: 'flex', gap: '12px', alignItems: 'center',
+                                    borderBottom: '1px solid #f0f0f0', paddingBottom: '12px',
+                                }}>
+                                    <img
+                                        src={ci.image_url ? `/api/proxy-image?url=${encodeURIComponent(ci.image_url)}` : 'https://via.placeholder.com/50?text=?'}
+                                        alt={ci.title}
+                                        style={{ width: '50px', height: '50px', objectFit: 'contain', flexShrink: 0 }}
+                                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/50?text=?'; }}
+                                    />
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ fontWeight: '600', fontSize: '14px' }}>{ci.title}</div>
+                                        <div style={{ fontSize: '13px', color: '#666' }}>
+                                            Qty {ci.quantity} · {(ci.points_price_at_add * ci.quantity).toLocaleString()} pts
+                                        </div>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+
+                        <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '12px', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: '600' }}>
+                                <span>Total</span>
+                                <span style={{ color: '#1565c0' }}>{cartTotal.toLocaleString()} pts</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#555', marginTop: '4px' }}>
+                                <span>Remaining balance after order</span>
+                                <span style={{ color: '#2e7d32' }}>{(balance - cartTotal).toLocaleString()} pts</span>
+                            </div>
+                        </div>
+
+                        {checkoutMsg && (
+                            <div style={{
+                                marginBottom: '12px', padding: '8px 12px', borderRadius: '4px',
+                                background: checkoutMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: checkoutMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '13px',
+                            }}>
+                                {checkoutMsg.text}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setReviewOpen(false)}
+                                disabled={checkingOut}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px',
+                                    border: '1px solid #ccc', background: '#f5f5f5',
+                                    cursor: checkingOut ? 'not-allowed' : 'pointer',
+                                }}
+                            >
+                                Back
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    const success = await handleCheckout();
+                                    if (success) setReviewOpen(false);
+                                }}
+                                disabled={checkingOut}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px', border: 'none',
+                                    background: checkingOut ? '#e0e0e0' : '#2e7d32',
+                                    color: checkingOut ? '#999' : '#fff',
+                                    cursor: checkingOut ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {checkingOut ? 'Placing Order...' : 'Confirm Order'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

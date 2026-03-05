@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import EditableField from '../components/EditableField';
 import SortableTable from '../components/SortableTable';
+import SignupModal from '../components/SignupModal';
+import { fetchOrganizations } from '../api/OrganizationApi';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -20,11 +22,32 @@ const DriverDashboard = ({ user }) => {
     const [contestedTxIds, setContestedTxIds] = useState(new Set());
     const [expandedReasons, setExpandedReasons] = useState(new Set());
 
+    // State for the Notes modal on the driver's Points History table
+    const [commentsModalOpen, setCommentsModalOpen] = useState(false);
+    const [commentsTx, setCommentsTx] = useState(null);
+    const [comments, setComments] = useState([]);
+    const [commentsLoading, setCommentsLoading] = useState(false);
+    const [newCommentBody, setNewCommentBody] = useState('');
+    const [commentPosting, setCommentPosting] = useState(false);
+    const [commentMsg, setCommentMsg] = useState(null);
+
     const [orders, setOrders] = useState([]);
     const [orderDetailOpen, setOrderDetailOpen] = useState(false);
     const [selectedOrderItems, setSelectedOrderItems] = useState([]);
     const [selectedOrderId, setSelectedOrderId] = useState(null);
     const [orderItemsLoading, setOrderItemsLoading] = useState(false);
+
+    const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
+    const [selectedDeliveryOrder, setSelectedDeliveryOrder] = useState(null);
+    const [deliveryForm, setDeliveryForm] = useState({ delivery_name: '', delivery_address: '', delivery_city: '', delivery_state: '', delivery_zip: '' });
+    const [deliverySaving, setDeliverySaving] = useState(false);
+    const [deliveryMsg, setDeliveryMsg] = useState(null);
+
+    const [cancelModalOpen, setCancelModalOpen] = useState(false);
+    const [selectedCancelOrder, setSelectedCancelOrder] = useState(null);
+    const [cancelReason, setCancelReason] = useState('');
+    const [cancelling, setCancelling] = useState(false);
+    const [cancelMsg, setCancelMsg] = useState(null);
 
     const SOURCE_LABELS = {
         recurring: 'Recurring',
@@ -82,6 +105,43 @@ const DriverDashboard = ({ user }) => {
             setLeaveMsg({ type: 'error', text: err.message });
         } finally {
             setLeaving(false);
+        }
+    };
+
+    // Opens the Notes modal for a given transaction row and fetches its comment thread
+    const openCommentsModal = (tx) => {
+        setCommentsTx(tx);
+        setComments([]);
+        setNewCommentBody('');
+        setCommentMsg(null);
+        setCommentsModalOpen(true);
+        setCommentsLoading(true);
+        fetch(`/api/transaction-comments/${tx.transaction_id}`)
+            .then(r => r.json())
+            .then(d => setComments(d.comments || []))
+            .catch(() => setCommentMsg({ type: 'error', text: 'Failed to load comments.' }))
+            .finally(() => setCommentsLoading(false));
+    };
+
+    // Posts a new note for the currently open transaction and appends it to the local thread
+    const handlePostComment = async () => {
+        if (!newCommentBody.trim()) return;
+        setCommentPosting(true);
+        setCommentMsg(null);
+        try {
+            const res = await fetch('/api/transaction-comments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transaction_id: commentsTx.transaction_id, user_id: user.user_id, body: newCommentBody }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to post note');
+            setComments(prev => [...prev, data.comment]);
+            setNewCommentBody('');
+        } catch (err) {
+            setCommentMsg({ type: 'error', text: err.message });
+        } finally {
+            setCommentPosting(false);
         }
     };
 
@@ -302,6 +362,27 @@ const DriverDashboard = ({ user }) => {
                                     </button>
                                 ) : null,
                             },
+                            {
+                                // Notes button - opens comment thread for any transaction
+                                label: 'Notes',
+                                render: (row) => (
+                                    <button
+                                        onClick={() => openCommentsModal(row)}
+                                        style={{
+                                            padding: '4px 10px',
+                                            borderRadius: '4px',
+                                            border: '1px solid #1976d2',
+                                            background: '#e3f2fd',
+                                            color: '#1565c0',
+                                            cursor: 'pointer',
+                                            fontSize: '12px',
+                                            fontWeight: '600',
+                                        }}
+                                    >
+                                        Notes
+                                    </button>
+                                ),
+                            },
                         ]}
                     />
                 </div>
@@ -375,6 +456,37 @@ const DriverDashboard = ({ user }) => {
                                         setOrderItemsLoading(false);
                                     }
                                 },
+                            },
+                            {
+                                label: 'Delivery',
+                                onClick: (row) => {
+                                    setSelectedDeliveryOrder(row);
+                                    setDeliveryForm({
+                                        delivery_name: row.delivery_name || '',
+                                        delivery_address: row.delivery_address || '',
+                                        delivery_city: row.delivery_city || '',
+                                        delivery_state: row.delivery_state || '',
+                                        delivery_zip: row.delivery_zip || '',
+                                    });
+                                    setDeliveryMsg(null);
+                                    setDeliveryModalOpen(true);
+                                },
+                            },
+                            {
+                                label: 'Cancel',
+                                render: (row) => row.status === 'placed' ? (
+                                    <button
+                                        onClick={() => {
+                                            setSelectedCancelOrder(row);
+                                            setCancelReason('');
+                                            setCancelMsg(null);
+                                            setCancelModalOpen(true);
+                                        }}
+                                        style={{ backgroundColor: '#c62828', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+                                    >
+                                        Cancel
+                                    </button>
+                                ) : null,
                             },
                         ]}
                         data={orders}
@@ -451,6 +563,205 @@ const DriverDashboard = ({ user }) => {
                                 }}
                             >
                                 Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Delivery Details Modal ── */}
+            {deliveryModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '440px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Delivery Details — Order #{selectedDeliveryOrder?.order_id}</h2>
+                        <p style={{ color: '#555', fontSize: '14px', marginTop: 0 }}>
+                            Enter where you'd like this order shipped.
+                        </p>
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                            {[
+                                { field: 'delivery_name', label: 'Full Name' },
+                                { field: 'delivery_address', label: 'Street Address' },
+                                { field: 'delivery_city', label: 'City' },
+                                { field: 'delivery_state', label: 'State' },
+                                { field: 'delivery_zip', label: 'ZIP Code' },
+                            ].map(({ field, label }) => (
+                                <div key={field}>
+                                    <label style={{ display: 'block', fontSize: '13px', color: '#444', marginBottom: '4px' }}>{label}</label>
+                                    <input
+                                        type="text"
+                                        value={deliveryForm[field]}
+                                        onChange={(e) => setDeliveryForm(prev => ({ ...prev, [field]: e.target.value }))}
+                                        style={{
+                                            width: '100%', padding: '8px 10px',
+                                            borderRadius: '4px', border: '1px solid #ccc',
+                                            fontSize: '14px', boxSizing: 'border-box',
+                                        }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        {deliveryMsg && (
+                            <div style={{
+                                marginTop: '12px', padding: '8px 12px', borderRadius: '4px',
+                                background: deliveryMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: deliveryMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '13px',
+                            }}>
+                                {deliveryMsg.text}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                            <button
+                                onClick={() => { setDeliveryModalOpen(false); setSelectedDeliveryOrder(null); setDeliveryMsg(null); }}
+                                style={{ padding: '8px 20px', borderRadius: '4px', border: '1px solid #ccc', background: '#f5f5f5', cursor: 'pointer' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                disabled={deliverySaving}
+                                onClick={async () => {
+                                    setDeliverySaving(true);
+                                    setDeliveryMsg(null);
+                                    try {
+                                        const res = await fetch(`/api/orders/${selectedDeliveryOrder.order_id}/delivery`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ driverUserId: user.user_id, ...deliveryForm }),
+                                        });
+                                        const json = await res.json();
+                                        if (res.ok) {
+                                            setDeliveryMsg({ type: 'success', text: 'Delivery details saved.' });
+                                            setOrders(prev => prev.map(o =>
+                                                o.order_id === selectedDeliveryOrder.order_id
+                                                    ? { ...o, ...deliveryForm }
+                                                    : o
+                                            ));
+                                        } else {
+                                            setDeliveryMsg({ type: 'error', text: json.error || 'Failed to save.' });
+                                        }
+                                    } catch {
+                                        setDeliveryMsg({ type: 'error', text: 'Network error. Please try again.' });
+                                    } finally {
+                                        setDeliverySaving(false);
+                                    }
+                                }}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px', border: 'none',
+                                    background: deliverySaving ? '#e0e0e0' : '#1976d2',
+                                    color: deliverySaving ? '#999' : '#fff',
+                                    cursor: deliverySaving ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {deliverySaving ? 'Saving...' : 'Save'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Cancel Order Modal ── */}
+            {cancelModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '420px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Cancel Order #{selectedCancelOrder?.order_id}</h2>
+                        <p style={{ color: '#555', fontSize: '14px', margin: '0 0 16px' }}>
+                            Are you sure you want to cancel this order? You can optionally provide a reason.
+                        </p>
+                        <div>
+                            <label style={{ display: 'block', fontSize: '13px', color: '#444', marginBottom: '4px' }}>Reason (optional)</label>
+                            <textarea
+                                value={cancelReason}
+                                onChange={(e) => setCancelReason(e.target.value)}
+                                rows={3}
+                                style={{
+                                    width: '100%', padding: '8px 10px',
+                                    borderRadius: '4px', border: '1px solid #ccc',
+                                    fontSize: '14px', boxSizing: 'border-box', resize: 'vertical',
+                                }}
+                            />
+                        </div>
+                        {cancelMsg && (
+                            <div style={{
+                                marginTop: '12px', padding: '8px 12px', borderRadius: '4px',
+                                background: cancelMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: cancelMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '13px',
+                            }}>
+                                {cancelMsg.text}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                            <button
+                                onClick={() => { setCancelModalOpen(false); setSelectedCancelOrder(null); setCancelMsg(null); }}
+                                disabled={cancelling}
+                                style={{ padding: '8px 20px', borderRadius: '4px', border: '1px solid #ccc', background: '#f5f5f5', cursor: cancelling ? 'not-allowed' : 'pointer' }}
+                            >
+                                Keep Order
+                            </button>
+                            <button
+                                disabled={cancelling}
+                                onClick={async () => {
+                                    setCancelling(true);
+                                    setCancelMsg(null);
+                                    try {
+                                        const res = await fetch(`/api/orders/${selectedCancelOrder.order_id}/cancel`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ driverUserId: user.user_id, cancel_reason: cancelReason }),
+                                        });
+                                        const json = await res.json();
+                                        if (res.ok) {
+                                            setOrders(prev => prev.map(o =>
+                                                o.order_id === selectedCancelOrder.order_id
+                                                    ? { ...o, status: 'canceled', cancel_reason: cancelReason }
+                                                    : o
+                                            ));
+                                            setCancelModalOpen(false);
+                                            setSelectedCancelOrder(null);
+                                            setCancelMsg(null);
+                                        } else {
+                                            setCancelMsg({ type: 'error', text: json.error || 'Failed to cancel order.' });
+                                        }
+                                    } catch {
+                                        setCancelMsg({ type: 'error', text: 'Network error. Please try again.' });
+                                    } finally {
+                                        setCancelling(false);
+                                    }
+                                }}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px', border: 'none',
+                                    background: cancelling ? '#e0e0e0' : '#c62828',
+                                    color: cancelling ? '#999' : '#fff',
+                                    cursor: cancelling ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {cancelling ? 'Cancelling...' : 'Confirm Cancel'}
                             </button>
                         </div>
                     </div>
@@ -641,6 +952,137 @@ const DriverDashboard = ({ user }) => {
                     </div>
                 </div>
             )}
+
+            {/* ── Notes Modal ── */}
+            {commentsModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '520px',
+                        maxWidth: '95vw',
+                        maxHeight: '80vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>
+                            Notes — Transaction #{commentsTx?.transaction_id}
+                        </h2>
+                        <div style={{ fontSize: '13px', color: '#666', marginBottom: '16px' }}>
+                            {commentsTx?.created_at_display} · {commentsTx?.sponsor_name} ·{' '}
+                            <span style={{ fontWeight: 'bold', color: commentsTx?.point_amount >= 0 ? '#2e7d32' : '#c62828' }}>
+                                {commentsTx?.point_amount >= 0 ? '+' : ''}{commentsTx?.point_amount} pts
+                            </span>
+                        </div>
+
+                        <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px', minHeight: '80px' }}>
+                            {commentsLoading ? (
+                                <div style={{ color: '#888', fontSize: '14px' }}>Loading...</div>
+                            ) : comments.length === 0 ? (
+                                <div style={{ color: '#888', fontSize: '14px' }}>No notes yet. Add one below.</div>
+                            ) : (
+                                comments.map(c => {
+                                    const name = (c.first_name || c.last_name)
+                                        ? `${c.first_name || ''} ${c.last_name || ''}`.trim()
+                                        : c.username;
+                                    const isMe = c.user_id === user.user_id;
+                                    return (
+                                        <div key={c.comment_id} style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: isMe ? 'flex-end' : 'flex-start',
+                                            marginBottom: '12px',
+                                        }}>
+                                            <div style={{ fontSize: '11px', color: '#888', marginBottom: '3px' }}>
+                                                {name} ({c.user_type}) · {new Date(c.created_at).toLocaleString()}
+                                            </div>
+                                            <div style={{
+                                                background: isMe ? '#e3f2fd' : '#f5f5f5',
+                                                color: '#1a1a1a',
+                                                padding: '8px 12px',
+                                                borderRadius: '8px',
+                                                maxWidth: '80%',
+                                                fontSize: '14px',
+                                                wordBreak: 'break-word',
+                                            }}>
+                                                {c.body}
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <textarea
+                            value={newCommentBody}
+                            onChange={e => setNewCommentBody(e.target.value)}
+                            placeholder="Add a note..."
+                            rows={3}
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                borderRadius: '4px',
+                                border: '1px solid #ddd',
+                                fontSize: '14px',
+                                resize: 'vertical',
+                                boxSizing: 'border-box',
+                                marginBottom: '8px',
+                            }}
+                        />
+
+                        {commentMsg && (
+                            <div style={{
+                                marginBottom: '8px',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                background: commentMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: commentMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '13px',
+                            }}>
+                                {commentMsg.text}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setCommentsModalOpen(false)}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ccc',
+                                    background: '#f5f5f5',
+                                    color: '#1a1a1a',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Close
+                            </button>
+                            <button
+                                onClick={handlePostComment}
+                                disabled={commentPosting || !newCommentBody.trim()}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: commentPosting || !newCommentBody.trim() ? '#90caf9' : '#1976d2',
+                                    color: '#fff',
+                                    cursor: commentPosting || !newCommentBody.trim() ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {commentPosting ? 'Posting...' : 'Post Note'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };
@@ -665,6 +1107,17 @@ const SponsorDashboard = ({ user }) => {
     // Batch selection
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [activeTab, setActiveTab] = useState('individual');
+
+    // State for the Transaction Notes tab and reply modal (sponsor view)
+    const [commentedTxs, setCommentedTxs] = useState([]);
+    const [commentedTxsLoading, setCommentedTxsLoading] = useState(false);
+    const [sponsorCommentsModalOpen, setSponsorCommentsModalOpen] = useState(false);
+    const [sponsorCommentsTx, setSponsorCommentsTx] = useState(null);
+    const [sponsorComments, setSponsorComments] = useState([]);
+    const [sponsorCommentsLoading, setSponsorCommentsLoading] = useState(false);
+    const [sponsorNewComment, setSponsorNewComment] = useState('');
+    const [sponsorCommentPosting, setSponsorCommentPosting] = useState(false);
+    const [sponsorCommentMsg, setSponsorCommentMsg] = useState(null);
 
     // settings tab state
     const [settings, setSettings] = useState({ point_upper_limit: '', point_lower_limit: '', monthly_point_limit: '' });
@@ -692,6 +1145,54 @@ const SponsorDashboard = ({ user }) => {
             .catch(() => {});
     };
 
+    // Loads all transactions (for this org) that have at least one comment
+    const fetchCommentedTxs = () => {
+        if (!user.sponsor_org_id) return;
+        setCommentedTxsLoading(true);
+        fetch(`/api/sponsor/transaction-comments/${user.sponsor_org_id}`)
+            .then(r => r.json())
+            .then(d => setCommentedTxs(d.transactions || []))
+            .catch(() => {})
+            .finally(() => setCommentedTxsLoading(false));
+    };
+
+    // Opens the reply modal for a transaction row and fetches its full comment thread
+    const openSponsorCommentsModal = (tx) => {
+        setSponsorCommentsTx(tx);
+        setSponsorComments([]);
+        setSponsorNewComment('');
+        setSponsorCommentMsg(null);
+        setSponsorCommentsModalOpen(true);
+        setSponsorCommentsLoading(true);
+        fetch(`/api/transaction-comments/${tx.transaction_id}`)
+            .then(r => r.json())
+            .then(d => setSponsorComments(d.comments || []))
+            .catch(() => setSponsorCommentMsg({ type: 'error', text: 'Failed to load notes.' }))
+            .finally(() => setSponsorCommentsLoading(false));
+    };
+
+    // Posts a sponsor reply and appends it to the local thread without a refetch
+    const handleSponsorPostComment = async () => {
+        if (!sponsorNewComment.trim()) return;
+        setSponsorCommentPosting(true);
+        setSponsorCommentMsg(null);
+        try {
+            const res = await fetch('/api/transaction-comments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transaction_id: sponsorCommentsTx.transaction_id, user_id: user.user_id, body: sponsorNewComment }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to post reply');
+            setSponsorComments(prev => [...prev, data.comment]);
+            setSponsorNewComment('');
+        } catch (err) {
+            setSponsorCommentMsg({ type: 'error', text: err.message });
+        } finally {
+            setSponsorCommentPosting(false);
+        }
+    };
+
     useEffect(() => { fetchDrivers(); fetchMonthlyPoints(); }, [user.user_id]);
 
     useEffect(() => {
@@ -707,6 +1208,11 @@ const SponsorDashboard = ({ user }) => {
             })
             .catch(() => {});
     }, [user.user_id]);
+
+    // Fetch commented transactions whenever the sponsor switches to the Notes tab
+    useEffect(() => {
+        if (activeTab === 'notes') fetchCommentedTxs();
+    }, [activeTab]);
 
     const handleSaveSettings = async () => {
         setSettingsSaving(true);
@@ -897,6 +1403,7 @@ const SponsorDashboard = ({ user }) => {
                 {tabBtn('individual', 'Individual Points')}
                 {tabBtn('batch', 'Batch Award')}
                 {tabBtn('settings', 'Settings')}
+                {tabBtn('notes', 'Transaction Notes')}
             </div>
 
             <div style={{
@@ -1125,6 +1632,90 @@ const SponsorDashboard = ({ user }) => {
                         </div>
                     </>
                 )}
+
+                {/* ── Transaction Notes Tab ── */}
+                {activeTab === 'notes' && (
+                    <>
+                        <p style={{ color: '#555', marginTop: 0 }}>
+                            Transactions where drivers have added notes. Click <strong>View / Reply</strong> to read and respond.
+                        </p>
+                        {commentedTxsLoading ? (
+                            <div style={{ color: '#888' }}>Loading...</div>
+                        ) : commentedTxs.length === 0 ? (
+                            <div style={{ color: '#888' }}>No transactions have notes yet.</div>
+                        ) : (
+                            <SortableTable
+                                columns={[
+                                    {
+                                        key: 'transaction_id',
+                                        label: 'Tx ID',
+                                        sortable: true,
+                                        render: (val) => (
+                                            <span style={{ color: '#888', fontSize: '12px' }}>{val}</span>
+                                        ),
+                                    },
+                                    {
+                                        key: 'driver_display_name',
+                                        label: 'Driver',
+                                        sortable: true,
+                                    },
+                                    {
+                                        key: 'created_at_display',
+                                        label: 'Date',
+                                        sortable: true,
+                                        sortKey: 'created_at_sort',
+                                    },
+                                    {
+                                        key: 'point_amount',
+                                        label: 'Points',
+                                        sortable: true,
+                                        render: (val) => (
+                                            <span style={{ fontWeight: 'bold', color: val >= 0 ? '#2e7d32' : '#c62828' }}>
+                                                {val >= 0 ? '+' : ''}{val}
+                                            </span>
+                                        ),
+                                    },
+                                    {
+                                        key: 'comment_count',
+                                        label: 'Notes',
+                                        sortable: true,
+                                    },
+                                ]}
+                                data={commentedTxs.map(tx => ({
+                                    ...tx,
+                                    // Get display name from first/last or fall back to username
+                                    driver_display_name: (tx.first_name || tx.last_name)
+                                        ? `${tx.first_name || ''} ${tx.last_name || ''}`.trim()
+                                        : tx.username,
+                                    created_at_display: new Date(tx.created_at).toLocaleDateString(),
+                                    created_at_sort: new Date(tx.created_at).getTime(),
+                                }))}
+                                actions={[
+                                    {
+                                        label: 'Action',
+                                        render: (row) => (
+                                            <button
+                                                onClick={() => openSponsorCommentsModal(row)}
+                                                style={{
+                                                    padding: '4px 10px',
+                                                    borderRadius: '4px',
+                                                    border: '1px solid #1976d2',
+                                                    background: '#e3f2fd',
+                                                    color: '#1565c0',
+                                                    cursor: 'pointer',
+                                                    fontSize: '12px',
+                                                    fontWeight: '600',
+                                                }}
+                                            >
+                                                View / Reply
+                                            </button>
+                                        ),
+                                    },
+                                ]}
+                            />
+                        )}
+                    </>
+                )}
             </div>
 
             {/* ── Points Modal ── */}
@@ -1230,6 +1821,144 @@ const SponsorDashboard = ({ user }) => {
                     </div>
                 </div>
             )}
+
+            {/* ── Sponsor Notes Reply Modal ── */}
+            {sponsorCommentsModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '520px',
+                        maxWidth: '95vw',
+                        maxHeight: '80vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>
+                            Notes — Transaction #{sponsorCommentsTx?.transaction_id}
+                        </h2>
+                        <div style={{ fontSize: '13px', color: '#666', marginBottom: '16px' }}>
+                            {new Date(sponsorCommentsTx?.created_at).toLocaleDateString()} ·{' '}
+                            {(() => {
+                                const tx = sponsorCommentsTx;
+                                if (!tx) return '';
+                                return (tx.first_name || tx.last_name)
+                                    ? `${tx.first_name || ''} ${tx.last_name || ''}`.trim()
+                                    : tx.username;
+                            })()} ·{' '}
+                            <span style={{ fontWeight: 'bold', color: sponsorCommentsTx?.point_amount >= 0 ? '#2e7d32' : '#c62828' }}>
+                                {sponsorCommentsTx?.point_amount >= 0 ? '+' : ''}{sponsorCommentsTx?.point_amount} pts
+                            </span>
+                        </div>
+
+                        <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px', minHeight: '80px' }}>
+                            {sponsorCommentsLoading ? (
+                                <div style={{ color: '#888', fontSize: '14px' }}>Loading...</div>
+                            ) : sponsorComments.length === 0 ? (
+                                <div style={{ color: '#888', fontSize: '14px' }}>No notes yet.</div>
+                            ) : (
+                                sponsorComments.map(c => {
+                                    const name = (c.first_name || c.last_name)
+                                        ? `${c.first_name || ''} ${c.last_name || ''}`.trim()
+                                        : c.username;
+                                    const isMe = c.user_id === user.user_id;
+                                    return (
+                                        <div key={c.comment_id} style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: isMe ? 'flex-end' : 'flex-start',
+                                            marginBottom: '12px',
+                                        }}>
+                                            <div style={{ fontSize: '11px', color: '#888', marginBottom: '3px' }}>
+                                                {name} ({c.user_type}) · {new Date(c.created_at).toLocaleString()}
+                                            </div>
+                                            <div style={{
+                                                background: isMe ? '#e8f5e9' : '#f5f5f5',
+                                                color: '#1a1a1a',
+                                                padding: '8px 12px',
+                                                borderRadius: '8px',
+                                                maxWidth: '80%',
+                                                fontSize: '14px',
+                                                wordBreak: 'break-word',
+                                            }}>
+                                                {c.body}
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <textarea
+                            value={sponsorNewComment}
+                            onChange={e => setSponsorNewComment(e.target.value)}
+                            placeholder="Write a reply..."
+                            rows={3}
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                borderRadius: '4px',
+                                border: '1px solid #ddd',
+                                fontSize: '14px',
+                                resize: 'vertical',
+                                boxSizing: 'border-box',
+                                marginBottom: '8px',
+                            }}
+                        />
+
+                        {sponsorCommentMsg && (
+                            <div style={{
+                                marginBottom: '8px',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                background: sponsorCommentMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: sponsorCommentMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '13px',
+                            }}>
+                                {sponsorCommentMsg.text}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setSponsorCommentsModalOpen(false)}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ccc',
+                                    background: '#f5f5f5',
+                                    color: '#1a1a1a',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Close
+                            </button>
+                            <button
+                                onClick={handleSponsorPostComment}
+                                disabled={sponsorCommentPosting || !sponsorNewComment.trim()}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    background: sponsorCommentPosting || !sponsorNewComment.trim() ? '#a5d6a7' : '#2e7d32',
+                                    color: '#fff',
+                                    cursor: sponsorCommentPosting || !sponsorNewComment.trim() ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {sponsorCommentPosting ? 'Sending...' : 'Send Reply'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };
@@ -1245,6 +1974,18 @@ const AdminDashboard = ({ user }) => {
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [deleteMsg, setDeleteMsg] = useState(null);
+
+    const [signUpModalOpen, setSignUpModalOpen] = useState(false);
+    const [organizations, setOrganizations] = useState([]);
+
+    const loadOrganizations = async () => {
+        const orgs = await fetchOrganizations();
+        setOrganizations(orgs);
+    }
+
+    useEffect(() => {
+        loadOrganizations();
+    }, []);
 
     const handleSearch = async () => {
         setLoading(true);
@@ -1310,6 +2051,26 @@ const AdminDashboard = ({ user }) => {
             <h1>Admin Dashboard</h1>
             <p style={{ color: '#666', marginBottom: '24px' }}>Search for any user by email to view and edit their information.</p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '24px' }}>
+                <button
+                    style={{width: '200px'}}
+                    onClick={() => setSignUpModalOpen(true)}
+                >
+                    Create New User
+                </button>
+                <SignupModal
+                    isOpen={signUpModalOpen}
+                    onClose={() => setSignUpModalOpen(false)}
+                    possibleRoles={[
+                        { label: 'Driver', value: 'driver' },
+                        { label: 'Sponsor', value: 'sponsor' },
+                        { label: 'Admin', value: 'admin' },
+                    ]}
+                    orgs={organizations.map(org => ({
+                        label: org.name,
+                        value: org.sponsor_org_id,
+                    }))}
+                    createdByUserId={user?.user_id}
+                />
                 <input
                     type="email"
                     placeholder="Enter user email..."

@@ -286,6 +286,60 @@ function verifyScryptPassword(password, stored) {
   return crypto.timingSafeEqual(actual, expected);
 }
 
+//required notificationss
+const MANDATORY_CATEGORIES = ['dropped', 'password_changed'];
+//"extras" parameter is if it has a related_something in the db, if not present for that notification type pass in null
+async function createNotification(userId, category, message, extras = {}) {
+    try {
+        if(!MANDATORY_CATEGORIES.includes(category)) {
+
+            //null if not in preferences table
+            const prefColumnMap = {'points_changed': 'points_changed_enabled', 'order_placed': 'order_placed_enabled', 'application_status': null};
+
+            const prefColumn = prefColumnMap[category];
+
+            //if it has a corresponding spot in preferences table
+            if (prefColumn) {
+                const [prefRows] = await pool.query('SELECT ?? FROM notification_preferences WHERE user_id = ?',[prefColumn, userId]);
+
+                //first check makes sure new user has  enabled preferneces
+                if(prefRows.length > 0 && prefRows[0][prefColumn] === 0) {
+                    return;
+                }
+            }
+        }
+
+
+        const {related_order_id = null, related_transaction_id = null, related_application_id = null} = extras;
+
+        await pool.query(
+            `INSERT INTO notifications (user_id, category, message, related_order_id, related_transaction_id, related_application_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+            [userId, category, message, related_order_id, related_transaction_id, related_application_id]
+        );
+
+    } catch (error) {
+        console.error('Failed to create notification:', error);
+    }
+}
+
+// Helper: Get sponsor_org_id from the appropriate role table (not from users)
+async function getSponsorOrgId(userId, userType) {
+    if (userType === 'driver') {
+        const [rows] = await pool.query(
+            'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active"',
+            [userId]
+        );
+        return rows.length > 0 ? rows[0].sponsor_org_id : null;
+    } else if (userType === 'sponsor') {
+        const [rows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [userId]
+        );
+        return rows.length > 0 ? rows[0].sponsor_org_id : null;
+    }
+    return null;
+}
+
 // --- About Page Route ---
 app.get('/api/about', async (req, res) => {
     try {
@@ -335,6 +389,25 @@ app.put('/api/application/:application_id', async (req, res) => {
         );
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Application not found' });
+        }
+        if(status === 'approved' || status === 'rejected') {
+            const [appInfo] = await pool.query('SELECT driver_user_id, sponsor_org_id FROM driver_applications WHERE application_id = ?', [application_id]);
+            if(appInfo.length > 0) {
+                const {driver_user_id, sponsor_org_id} = appInfo[0];
+                const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
+                const orgName = orgRows[0].name;
+                let msg;
+                if (status === 'approved') {
+                    msg = `Your application to join ${orgName} was approved.`;
+                    await pool.query(
+                        'UPDATE driver_user SET sponsor_org_id = ?, driver_status = "active", affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL WHERE user_id = ?',
+                        [sponsor_org_id, driver_user_id]
+                    );
+                } else {
+                    msg = `Your application to join ${orgName} was rejected. Reason: ${decision_reason || 'No reason provided.'}`;
+                }
+                await createNotification(driver_user_id, 'application_status', msg, {related_application_id: Number(application_id)});
+            }
         }
         res.json({ message: 'Application updated successfully' });
     } catch (error) {
@@ -435,8 +508,15 @@ app.get('/api/organization/:sponsor_org_id/count', async (req, res) => {
     const { sponsor_org_id } = req.params;
 
     try {
-        const response = await pool.query('SELECT COUNT(*) AS count FROM users WHERE sponsor_org_id = ?', [sponsor_org_id]);
-        const count = response[0][0].count;
+        const [[{ driverCount }]] = await pool.query(
+            'SELECT COUNT(*) AS driverCount FROM driver_user WHERE sponsor_org_id = ? AND driver_status = "active"',
+            [sponsor_org_id]
+        );
+        const [[{ sponsorCount }]] = await pool.query(
+            'SELECT COUNT(*) AS sponsorCount FROM sponsor_user WHERE sponsor_org_id = ?',
+            [sponsor_org_id]
+        );
+        const count = Number(driverCount) + Number(sponsorCount);
         res.json({ message: 'Organization member count retrieved successfully', count });
     } catch (error) {
         res.status(500).json({ error: 'Failed to retrieve organization member count' });
@@ -471,8 +551,11 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
         const [users] = await pool.query(
             `SELECT u.*, du.current_points_balance AS points
              FROM users u
-             LEFT JOIN driver_user du ON u.user_id = du.user_id AND du.sponsor_org_id = ?
-             WHERE u.sponsor_org_id = ?`,
+             JOIN driver_user du ON u.user_id = du.user_id AND du.sponsor_org_id = ? AND du.driver_status = 'active'
+             UNION
+             SELECT u.*, NULL AS points
+             FROM users u
+             JOIN sponsor_user su ON u.user_id = su.user_id AND su.sponsor_org_id = ?`,
             [sponsor_org_id, sponsor_org_id]
         );
         res.json({ message: 'Organization users retrieved successfully', users });
@@ -482,12 +565,40 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
     }
 });
 
+// GET /api/organization/:sponsor_org_id/monthly-redeemed-points — total points redeemed via catalog orders this month
+app.get('/api/organization/:sponsor_org_id/monthly-redeemed-points', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+    try {
+        // first day of the current month at midnight
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        // sum negative order transactions this month, excluding any that have an approved contest
+        // (approved contests indicate the points were reversed and should not count as redeemed)
+        const [[{ total_redeemed }]] = await pool.query(
+            `SELECT COALESCE(SUM(point_amount), 0) AS total_redeemed
+             FROM point_transactions
+             WHERE sponsor_org_id = ?
+               AND source = 'order'
+               AND point_amount < 0
+               AND created_at >= ?
+               AND transaction_id NOT IN (
+                   SELECT transaction_id FROM point_contests WHERE status = 'approved'
+               )`,
+            [sponsor_org_id, monthStart]
+        );
+        res.json({ total_redeemed: Math.abs(Number(total_redeemed)) });
+    } catch (error) {
+        console.error('Error fetching monthly redeemed points:', error);
+        res.status(500).json({ error: 'Failed to fetch monthly redeemed points' });
+    }
+});
+
 // --- Login Route  ---
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        // Parameterized query prevents SQL Injection
         const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
 
         if (users.length === 0) {
@@ -534,7 +645,7 @@ app.post('/api/login', async (req, res) => {
             const shouldLock = newFails >= 5;
 
             await pool.query('UPDATE users SET failed_login_attempts = ?, is_locked = ? WHERE user_id = ?', [newFails, shouldLock, user.user_id]);
-            await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`FAILED: ${email}`]);
+            await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, 'failure', user.user_id]);
 
             const newAttempts = (user.failed_login_attempts || 0) + 1;
 
@@ -609,9 +720,10 @@ app.post('/api/login', async (req, res) => {
         }
 
         await pool.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE user_id = ?', [user.user_id]);
-        await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${email}`]);
+        await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, 'success', user.user_id]);
         
-        return res.json({ message: 'Login successful', user: userNoPassword });
+        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+        return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
 
     } catch (error) {
         console.error('Login error:', error);
@@ -669,6 +781,11 @@ app.post('/api/password-reset/confirm', async (req, res) => {
             [newHash, tokens[0].user_id]
         );
         await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_id = ?', [tokens[0].token_id]);
+        
+        await createNotification(tokens[0].user_id, 'password_changed', 'Your password was successfully changed. If you did not initiate this, please contact support.');
+
+        const [user] = await pool.query('SELECT username FROM users WHERE user_id = ?', [tokens[0].user_id]); 
+        await pool.query('INSERT INTO password_change_log (user_id, change_type, username) VALUES (?, "reset", ?)', [tokens[0].user_id, user[0].username]);
 
         res.json({ message: 'Password reset successfully' });
     } catch (error) {
@@ -686,14 +803,51 @@ app.get('/api/session', async (req, res) => {
     }
 
     try {
-        const [users] = await pool.query('SELECT user_id, email, username FROM users WHERE user_id = ?', [userId]);
+        const [users] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [userId]);
         if (users.length > 0) {
-            res.json({ loggedIn: true, user: users[0] });
+            const user = users[0];
+            const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+            res.json({ loggedIn: true, user: { ...user, sponsor_org_id } });
         } else {
             res.status(401).json({ loggedIn: false });
         }
     } catch (error) {
         res.status(500).json({ error: 'Session check failed' });
+    }
+});
+
+// --- Signup Route ---
+app.post('/api/signup', async (req, res) => {
+    try {
+        const { firstName, lastName, phoneNumber, email, username, password, userRole, orgId, createdByUserId } = req.body;
+        if (!isPasswordComplex(password)) {
+            return res.status(400).json({ message: 'Password does not meet complexity requirements.' });
+        }
+        const passwordHash = hashPassword(password);
+        const [result] = await pool.query(
+            "INSERT INTO users (first_name, last_name, phone_number, email, username, password_hash, user_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [firstName, lastName, phoneNumber, email, username, passwordHash, userRole],
+        );
+        const newUserId = result.insertId;
+
+        if (userRole === 'driver') {
+            const driverStatus = orgId ? 'active' : 'unaffiliated';
+            const affiliatedAt = orgId ? new Date() : null;
+            await pool.query(
+                'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, ?)',
+                [newUserId, orgId || null, driverStatus, affiliatedAt]
+            );
+        } else if (userRole === 'sponsor') {
+            await pool.query(
+                'INSERT INTO sponsor_user (user_id, sponsor_org_id, created_by_user_id) VALUES (?, ?, ?)',
+                [newUserId, orgId || null, createdByUserId || null]
+            );
+        }
+
+        res.json({ message: 'Signup successful' });
+    } catch (error) {
+        console.error('Signup error:', error);
+        res.status(500).json({ error: 'Server error during signup' });
     }
 });
 
@@ -707,12 +861,82 @@ app.post('/api/logout', (req, res) => {
 app.put('/api/user', async (req, res) => {
     const {user_id, field, value } = req.body;
 
+    if (field === 'sponsor_org_id') {
+        return res.status(400).json({ error: 'Use dedicated org membership endpoints to manage organization membership.' });
+    }
+
     try {
         await pool.query(`UPDATE users SET ${field} = ? WHERE user_id = ?`, [value, user_id]);
         res.json({ message: 'User field updated successfully' });
     } catch (error) {
         console.error('Error updating user field:', error);
         res.status(500).json({ error: 'Failed to update user information' });
+    }
+});
+
+// --- Sponsor Logs Route ---
+app.get('/api/sponsor/logs/password-change-logs/:sponsor_org_id', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+
+    try {
+        const [logs] = await pool.query(`SELECT * FROM password_change_log WHERE user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)`, [sponsor_org_id]);
+
+        res.json({ message: "Logs retrieved successfully", logs });
+    } catch (error) {
+        console.error('Error fetching password change logs:', error);
+        res.status(500).json({ error: 'Failed to fetch password change logs' });
+    }
+});
+
+app.get('/api/sponsor/logs/login-attempt-logs/:sponsor_org_id', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+
+    try {
+        const [logs] = await pool.query(`SELECT * FROM login_logs WHERE user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)`, [sponsor_org_id]);
+
+        res.json({ message: "Logs retrieved successfully", logs });
+    } catch (error) {
+        console.error('Error fetching login attempt logs:', error);
+        res.status(500).json({ error: 'Failed to fetch login attempt logs' });
+    }
+});
+
+// --- Leave Organization Route ---
+app.post('/api/user/leave-organization', async (req, res) => {
+    const { user_id, user_type } = req.body;
+    if (!user_id || !user_type) {
+        return res.status(400).json({ error: 'user_id and user_type are required' });
+    }
+    try {
+        if (user_type === 'driver') {
+            const [rows] = await pool.query(
+                'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active"',
+                [user_id]
+            );
+            if (rows.length === 0) {
+                return res.status(404).json({ error: 'No active organization found for this driver' });
+            }
+            const { sponsor_org_id } = rows[0];
+            await pool.query(
+                'UPDATE driver_user SET sponsor_org_id = NULL, driver_status = "dropped", dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
+                [user_id, sponsor_org_id]
+            );
+            await pool.query(
+                'UPDATE driver_applications SET status = "withdrawn", reviewed_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = "approved"',
+                [user_id, sponsor_org_id]
+            );
+        } else if (user_type === 'sponsor') {
+            await pool.query(
+                'UPDATE sponsor_user SET sponsor_org_id = NULL WHERE user_id = ?',
+                [user_id]
+            );
+        } else {
+            return res.status(400).json({ error: 'Invalid user_type' });
+        }
+        res.json({ message: 'Successfully left organization' });
+    } catch (error) {
+        console.error('Error leaving organization:', error);
+        res.status(500).json({ error: 'Failed to leave organization' });
     }
 });
 
@@ -853,7 +1077,7 @@ app.post('/api/driver/leave-sponsor', async (req, res) => {
         const { sponsor_org_id } = rows[0];
 
         await pool.query(
-            'UPDATE driver_user SET driver_status = ?, dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
+            'UPDATE driver_user SET driver_status = ?, sponsor_org_id = NULL, dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
             ['dropped', driverUserId, sponsor_org_id]
         );
 
@@ -1039,6 +1263,16 @@ app.post('/api/sponsor/points', async (req, res) => {
             [txValues]
         );
 
+        let action;
+        if(pointAmount > 0) {
+            action = 'added to';
+        } else {
+            action = 'deducted from';
+        }
+        const absAmount = Math.abs(pointAmount);
+        for(const driverId of driverIds) {
+            await createNotification(driverId, 'points_changed', `${absAmount} point(s) were ${action} your account. Reason: ${reason}`);
+        }
         res.json({ message: `Points applied to ${driverIds.length} driver(s)` });
     } catch (error) {
         console.error('Error applying points:', error);
@@ -1092,9 +1326,10 @@ app.post('/api/2fa/verify', async (req, res) => {
 
         // Update last login time and log the success
         await pool.query('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
-        await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${user.email}`]);
+        await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, `success`, user.user_id]);
 
-        return res.json({ message: 'Login successful', user: userNoPassword });
+        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+        return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
     } catch (error) {
         console.error('2FA verify error:', error);
         res.status(500).json({ error: 'Server error during 2FA verification' });
@@ -1152,6 +1387,137 @@ app.delete('/api/admin/user/:userId', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete user' });
     }
 });
+
+// --- notification route ---
+// --- get notification preferences ---
+app.get('/api/notifications/preferences/:userId', async (req, res) => {
+    const {userId} = req.params;
+    try {
+        const [preferences] = await pool.query('SELECT points_changed_enabled, order_placed_enabled FROM notification_preferences WHERE user_id = ?',
+            [userId]
+        );
+            //if preferences never changed manually everything is enabled 
+        if(preferences.length === 0) {
+            return res.json({points_changed_enabled: 1, order_placed_enabled: 1});
+        }
+
+        res.json(preferences[0])
+    } catch (error) {
+        console.error('Error getting notification preferences:', error);
+        res.status(500).json({error: 'Failed to fetch notification preferences'});
+    }
+});
+
+// --- get all notifications ---
+app.get('/api/notifications/:userId', async (req, res) => {
+    const {userId} = req.params;
+    try {
+        //sorted by newest first
+        const [notifications] = await pool.query(`SELECT notification_id, category, message, related_order_id, related_transaction_id, related_application_id, created_at, read_at
+             FROM notifications WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        res.json({notifications});
+    } catch (error) {
+        console.error('Error getting notificationls:', error);
+        res.status(500).json({error: 'Failed getting notifications'});
+    }
+});
+
+// --- mark a notification as read ---
+app.put('/api/notifications/:notificationId/read', async (req, res) => {
+    const {notificationId} = req.params;
+    try {
+        //NOW() is current time
+        await pool.query('UPDATE notifications SET read_at = NOW() WHERE notification_id = ? AND read_at IS NULL',
+            [notificationId]
+        );
+        res.json({message: 'Notification marked as read'});
+    } catch (error) {
+        console.error('Error marking notification as read:', error);
+        res.status(500).json({error: 'Failed to mark notification as read'});
+    }
+});
+
+// --- mark all notifications as read ---
+app.put('/api/notifications/user/:userId/read-all', async (req, res) => {
+    const {userId} = req.params;
+    try {
+        await pool.query('UPDATE notifications SET read_at = NOW() WHERE user_id = ? AND read_at IS NULL',
+            [userId]
+        );
+        res.json({message: 'All notifications marked as read'});
+    } catch (error) {
+        console.error('Error marking all notifications as read:', error);
+        res.status(500).json({error: 'Failed to mark all notifications as read'});
+    }
+});
+
+// --- update notification preferecnes ---
+app.put('/api/notifications/preferences/:userId', async (req, res) => {
+    const {userId} = req.params;
+    const {points_changed_enabled, order_placed_enabled} = req.body;
+    try {
+        await pool.query('UPDATE notification_preferences SET points_changed_enabled = ?, order_placed_enabled = ?, updated_at = NOW() WHERE user_id = ?',
+            [points_changed_enabled, order_placed_enabled, userId]
+        );
+        res.json({message: 'Preferences updated successfully'});
+    } catch (error) {
+        console.error('Error updating notification preferences:', error);
+        res.status(500).json({error: 'Failed to update notification preferences'});
+    }
+});
+
+// --- Drop driver from organization ---
+app.post('/api/driver/drop', async (req, res) => {
+    const {driverId, drop_reason} = req.body;
+
+    if(!driverId) {
+        return res.status(400).json({error: 'driverId is required'});
+    }
+
+    try {
+        //get users org id so we can get org name to show who dropped them
+        const [orgIdArray] = await pool.query('SELECT sponsor_org_id FROM driver_user WHERE user_id = ?',[driverId]);
+
+        if(orgIdArray.length === 0) {
+            return res.status(404).json({error: 'Driver not found'});
+        }
+
+        const sponsor_org_id = orgIdArray[0].sponsor_org_id;
+
+        if(sponsor_org_id === null) {
+            return res.status(400).json({error: 'Driver is not currently in an organization'});
+        }
+
+        const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
+
+        const orgName = orgRows[0].name;
+
+        await pool.query(
+            'UPDATE driver_user SET sponsor_org_id = NULL, driver_status = "dropped", dropped_at = NOW(), drop_reason = ? WHERE user_id = ?', [drop_reason || null, driverId]);
+
+        let msg;
+        if(drop_reason) {
+            msg = `You have been removed from ${orgName}. Reason: ${drop_reason}`;
+        } else {
+            msg = `You have been removed from ${orgName}.`;
+        }
+
+        const [user] = await pool.query('SELECT * FROM users WHERE user_id = ?', [driverId]);
+        await pool.query('INSERT INTO org_drop_logs (user_id, username, user_type, reason, sponsor_org_id) VALUES (?, ?, ?, ?, ?)',
+            [driverId, user[0].username, user[0].user_type, drop_reason || "None", sponsor_org_id]
+        );
+
+        await createNotification(driverId, 'dropped', msg);
+
+        res.json({message: 'Driver removed from organization'});
+    } catch (error) {
+        console.error('Error dropping driver:', error);
+        res.status(500).json({error: 'Failed to remove driver from organization'});
+    }
+});
+
 
 // --- Sponsor User Monthly Point Amount Awarded & Deducted Route ---
 app.get('/api/sponsor/monthly-points/:sponsorUserId', async (req, res) => {
@@ -1260,6 +1626,18 @@ app.get('/api/point-contest/organization/:org_id', async (req, res) => {
     } catch (error) {
         console.error('Error fetching point contests:', error);
         res.status(500).json({ error: 'Failed to fetch point contests' });
+    }
+});
+
+// Get for org drops
+app.get('/api/organization/:org_id/drop-logs', async (req, res) => {
+    const { org_id } = req.params;
+    try {
+        const [drops] = await pool.query('SELECT * FROM org_drop_logs WHERE sponsor_org_id = ? ORDER BY created_at DESC', [org_id]);
+        res.json({ message: "Successfully retrieved drop logs", drops });
+    } catch (error) {
+        console.error('Error fetching org drops:', error);
+        res.status(500).json({ error: 'Failed to fetch org drops' });
     }
 });
 
@@ -1393,7 +1771,7 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
 
 // POST /api/cart — get-or-create active cart for driver+org
 app.post('/api/cart', async (req, res) => {
-    const { driverUserId, sponsorOrgId } = req.body;
+    const { driverUserId, sponsorOrgId, createdByUserId } = req.body;
     if (!driverUserId || !sponsorOrgId) {
         return res.status(400).json({ error: 'driverUserId and sponsorOrgId are required' });
     }
@@ -1407,7 +1785,7 @@ app.post('/api/cart', async (req, res) => {
         }
         const [result] = await pool.query(
             'INSERT INTO carts (driver_user_id, sponsor_org_id, created_by_user_id, status) VALUES (?, ?, ?, "active")',
-            [driverUserId, sponsorOrgId, driverUserId]
+            [driverUserId, sponsorOrgId, createdByUserId || driverUserId]
         );
         res.status(201).json({ cart_id: result.insertId });
     } catch (error) {
@@ -1486,7 +1864,7 @@ app.delete('/api/cart/:cartId/items/:itemId', async (req, res) => {
 
 // POST /api/orders — checkout cart (atomic transaction)
 app.post('/api/orders', async (req, res) => {
-    const { driverUserId, sponsorOrgId, cartId } = req.body;
+    const { driverUserId, sponsorOrgId, cartId, placedByUserId } = req.body;
     if (!driverUserId || !sponsorOrgId || !cartId) {
         return res.status(400).json({ error: 'driverUserId, sponsorOrgId, and cartId are required' });
     }
@@ -1544,7 +1922,7 @@ app.post('/api/orders', async (req, res) => {
         // 6. Create order record
         const [orderResult] = await conn.query(
             'INSERT INTO orders (driver_user_id, sponsor_org_id, placed_by_user_id, cart_id, status) VALUES (?, ?, ?, ?, "placed")',
-            [driverUserId, sponsorOrgId, driverUserId, cartId]
+            [driverUserId, sponsorOrgId, placedByUserId || driverUserId, cartId]
         );
         const orderId = orderResult.insertId;
 
@@ -1562,7 +1940,7 @@ app.post('/api/orders', async (req, res) => {
             `INSERT INTO point_transactions
                (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id)
              VALUES (?, ?, ?, ?, 'order', ?)`,
-            [driverUserId, sponsorOrgId, -totalPoints, `Order #${orderId}`, driverUserId]
+            [driverUserId, sponsorOrgId, -totalPoints, `Order #${orderId}`, placedByUserId || driverUserId]
         );
 
         // 9. Mark cart as checked out
@@ -1572,6 +1950,7 @@ app.post('/api/orders', async (req, res) => {
         );
 
         await conn.commit();
+        await createNotification(driverUserId, 'order_placed', `Your order #${orderId} was placed successfully for ${totalPoints.toLocaleString()} points.`, {related_order_id: orderId});
         res.json({ message: 'Order placed successfully', order_id: orderId, points_spent: totalPoints });
     } catch (error) {
         await conn.rollback();
@@ -1590,6 +1969,7 @@ app.get('/api/orders/driver/:driverUserId', async (req, res) => {
     try {
         const [rows] = await pool.query(
             `SELECT o.order_id, o.status, o.created_at, o.cancel_reason, o.cancelled_at,
+                    o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state, o.delivery_zip,
                     so.name AS sponsor_name,
                     SUM(oi.points_price_at_purchase * oi.quantity) AS total_points,
                     SUM(oi.price_usd_at_purchase * oi.quantity) AS total_usd,
@@ -2030,9 +2410,182 @@ app.get('/api/sponsor/transaction-comments/:sponsorOrgId', async (req, res) => {
 });
 
 if (process.env.NODE_ENV !== 'test') {
+    // Run migration to add delivery columns if they don't exist
+    (async () => {
+        try {
+            const deliveryCols = [
+                { name: 'delivery_name', type: 'VARCHAR(200) NULL' },
+                { name: 'delivery_address', type: 'VARCHAR(500) NULL' },
+                { name: 'delivery_city', type: 'VARCHAR(100) NULL' },
+                { name: 'delivery_state', type: 'VARCHAR(50) NULL' },
+                { name: 'delivery_zip', type: 'VARCHAR(20) NULL' },
+            ];
+            for (const col of deliveryCols) {
+                const [rows] = await pool.query(
+                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?`,
+                    [col.name]
+                );
+                if (rows.length === 0) {
+                    await pool.query(`ALTER TABLE orders ADD COLUMN ${col.name} ${col.type}`);
+                    console.log(`Added column orders.${col.name}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Delivery columns migration failed:', e.message);
+        }
+    })();
+
     app.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
     });
 }
+
+// ---- Message Routes ----
+// send messages (any type)
+app.post('/api/messages', async (req, res) => {
+    const {sender_id, recipient_id, sponsor_org_id, message_type, message_subject, body} = req.body;
+
+    if(!sender_id || !message_type) {
+        return res.status(400).json({error: 'sender_id and message_type cannot be null'});
+    }
+    const validTypes = ['direct', 'org_announcement', 'global_announcement', 'org_chat'];
+    if(!validTypes.includes(message_type)) {
+        return res.status(400).json({error: 'message type is not valid'});
+    }
+    if(message_type === 'direct' && !recipient_id) {
+        return res.status(400).json({error: 'recipient id is required for dms'});
+    }
+    if((message_type === 'org_announcement' || message_type === 'org_chat') && !sponsor_org_id) {
+        return res.status(400).json({error: 'sponsor_org_id is required for org messages'});
+    }
+
+    try {
+        const [result] = await pool.query(`INSERT INTO messages (sender_id, recipient_id, sponsor_org_id, message_type, message_subject, body, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW())`,[sender_id, recipient_id || null, sponsor_org_id || null, message_type, message_subject || null, body]);
+        res.status(201).json({message: 'Message sent successfully', message_id: result.insertId});
+    } catch (error) {
+        console.error('Error sending message:', error);
+        res.status(500).json({error: 'Failed to send message'});
+    }
+});
+
+// global announcements for everyone and org announcements for a user's org(s)
+app.get('/api/messages/announcements/:userId', async (req, res) => {
+    const {userId} = req.params;
+    try {
+        const [userRows] = await pool.query('SELECT user_type FROM users WHERE user_id = ?', [userId]);
+        if(userRows.length === 0) return res.status(404).json({error: 'User not found'});
+        const userType = userRows[0].user_type;
+        let orgIds = [];
+        if (userType === 'driver') {
+            const [rows] = await pool.query('SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active" AND sponsor_org_id IS NOT NULL', [userId]);
+            orgIds = rows.map(row => row.sponsor_org_id);
+        } 
+        else if (userType === 'sponsor') {
+            const [rows] = await pool.query('SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ? AND sponsor_org_id IS NOT NULL', [userId]);
+            orgIds = rows.map(row => row.sponsor_org_id);
+        }
+
+        let query;
+        let params;
+
+        if (orgIds.length > 0) {
+            // mapping each orgId to ?, we need to know orgs for org annoubncements. We need to do a join to get names and a conditional cause we dont know if user
+            //has an org or not but we can't do IN for something that doesn't exist
+            const placeholders = orgIds.map(() => '?').join(', ');
+            query = `SELECT m.*, u.username AS sender_username, u.first_name, u.last_name FROM messages m JOIN users u ON m.sender_id = u.user_id
+                WHERE m.message_type = 'global_announcement'
+                   OR (m.message_type = 'org_announcement' AND m.sponsor_org_id IN (${placeholders}))
+                ORDER BY m.created_at DESC`;
+            params = orgIds;
+        } else {
+            query = `SELECT m.*, u.username AS sender_username, u.first_name, u.last_name FROM messages m
+                JOIN users u ON m.sender_id = u.user_id WHERE m.message_type = 'global_announcement' ORDER BY m.created_at DESC`;
+            params = [];
+        }
+
+        const [messages] = await pool.query(query, params);
+        res.json({messages});
+    } catch (error) {
+        console.error('Error getting announcements:', error);
+        res.status(500).json({error: 'Failed to fetch announcements'});
+    }
+});
+
+// direct message thread between two users route
+app.get('/api/messages/thread/:userId/:otherUserId', async (req, res) => {
+    const {userId, otherUserId} = req.params;
+    try {
+        const [messages] = await pool.query(`SELECT m.*, u.username AS sender_username FROM messages m JOIN users u ON m.sender_id = u.user_id
+             WHERE m.message_type = 'direct' AND ((m.sender_id = ? AND m.recipient_id = ?) OR (m.sender_id = ? AND m.recipient_id = ?)) ORDER BY m.created_at ASC`,
+            [userId, otherUserId, otherUserId, userId]);
+        
+        res.json({messages});
+    } catch (error) {
+        console.error('Error get message thread:', error);
+        res.status(500).json({error: 'Failed to get message thread'});
+    }
+});
+
+// sponsor org chat messages (sponsors and admin onyl)
+app.get('/api/messages/org/chat/:sponsorOrgId', async (req, res) => {
+    const {sponsorOrgId} = req.params;
+    try {
+        const [messages] = await pool.query(`SELECT m.*, u.username AS sender_username, u.user_type AS sender_type FROM messages m JOIN users u ON m.sender_id = u.user_id
+             WHERE m.message_type = 'org_chat' AND m.sponsor_org_id = ? ORDER BY m.created_at ASC`, [sponsorOrgId]);
+        res.json({ messages });
+    } catch (error) {
+        console.error('Error fetching org chat:', error);
+        res.status(500).json({ error: 'Failed to fetch org chat' });
+    }
+});
+
+// drivers in the sponsor's org
+app.get('/api/messages/org/drivers/:sponsorUserId', async (req, res) => {
+    const {sponsorUserId} = req.params;
+    try {
+        const [sponsorRows] = await pool.query('SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?', [sponsorUserId]);
+        if(sponsorRows.length === 0) return res.status(404).json({error: 'no sponsor'});
+        const {sponsor_org_id} = sponsorRows[0];
+
+        const [drivers] = await pool.query(`SELECT u.user_id, u.username, u.first_name, u.last_name FROM driver_user du JOIN users u ON du.user_id = u.user_id
+             WHERE du.sponsor_org_id = ? AND du.driver_status = 'active' ORDER BY u.username ASC`, [sponsor_org_id]);
+        res.json({drivers, sponsor_org_id});
+    } catch (error) {
+        console.error('Error fetching org drivers:', error);
+        res.status(500).json({ error: 'Failed to fetch drivers' });
+    }
+});
+
+
+// get sponsor users in the driver's org(s)
+app.get('/api/messages/sponsor/:driverUserId', async (req, res) => {
+    const {driverUserId} = req.params;
+    try {
+        const [rows] = await pool.query(`SELECT u.user_id, u.username, u.first_name, u.last_name, su.sponsor_org_id, so.name AS org_name FROM driver_user du
+             JOIN sponsor_user su ON du.sponsor_org_id = su.sponsor_org_id
+             JOIN users u ON su.user_id = u.user_id
+             JOIN sponsor_organization so ON su.sponsor_org_id = so.sponsor_org_id
+             WHERE du.user_id = ? AND du.driver_status = 'active'
+             ORDER BY so.name ASC, u.username ASC`, [driverUserId]);
+        res.json({sponsors: rows});
+    } catch (error) {
+        console.error('Error fetching sponsor users:', error);
+        res.status(500).json({error: 'Failed to fetch sponsors'});
+    }
+});
+
+//mark messages as read
+app.put('/api/messages/:messageId/read', async (req, res) => {
+    const {messageId } = req.params;
+    try {
+        await pool.query('UPDATE messages SET read_at = NOW() WHERE message_id = ? AND read_at IS NULL', [messageId]);
+        res.json({message: 'Marked as read'});
+    } catch (error) {
+        console.error('Error marking message as read:', error);
+        res.status(500).json({error: 'Failed to mark message as read'});
+    }
+});
 
 export { app };

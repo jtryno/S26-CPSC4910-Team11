@@ -1,12 +1,16 @@
 async function removeFromOrganization(userId) {
+    const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+    const userType = storedUser ? JSON.parse(storedUser)?.user_type : null;
+
     try {
-        const response = await fetch('/api/user', {
-            method: 'PUT',
+        const response = await fetch('/api/user/leave-organization', {
+            method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ user_id: userId, field: 'sponsor_org_id', value: null }),
+            body: JSON.stringify({ user_id: userId, user_type: userType }),
         });
+        if (!response.ok) throw new Error('Failed to leave organization');
     } catch (error) {
         console.error('Error leaving organization:', error);
         throw error;
@@ -50,5 +54,40 @@ async function updateField(userId, field, value) {
         throw error;
     }
 }
+async function dropDriver(driverId, dropReason) {
+    try {
+        const response = await fetch('/api/driver/drop', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({driverId, drop_reason: dropReason || null}),
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error dropping driver:', error);
+        throw error;
+    }
+}
 
-export { removeFromOrganization, updateField };
+async function signUpUser(userData, userRole) {
+    console.log(userData);
+    try {
+        const response = await fetch('/api/signup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({...userData, userRole}),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to sign up user: ${response.status}`);
+        }
+        return "success"
+    } catch (error) {
+        console.error('Error signing up user:', error);
+        throw error;
+        return "error";
+    }
+}
+
+export { removeFromOrganization, updateField, signUpUser, dropDriver };

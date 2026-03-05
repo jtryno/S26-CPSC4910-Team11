@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 const DropdownField = ({ label, options, onChange }) => {
-    const [selectedValue, setSelectedValue] = useState(options[0]?.value || '');
+    const [selectedValue, setSelectedValue] = useState(options[0]?.value || null);
 
     useEffect(() => {
         onChange(selectedValue);
@@ -9,7 +9,7 @@ const DropdownField = ({ label, options, onChange }) => {
 
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <b>{label}:</b>
+            <label>{label}:</label>
             <select 
                 style={{ padding: '5px', borderRadius: '5px', border: '1px solid #ccc' }}
                 value={selectedValue} 

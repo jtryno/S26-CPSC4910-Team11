@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import SortableTable from '../../../components/SortableTable';
 import {fetchApplicationsOrg, reviewApplication} from '../../../api/ApplicationApi';
-import { updateField } from '../../../api/UserApi';
 import Modal from '../../../components/Modal';
 import Field from '../../../components/Field';
 import InputField from '../../../components/InputField';
@@ -75,10 +74,6 @@ const OrganizationApplicationsTab = ({userData, setUserData, orgId, fetchOrg}) =
                     if (status != '') {
                         if (window.confirm(`Are you sure you want to this application to be ${status}?`)) {
                             await reviewApplication(selectedApplication.application_id, status, decisionReason, userData.user_id);
-                            if (status === 'approved') {
-                                await updateField(selectedApplication.driver_user_id, "sponsor_org_id", orgId);
-                                setUserData(prev => ({ ...prev, sponsor_org_id: orgId }));
-                            }
                             await getApplications(orgId);
                             await fetchOrg();
                             handleOnClose();

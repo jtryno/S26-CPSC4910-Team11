@@ -11,6 +11,8 @@ const OrganizationOrdersTab = ({ orgId }) => {
     const [detailOpen, setDetailOpen] = useState(false);
     const [selectedOrderId, setSelectedOrderId] = useState(null);
     const [itemsLoading, setItemsLoading] = useState(false);
+    // null = still loading, number = net points redeemed via orders this month
+    const [monthlyRedeemed, setMonthlyRedeemed] = useState(null);
 
     useEffect(() => {
         if (!orgId) return;
@@ -19,6 +21,11 @@ const OrganizationOrdersTab = ({ orgId }) => {
             .then(data => setOrders(data.orders || []))
             .catch(() => setOrders([]))
             .finally(() => setLoading(false));
+        // fetch net points redeemed this month, not including approved point contest
+        fetch(`/api/organization/${orgId}/monthly-redeemed-points`)
+            .then(res => res.ok ? res.json() : Promise.reject())
+            .then(data => setMonthlyRedeemed(data.total_redeemed))
+            .catch(() => setMonthlyRedeemed(0));
     }, [orgId]);
 
     const handleViewItems = async (row) => {
@@ -46,8 +53,27 @@ const OrganizationOrdersTab = ({ orgId }) => {
         !filterDriver || (o.driver_username || '').toLowerCase().includes(filterDriver.toLowerCase())
     );
 
+    // formatted label for the stat banner, e.g. "March 2026"
+    const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+
     return (
         <div>
+            <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '10px',
+                background: '#f0f4ff',
+                border: '1px solid #c7d7f9',
+                borderRadius: '8px',
+                padding: '10px 16px',
+                marginBottom: '16px',
+            }}>
+                <span style={{ fontSize: '13px', color: '#555' }}>Points redeemed via catalog ({currentMonth}):</span>
+                <span style={{ fontSize: '16px', fontWeight: '700', color: '#1565c0' }}>
+                    {monthlyRedeemed === null ? '—' : Number(monthlyRedeemed).toLocaleString()} pts
+                </span>
+            </div>
+
             <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <label style={{ fontSize: '14px', color: '#555' }}>Filter by driver:</label>
                 <input
@@ -123,7 +149,6 @@ const OrganizationOrdersTab = ({ orgId }) => {
             <Modal
                 isOpen={detailOpen}
                 onClose={handleClose}
-                onSave={handleClose}
                 title={`Order #${selectedOrderId} — Items`}
             >
                 {itemsLoading ? (
