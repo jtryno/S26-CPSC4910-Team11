@@ -68,4 +68,93 @@ async function updateTicketStatus(ticketId, status) {
     }
 }
 
-export { createTicket, fetchTicketsForUser, fetchAllTickets, updateTicketStatus };
+// gets all open nonarchived tickets for a sponsor org (used in the sponsor driver tickets)
+async function fetchOrgTickets(sponsorOrgId) {
+    try {
+        const response = await fetch(`/api/support-tickets/org/${sponsorOrgId}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.tickets;
+    } catch (error) {
+        console.error('Error fetching org support tickets:', error);
+        throw error;
+    }
+}
+
+// updates the description of a ticket the user owns (only works when status is open)
+async function updateTicketDescription(ticketId, description, userId) {
+    try {
+        const response = await fetch(`/api/support-tickets/${ticketId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description, userId }),
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error updating support ticket:', error);
+        throw error;
+    }
+}
+
+// archives a ticket so it no longer shows in driver/sponsor views
+// drivers and sponsors can only archive their own
+async function archiveTicket(ticketId, userId, userType) {
+    try {
+        const response = await fetch(`/api/support-tickets/${ticketId}/archive`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, userType }),
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error archiving support ticket:', error);
+        throw error;
+    }
+}
+
+// gets all comments for a ticket ordered oldest first
+async function fetchTicketComments(ticketId) {
+    try {
+        const response = await fetch(`/api/ticket-comments/${ticketId}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.comments;
+    } catch (error) {
+        console.error('Error fetching ticket comments:', error);
+        throw error;
+    }
+}
+
+// adds a comment to a ticket and returns the comment with user info
+async function addTicketComment(ticketId, userId, body) {
+    try {
+        const response = await fetch('/api/ticket-comments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticket_id: ticketId, user_id: userId, body }),
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error adding ticket comment:', error);
+        throw error;
+    }
+}
+
+export {
+    createTicket,
+    fetchTicketsForUser,
+    fetchAllTickets,
+    updateTicketStatus,
+    fetchOrgTickets,
+    updateTicketDescription,
+    archiveTicket,
+    fetchTicketComments,
+    addTicketComment,
+};

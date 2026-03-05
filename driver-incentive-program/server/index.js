@@ -2065,11 +2065,11 @@ app.post('/api/support-tickets', async (req, res) => {
     }
 });
 
-// returns all tickets submitted by a specific user, used in driver/sponsor view
+// returns all non-archived tickets submitted by a specific user, used in driver/sponsor view
 app.get('/api/support-tickets/user/:userId', async (req, res) => {
     try {
         const [tickets] = await pool.query(
-            'SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC',
+            'SELECT * FROM support_tickets WHERE user_id = ? AND is_archived = 0 ORDER BY created_at DESC',
             [req.params.userId]
         );
         res.json({ tickets });
@@ -2118,6 +2118,136 @@ app.get('/api/support-tickets', async (_req, res) => {
     } catch (error) {
         console.error('Error fetching all support tickets:', error);
         res.status(500).json({ error: 'Failed to fetch support tickets.' });
+    }
+});
+
+// returns all nonarchived tickets for a sponsor org, used in sponsor "driver tickets"
+// filters by sponsor_org_id so the sponsor only sees tickets filed under their org
+app.get('/api/support-tickets/org/:sponsorOrgId', async (req, res) => {
+    try {
+        const [tickets] = await pool.query(
+            `SELECT st.*, u.first_name, u.last_name, u.email
+             FROM support_tickets st
+             JOIN users u ON st.user_id = u.user_id
+             WHERE st.sponsor_org_id = ? AND st.is_archived = 0
+             ORDER BY st.created_at DESC`,
+            [req.params.sponsorOrgId]
+        );
+        res.json({ tickets });
+    } catch (error) {
+        console.error('Error fetching org support tickets:', error);
+        res.status(500).json({ error: 'Failed to fetch org support tickets.' });
+    }
+});
+
+// updates the description of a ticket (only allowed when status is open and ticket is not archived)
+// userId must match the ticket owner so users can only edit their own tickets
+app.put('/api/support-tickets/:ticketId', async (req, res) => {
+    const { description, userId } = req.body;
+    if (!description || !description.trim()) {
+        return res.status(400).json({ error: 'Description is required.' });
+    }
+    try {
+        const [[ticket]] = await pool.query(
+            'SELECT ticket_id, user_id, status, is_archived FROM support_tickets WHERE ticket_id = ?',
+            [req.params.ticketId]
+        );
+        if (!ticket) {
+            return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        if (ticket.user_id !== parseInt(userId)) {
+            return res.status(403).json({ error: 'You can only edit your own tickets.' });
+        }
+        if (ticket.status !== 'open') {
+            return res.status(400).json({ error: 'Only open tickets can be edited.' });
+        }
+        if (ticket.is_archived) {
+            return res.status(400).json({ error: 'Archived tickets cannot be edited.' });
+        }
+        await pool.query(
+            'UPDATE support_tickets SET description = ?, updated_at = NOW() WHERE ticket_id = ?',
+            [description.trim(), req.params.ticketId]
+        );
+        res.json({ message: 'Ticket updated successfully.' });
+    } catch (error) {
+        console.error('Error updating support ticket:', error);
+        res.status(500).json({ error: 'Failed to update support ticket.' });
+    }
+});
+
+// archives a ticket instead of deleting it (archived tickets hidden from driver/sponsor views)
+// drivers and sponsors can only archive their own
+app.put('/api/support-tickets/:ticketId/archive', async (req, res) => {
+    const { userId, userType } = req.body;
+    try {
+        const [[ticket]] = await pool.query(
+            'SELECT ticket_id, user_id FROM support_tickets WHERE ticket_id = ?',
+            [req.params.ticketId]
+        );
+        if (!ticket) {
+            return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        if (userType !== 'admin' && ticket.user_id !== parseInt(userId)) {
+            return res.status(403).json({ error: 'You can only archive your own tickets.' });
+        }
+        await pool.query(
+            'UPDATE support_tickets SET is_archived = 1, updated_at = NOW() WHERE ticket_id = ?',
+            [req.params.ticketId]
+        );
+        res.json({ message: 'Ticket archived successfully.' });
+    } catch (error) {
+        console.error('Error archiving support ticket:', error);
+        res.status(500).json({ error: 'Failed to archive support ticket.' });
+    }
+});
+
+// --- Ticket Comments Routes ---
+
+// GET /api/ticket-comments/:ticketId - returns all comments for a ticket,
+// ordered oldest first so the UI shows them  chronologically
+app.get('/api/ticket-comments/:ticketId', async (req, res) => {
+    const { ticketId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT tc.comment_id, tc.user_id, tc.body, tc.created_at,
+                    u.username, u.first_name, u.last_name, u.user_type
+             FROM ticket_comments tc
+             JOIN users u ON tc.user_id = u.user_id
+             WHERE tc.ticket_id = ?
+             ORDER BY tc.created_at ASC`,
+            [ticketId]
+        );
+        res.json({ comments: rows });
+    } catch (error) {
+        console.error('Error fetching ticket comments:', error);
+        res.status(500).json({ error: 'Failed to fetch comments' });
+    }
+});
+
+// POST /api/ticket-comments - inserts a new comment and returns it with full user info
+app.post('/api/ticket-comments', async (req, res) => {
+    const { ticket_id, user_id, body } = req.body;
+    if (!ticket_id || !user_id || !body?.trim()) {
+        return res.status(400).json({ error: 'ticket_id, user_id, and body are required' });
+    }
+    try {
+        const [result] = await pool.query(
+            'INSERT INTO ticket_comments (ticket_id, user_id, body) VALUES (?, ?, ?)',
+            [ticket_id, user_id, body.trim()]
+        );
+        // refetch inserted row so can return enriched user fields in one response
+        const [[comment]] = await pool.query(
+            `SELECT tc.comment_id, tc.user_id, tc.body, tc.created_at,
+                    u.username, u.first_name, u.last_name, u.user_type
+             FROM ticket_comments tc
+             JOIN users u ON tc.user_id = u.user_id
+             WHERE tc.comment_id = ?`,
+            [result.insertId]
+        );
+        res.status(201).json({ comment });
+    } catch (error) {
+        console.error('Error adding ticket comment:', error);
+        res.status(500).json({ error: 'Failed to add comment' });
     }
 });
 
