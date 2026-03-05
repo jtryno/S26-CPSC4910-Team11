@@ -84,4 +84,18 @@ async function updateOrganizationField(orgId, field, value) {
     }
 }
 
-export { fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization, updateOrganizationField };
+async function fetchDropLogs(orgId) {
+    try {
+        const response = await fetch(`/api/organization/${orgId}/drop-logs`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.drops;
+    } catch (error) {
+        console.error('Error fetching drop logs:', error);
+        throw error;
+    }
+}
+
+export { fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization, updateOrganizationField, fetchDropLogs };

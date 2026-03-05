@@ -13,6 +13,7 @@ import OrganizationSummary from './Pages/Organization/OrganizationSummary/Organi
 import Catalog from './Pages/Catalog'
 import SupportTickets from './Pages/SupportTickets'
 import InactivityModal from './components/InactivityModal'
+import Reports from './Pages/Reports/Reports'
 import { FaUser } from 'react-icons/fa';
 import Notifications from './Pages/Notifications'
 import Messages from './Pages/Messages'
@@ -363,6 +364,7 @@ useEffect(() => {
                 <li><Link to="/messages">Messages</Link></li>
               </>
             )}
+            {userData?.user_type != "driver" && isLoggedIn && <li><Link to={`/reports/${userData?.user_type}`}>Reports</Link></li>}
           </ul>
         </div>
         <ul className="nav-auth">
@@ -404,6 +406,7 @@ useEffect(() => {
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/support-tickets" element={<SupportTickets userData={userData} />} />
           <Route path="/messages" element={<Messages />} />
+          <Route path="/reports/:user_type" element={<Reports />} />
         </Routes>
       </main>
 
