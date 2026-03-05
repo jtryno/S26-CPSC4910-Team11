@@ -7,6 +7,8 @@ services:
       DB_USER: "${DB_USER}"
       DB_PASS: "${DB_PASS}"
       DB_NAME: "${DB_NAME}"
+      EBAY_CLIENT_ID: "${EBAY_CLIENT_ID}"
+      EBAY_CLIENT_SECRET: "${EBAY_CLIENT_SECRET}"
     expose:
       - "5000"
     restart: unless-stopped
