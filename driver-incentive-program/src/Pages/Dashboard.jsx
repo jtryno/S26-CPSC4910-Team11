@@ -43,6 +43,12 @@ const DriverDashboard = ({ user }) => {
     const [deliverySaving, setDeliverySaving] = useState(false);
     const [deliveryMsg, setDeliveryMsg] = useState(null);
 
+    const [cancelModalOpen, setCancelModalOpen] = useState(false);
+    const [selectedCancelOrder, setSelectedCancelOrder] = useState(null);
+    const [cancelReason, setCancelReason] = useState('');
+    const [cancelling, setCancelling] = useState(false);
+    const [cancelMsg, setCancelMsg] = useState(null);
+
     const SOURCE_LABELS = {
         recurring: 'Recurring',
         manual: 'Manual',
@@ -466,6 +472,22 @@ const DriverDashboard = ({ user }) => {
                                     setDeliveryModalOpen(true);
                                 },
                             },
+                            {
+                                label: 'Cancel',
+                                render: (row) => row.status === 'placed' ? (
+                                    <button
+                                        onClick={() => {
+                                            setSelectedCancelOrder(row);
+                                            setCancelReason('');
+                                            setCancelMsg(null);
+                                            setCancelModalOpen(true);
+                                        }}
+                                        style={{ backgroundColor: '#c62828', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+                                    >
+                                        Cancel
+                                    </button>
+                                ) : null,
+                            },
                         ]}
                         data={orders}
                     />
@@ -644,6 +666,102 @@ const DriverDashboard = ({ user }) => {
                                 }}
                             >
                                 {deliverySaving ? 'Saving...' : 'Save'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Cancel Order Modal ── */}
+            {cancelModalOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.45)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '420px',
+                        maxWidth: '95vw',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+                    }}>
+                        <h2 style={{ marginTop: 0 }}>Cancel Order #{selectedCancelOrder?.order_id}</h2>
+                        <p style={{ color: '#555', fontSize: '14px', margin: '0 0 16px' }}>
+                            Are you sure you want to cancel this order? You can optionally provide a reason.
+                        </p>
+                        <div>
+                            <label style={{ display: 'block', fontSize: '13px', color: '#444', marginBottom: '4px' }}>Reason (optional)</label>
+                            <textarea
+                                value={cancelReason}
+                                onChange={(e) => setCancelReason(e.target.value)}
+                                rows={3}
+                                style={{
+                                    width: '100%', padding: '8px 10px',
+                                    borderRadius: '4px', border: '1px solid #ccc',
+                                    fontSize: '14px', boxSizing: 'border-box', resize: 'vertical',
+                                }}
+                            />
+                        </div>
+                        {cancelMsg && (
+                            <div style={{
+                                marginTop: '12px', padding: '8px 12px', borderRadius: '4px',
+                                background: cancelMsg.type === 'success' ? '#e8f5e9' : '#ffebee',
+                                color: cancelMsg.type === 'success' ? '#2e7d32' : '#c62828',
+                                fontSize: '13px',
+                            }}>
+                                {cancelMsg.text}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                            <button
+                                onClick={() => { setCancelModalOpen(false); setSelectedCancelOrder(null); setCancelMsg(null); }}
+                                disabled={cancelling}
+                                style={{ padding: '8px 20px', borderRadius: '4px', border: '1px solid #ccc', background: '#f5f5f5', cursor: cancelling ? 'not-allowed' : 'pointer' }}
+                            >
+                                Keep Order
+                            </button>
+                            <button
+                                disabled={cancelling}
+                                onClick={async () => {
+                                    setCancelling(true);
+                                    setCancelMsg(null);
+                                    try {
+                                        const res = await fetch(`/api/orders/${selectedCancelOrder.order_id}/cancel`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ driverUserId: user.user_id, cancel_reason: cancelReason }),
+                                        });
+                                        const json = await res.json();
+                                        if (res.ok) {
+                                            setOrders(prev => prev.map(o =>
+                                                o.order_id === selectedCancelOrder.order_id
+                                                    ? { ...o, status: 'canceled', cancel_reason: cancelReason }
+                                                    : o
+                                            ));
+                                            setCancelModalOpen(false);
+                                            setSelectedCancelOrder(null);
+                                            setCancelMsg(null);
+                                        } else {
+                                            setCancelMsg({ type: 'error', text: json.error || 'Failed to cancel order.' });
+                                        }
+                                    } catch {
+                                        setCancelMsg({ type: 'error', text: 'Network error. Please try again.' });
+                                    } finally {
+                                        setCancelling(false);
+                                    }
+                                }}
+                                style={{
+                                    padding: '8px 20px', borderRadius: '4px', border: 'none',
+                                    background: cancelling ? '#e0e0e0' : '#c62828',
+                                    color: cancelling ? '#999' : '#fff',
+                                    cursor: cancelling ? 'not-allowed' : 'pointer',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {cancelling ? 'Cancelling...' : 'Confirm Cancel'}
                             </button>
                         </div>
                     </div>
