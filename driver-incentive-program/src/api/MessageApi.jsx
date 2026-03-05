@@ -27,7 +27,7 @@ async function fetchAnnouncements(userId) {
 
 async function fetchOrgChat(sponsorOrgId) {
     try {
-        const response = await fetch(`/api/messages/org-chat/${sponsorOrgId}`);
+        const response = await fetch(`/api/messages/org/chat/${sponsorOrgId}`);
         const data = await response.json();
         return data.messages || [];
     } catch (error) {
@@ -57,7 +57,7 @@ async function markMessageRead(messageId) {
 
 async function fetchOrgDrivers(sponsorUserId) {
     try {
-        const response = await fetch(`/api/messages/org-drivers/${sponsorUserId}`);
+        const response = await fetch(`/api/messages/org/drivers/${sponsorUserId}`);
         const data = await response.json();
         return data;
     } catch (error) {
@@ -68,7 +68,7 @@ async function fetchOrgDrivers(sponsorUserId) {
 
 async function fetchMySponsorUsers(driverUserId) {
     try {
-        const response = await fetch(`/api/messages/my-sponsor/${driverUserId}`);
+        const response = await fetch(`/api/messages/sponsor/${driverUserId}`);
         const data = await response.json();
         return data.sponsors || [];
     } catch (error) {
