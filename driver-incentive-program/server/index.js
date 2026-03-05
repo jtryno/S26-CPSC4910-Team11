@@ -2147,26 +2147,59 @@ app.put('/api/orders/:orderId/delivery', async (req, res) => {
     }
 });
 
-// PUT /api/orders/:orderId/cancel — driver cancels a placed order
+// PUT /api/orders/:orderId/cancel — driver cancels a placed order and gets their points refunded
 app.put('/api/orders/:orderId/cancel', async (req, res) => {
     const { orderId } = req.params;
     const { driverUserId, cancel_reason } = req.body;
     if (!driverUserId) return res.status(400).json({ error: 'driverUserId is required' });
+    const conn = await pool.getConnection();
     try {
-        const [[order]] = await pool.query(
-            'SELECT order_id, status FROM orders WHERE order_id = ? AND driver_user_id = ?',
+        await conn.beginTransaction();
+
+        const [[order]] = await conn.query(
+            'SELECT order_id, status, sponsor_org_id FROM orders WHERE order_id = ? AND driver_user_id = ?',
             [orderId, driverUserId]
         );
-        if (!order) return res.status(404).json({ error: 'Order not found' });
-        if (order.status !== 'placed') return res.status(400).json({ error: 'Only placed orders can be cancelled' });
-        await pool.query(
+        if (!order) {
+            await conn.rollback();
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        if (order.status !== 'placed') {
+            await conn.rollback();
+            return res.status(400).json({ error: 'Only placed orders can be cancelled' });
+        }
+
+        // Find the original point deduction for this order
+        const [[tx]] = await conn.query(
+            'SELECT transaction_id, point_amount FROM point_transactions WHERE driver_user_id = ? AND sponsor_org_id = ? AND source = "order" AND reason = ? AND point_amount < 0',
+            [driverUserId, order.sponsor_org_id, `Order #${orderId}`]
+        );
+
+        // Cancel the order
+        await conn.query(
             'UPDATE orders SET status = ?, cancel_reason = ?, cancelled_at = NOW() WHERE order_id = ?',
             ['canceled', cancel_reason || null, orderId]
         );
-        res.json({ message: 'Order cancelled' });
+
+        // Refund points if a matching deduction was found
+        if (tx) {
+            const refundAmount = Math.abs(tx.point_amount);
+            await conn.query(
+                `INSERT INTO point_transactions
+                   (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id)
+                 VALUES (?, ?, ?, ?, 'order', ?)`,
+                [driverUserId, order.sponsor_org_id, refundAmount, `Refund for cancelled Order #${orderId}`, driverUserId]
+            );
+        }
+
+        await conn.commit();
+        res.json({ message: 'Order cancelled', points_refunded: tx ? Math.abs(tx.point_amount) : 0 });
     } catch (error) {
+        await conn.rollback();
         console.error('Error cancelling order:', error);
         res.status(500).json({ error: 'Failed to cancel order' });
+    } finally {
+        conn.release();
     }
 });
 
