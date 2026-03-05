@@ -2147,6 +2147,29 @@ app.put('/api/orders/:orderId/delivery', async (req, res) => {
     }
 });
 
+// PUT /api/orders/:orderId/cancel — driver cancels a placed order
+app.put('/api/orders/:orderId/cancel', async (req, res) => {
+    const { orderId } = req.params;
+    const { driverUserId, cancel_reason } = req.body;
+    if (!driverUserId) return res.status(400).json({ error: 'driverUserId is required' });
+    try {
+        const [[order]] = await pool.query(
+            'SELECT order_id, status FROM orders WHERE order_id = ? AND driver_user_id = ?',
+            [orderId, driverUserId]
+        );
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        if (order.status !== 'placed') return res.status(400).json({ error: 'Only placed orders can be cancelled' });
+        await pool.query(
+            'UPDATE orders SET status = ?, cancel_reason = ?, cancelled_at = NOW() WHERE order_id = ?',
+            ['canceled', cancel_reason || null, orderId]
+        );
+        res.json({ message: 'Order cancelled' });
+    } catch (error) {
+        console.error('Error cancelling order:', error);
+        res.status(500).json({ error: 'Failed to cancel order' });
+    }
+});
+
 // --- Transaction Comments Routes -----------------------------------------------------
 
 // GET /api/transaction-comments/:transactionId - returns all comments for a transaction,
