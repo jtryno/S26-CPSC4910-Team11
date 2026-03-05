@@ -15,6 +15,7 @@ import SupportTickets from './Pages/SupportTickets'
 import InactivityModal from './components/InactivityModal'
 import { FaUser } from 'react-icons/fa';
 import Notifications from './Pages/Notifications'
+import Messages from './Pages/Messages'
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -359,6 +360,7 @@ useEffect(() => {
                 <li><Link to="/catalog">Catalog</Link></li>
                 <li><Link to="/notifications">Notifications</Link></li>
                 <li><Link to="/support-tickets">Support</Link></li>
+                <li><Link to="/messages">Messages</Link></li>
               </>
             )}
           </ul>
@@ -401,6 +403,7 @@ useEffect(() => {
           <Route path="/catalog" element={<Catalog />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/support-tickets" element={<SupportTickets userData={userData} />} />
+          <Route path="/messages" element={<Messages />} />
         </Routes>
       </main>
 
