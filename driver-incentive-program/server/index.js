@@ -645,7 +645,7 @@ app.post('/api/login', async (req, res) => {
             const shouldLock = newFails >= 5;
 
             await pool.query('UPDATE users SET failed_login_attempts = ?, is_locked = ? WHERE user_id = ?', [newFails, shouldLock, user.user_id]);
-            await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`FAILED: ${email}`]);
+            await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, 'failure', user.user_id]);
 
             const newAttempts = (user.failed_login_attempts || 0) + 1;
 
@@ -720,7 +720,7 @@ app.post('/api/login', async (req, res) => {
         }
 
         await pool.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE user_id = ?', [user.user_id]);
-        await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${email}`]);
+        await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, 'success', user.user_id]);
         
         const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
         return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
@@ -783,6 +783,9 @@ app.post('/api/password-reset/confirm', async (req, res) => {
         await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_id = ?', [tokens[0].token_id]);
         
         await createNotification(tokens[0].user_id, 'password_changed', 'Your password was successfully changed. If you did not initiate this, please contact support.');
+
+        const [user] = await pool.query('SELECT username FROM users WHERE user_id = ?', [tokens[0].user_id]); 
+        await pool.query('INSERT INTO password_change_log (user_id, change_type, username) VALUES (?, "reset", ?)', [tokens[0].user_id, user[0].username]);
 
         res.json({ message: 'Password reset successfully' });
     } catch (error) {
@@ -868,6 +871,33 @@ app.put('/api/user', async (req, res) => {
     } catch (error) {
         console.error('Error updating user field:', error);
         res.status(500).json({ error: 'Failed to update user information' });
+    }
+});
+
+// --- Sponsor Logs Route ---
+app.get('/api/sponsor/logs/password-change-logs/:sponsor_org_id', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+
+    try {
+        const [logs] = await pool.query(`SELECT * FROM password_change_log WHERE user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)`, [sponsor_org_id]);
+
+        res.json({ message: "Logs retrieved successfully", logs });
+    } catch (error) {
+        console.error('Error fetching password change logs:', error);
+        res.status(500).json({ error: 'Failed to fetch password change logs' });
+    }
+});
+
+app.get('/api/sponsor/logs/login-attempt-logs/:sponsor_org_id', async (req, res) => {
+    const { sponsor_org_id } = req.params;
+
+    try {
+        const [logs] = await pool.query(`SELECT * FROM login_logs WHERE user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)`, [sponsor_org_id]);
+
+        res.json({ message: "Logs retrieved successfully", logs });
+    } catch (error) {
+        console.error('Error fetching login attempt logs:', error);
+        res.status(500).json({ error: 'Failed to fetch login attempt logs' });
     }
 });
 
@@ -1296,7 +1326,7 @@ app.post('/api/2fa/verify', async (req, res) => {
 
         // Update last login time and log the success
         await pool.query('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
-        await pool.query('INSERT INTO login_logs (username, login_date) VALUES (?, NOW())', [`SUCCESS: ${user.email}`]);
+        await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, `success`, user.user_id]);
 
         const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
         return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
@@ -1474,6 +1504,11 @@ app.post('/api/driver/drop', async (req, res) => {
             msg = `You have been removed from ${orgName}.`;
         }
 
+        const [user] = await pool.query('SELECT * FROM users WHERE user_id = ?', [driverId]);
+        await pool.query('INSERT INTO org_drop_logs (user_id, username, user_type, reason, sponsor_org_id) VALUES (?, ?, ?, ?, ?)',
+            [driverId, user[0].username, user[0].user_type, drop_reason || "None", sponsor_org_id]
+        );
+
         await createNotification(driverId, 'dropped', msg);
 
         res.json({message: 'Driver removed from organization'});
@@ -1591,6 +1626,18 @@ app.get('/api/point-contest/organization/:org_id', async (req, res) => {
     } catch (error) {
         console.error('Error fetching point contests:', error);
         res.status(500).json({ error: 'Failed to fetch point contests' });
+    }
+});
+
+// Get for org drops
+app.get('/api/organization/:org_id/drop-logs', async (req, res) => {
+    const { org_id } = req.params;
+    try {
+        const [drops] = await pool.query('SELECT * FROM org_drop_logs WHERE sponsor_org_id = ? ORDER BY created_at DESC', [org_id]);
+        res.json({ message: "Successfully retrieved drop logs", drops });
+    } catch (error) {
+        console.error('Error fetching org drops:', error);
+        res.status(500).json({ error: 'Failed to fetch org drops' });
     }
 });
 
