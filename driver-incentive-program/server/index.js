@@ -430,6 +430,25 @@ app.post('/api/application', async (req, res) => {
     }
 });
 
+// Allows a driver to withdraw a pending application before it has been reviewed
+app.delete('/api/application/:application_id', async (req, res) => {
+    const { application_id } = req.params;
+    try {
+        // Only withdraw if still pending — prevents canceling already-reviewed applications
+        const [result] = await pool.query(
+            'UPDATE driver_applications SET status = "withdrawn" WHERE application_id = ? AND status = "pending"',
+            [application_id]
+        );
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Application not found or already reviewed' });
+        }
+        res.json({ message: 'Application withdrawn successfully' });
+    } catch (error) {
+        console.error('Error withdrawing application:', error);
+        res.status(500).json({ error: 'Failed to withdraw application' });
+    }
+});
+
 app.get('/api/application/user/:user_id', async (req, res) => {
     const { user_id } = req.params;
     const { status } = req.query;

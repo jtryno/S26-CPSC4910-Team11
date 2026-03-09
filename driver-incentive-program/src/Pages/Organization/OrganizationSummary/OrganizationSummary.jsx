@@ -20,6 +20,7 @@ const OrganizationSummary = () => {
     const [orgData, setOrgData] = useState(null);
     const [orgUsers, setOrgUsers] = useState(null);
     const [hasPendingApplication, setHasPendingApplication] = useState(true);
+    const [pendingApplication, setPendingApplication] = useState(null);
     const [dropData, setDropData] = useState([]);
 
     async function fetchOrg() {
@@ -29,6 +30,9 @@ const OrganizationSummary = () => {
         setOrgUsers(users);
         const applications = await featchApplicationsUser(userData.user_id, 'pending');
         setHasPendingApplication(applications.length > 0);
+        // Find the pending application specifically for this org so the driver can withdraw it
+        const appForThisOrg = applications.find(a => a.sponsor_org_id === Number(orgId)) || null;
+        setPendingApplication(appForThisOrg);
         const drops = await fetchDropLogs(orgId);
         setDropData(drops);
     }
@@ -43,7 +47,7 @@ const OrganizationSummary = () => {
     
     return (
         <div style={{background: '#f9f9f9', borderRadius: '8px', border: '1px solid #e0e0e0'}}>
-            <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg} hasPendingApplication={hasPendingApplication}/>
+            <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg} hasPendingApplication={hasPendingApplication} pendingApplication={pendingApplication}/>
             <div style={{ borderBottom: '1px solid #e0e0e0', marginBottom: '20px'}}/>
             <TabGroup tabs={[
                 { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg} orgId={orgId}/> },

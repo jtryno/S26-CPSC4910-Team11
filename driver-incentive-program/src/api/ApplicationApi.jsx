@@ -60,4 +60,19 @@ async function reviewApplication(application_id, status, decision_reason, user_i
     }
 }
 
-export { createApplication, featchApplicationsUser, fetchApplicationsOrg, reviewApplication };
+// Cancels a pending application by the driver before it has been reviewed
+async function withdrawApplication(application_id) {
+    try {
+        const response = await fetch(`/api/application/${application_id}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error withdrawing application:', error);
+        throw error;
+    }
+}
+
+export { createApplication, featchApplicationsUser, fetchApplicationsOrg, reviewApplication, withdrawApplication };
