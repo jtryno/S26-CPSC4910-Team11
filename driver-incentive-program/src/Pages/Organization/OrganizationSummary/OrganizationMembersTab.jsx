@@ -50,6 +50,16 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                     { key: 'username', label: 'Username', sortable: true },
                     { key: 'user_type', label: 'Role', sortable: true },
                     ...(isSponsorOrAdmin ? [{ key: 'points', label: 'Points', sortable: true }] : []),
+                    ...(isSponsorOrAdmin ? [{
+                        key: 'last_login',
+                        label: 'Last Login',
+                        sortable: true,
+                        render: (value, row) => {
+                            if (row.user_type !== 'driver') return null;
+                            if (!value) return 'Never';
+                            return new Date(value).toLocaleString();
+                        }
+                    }] : []),
                 ]}
                 actions={(() => {
                     if(userData?.user_type !== 'driver') {
