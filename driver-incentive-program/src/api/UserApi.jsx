@@ -90,4 +90,19 @@ async function signUpUser(userData, userRole) {
     }
 }
 
-export { removeFromOrganization, updateField, signUpUser, dropDriver };
+// Fetches the latest user data from the DB, including current sponsor_org_id
+async function fetchUserData(user_id) {
+    try {
+        const response = await fetch(`/api/user/${user_id}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.user;
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+        throw error;
+    }
+}
+
+export { removeFromOrganization, updateField, signUpUser, dropDriver, fetchUserData };

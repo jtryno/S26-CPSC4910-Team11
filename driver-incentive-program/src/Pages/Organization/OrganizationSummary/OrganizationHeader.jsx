@@ -4,7 +4,7 @@ import Field from '../../../components/Field';
 import EditableField from '../../../components/EditableField';
 import { updateOrganizationField } from '../../../api/OrganizationApi';
 import { removeFromOrganization } from '../../../api/UserApi';
-import { createApplication } from '../../../api/ApplicationApi';
+import { createApplication, withdrawApplication } from '../../../api/ApplicationApi';
 
 
 const SponsorFields = ({orgData, setOrgData, numUsers}) => {
@@ -33,7 +33,7 @@ const DriverFields = ({orgData, numUsers}) => {
     );
 }
 
-const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserData, fetchOrg, hasPendingApplication}) => {
+const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserData, fetchOrg, hasPendingApplication, pendingApplication}) => {
     return (
         <div style={{ margin: '20px'}}>
             <h1 style={{ color: '#1a1a1a', marginBottom: '20px'}}>Organization Summary</h1>
@@ -57,20 +57,46 @@ const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserDat
                         Leave Organization        
                     </button>
                 }
-                {userData?.user_type === 'driver' && userData?.sponsor_org_id === null &&
-                    <button 
-                        disabled={hasPendingApplication}
-                        onClick={async () => {
-                            if (window.confirm(`Are you sure you want to request to join "${orgData?.name}"?`)) {
-                                await createApplication(userData.user_id, orgData.sponsor_org_id);
-                                await fetchOrg();
-                            }
-                        }}
-                        style={{ height: '50px', width: '200px', marginTop: 'auto', marginLeft: 'auto', color: 'white', borderRadius: '4px', padding: '0 15px', backgroundColor: hasPendingApplication ? '#95a5a6' : '#3498db', cursor: hasPendingApplication ? 'not-allowed' : 'pointer' }}
-                    >
-                        {hasPendingApplication ? "Pending Application" : "Request to Join Organization"}
-                    </button>
-                }
+                {/* Only show join/withdraw controls for drivers not yet in an org */}
+                {userData?.user_type === 'driver' && userData?.sponsor_org_id === null && (
+                    pendingApplication ? (
+                        // Driver has a pending application for this org — show status + withdraw option
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', marginLeft: 'auto' }}>
+                            <button
+                                disabled
+                                style={{ height: '50px', width: '200px', color: 'white', borderRadius: '4px', padding: '0 15px', backgroundColor: '#95a5a6', cursor: 'not-allowed' }}
+                            >
+                                Pending Application
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    if (window.confirm(`Are you sure you want to withdraw your application to "${orgData?.name}"?`)) {
+                                        await withdrawApplication(pendingApplication.application_id);
+                                        await fetchOrg();
+                                    }
+                                }}
+                                style={{ height: '50px', width: '200px', color: 'white', borderRadius: '4px', padding: '0 15px', backgroundColor: '#e74c3c', cursor: 'pointer' }}
+                            >
+                                Withdraw Application
+                            </button>
+                        </div>
+                    ) : (
+                        // No pending application for this org — allow requesting to join
+                        // Disabled if the driver has a pending application to a different org
+                        <button
+                            disabled={hasPendingApplication}
+                            onClick={async () => {
+                                if (window.confirm(`Are you sure you want to request to join "${orgData?.name}"?`)) {
+                                    await createApplication(userData.user_id, orgData.sponsor_org_id);
+                                    await fetchOrg();
+                                }
+                            }}
+                            style={{ height: '50px', width: '200px', marginTop: 'auto', marginLeft: 'auto', color: 'white', borderRadius: '4px', padding: '0 15px', backgroundColor: hasPendingApplication ? '#95a5a6' : '#3498db', cursor: hasPendingApplication ? 'not-allowed' : 'pointer' }}
+                        >
+                            {hasPendingApplication ? "Pending Application" : "Request to Join Organization"}
+                        </button>
+                    )
+                )}
             </div>
         </div>
     );

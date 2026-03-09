@@ -430,6 +430,25 @@ app.post('/api/application', async (req, res) => {
     }
 });
 
+// Allows a driver to withdraw a pending application before it has been reviewed
+app.delete('/api/application/:application_id', async (req, res) => {
+    const { application_id } = req.params;
+    try {
+        // Only withdraw if still pending — prevents canceling already-reviewed applications
+        const [result] = await pool.query(
+            'UPDATE driver_applications SET status = "withdrawn" WHERE application_id = ? AND status = "pending"',
+            [application_id]
+        );
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Application not found or already reviewed' });
+        }
+        res.json({ message: 'Application withdrawn successfully' });
+    } catch (error) {
+        console.error('Error withdrawing application:', error);
+        res.status(500).json({ error: 'Failed to withdraw application' });
+    }
+});
+
 app.get('/api/application/user/:user_id', async (req, res) => {
     const { user_id } = req.params;
     const { status } = req.query;
@@ -855,6 +874,26 @@ app.post('/api/signup', async (req, res) => {
 app.post('/api/logout', (req, res) => {
     res.clearCookie('remember_me');
     res.json({ message: 'Logged out successfully' });
+});
+
+// Returns fresh user data for a given user_id, including current sponsor_org_id from the role table
+app.get('/api/user/:user_id', async (req, res) => {
+    const { user_id } = req.params;
+    try {
+        const [users] = await pool.query(
+            'SELECT user_id, email, username, user_type FROM users WHERE user_id = ?',
+            [user_id]
+        );
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const user = users[0];
+        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+        res.json({ user: { ...user, sponsor_org_id } });
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+        res.status(500).json({ error: 'Failed to fetch user data' });
+    }
 });
 
 // --- Update User Route ---
