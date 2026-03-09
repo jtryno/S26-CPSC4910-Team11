@@ -396,9 +396,13 @@ app.put('/api/application/:application_id', async (req, res) => {
                 const {driver_user_id, sponsor_org_id} = appInfo[0];
                 const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
                 const orgName = orgRows[0].name;
+                const [reviewerRows] = await pool.query('SELECT first_name, last_name FROM users WHERE user_id = ?', [user_id]);
+                const reviewerName = reviewerRows.length > 0
+                    ? `${reviewerRows[0].first_name} ${reviewerRows[0].last_name}`
+                    : 'a sponsor';
                 let msg;
                 if (status === 'approved') {
-                    msg = `Your application to join ${orgName} was approved.`;
+                    msg = `Your application to join ${orgName} was approved by ${reviewerName}.`;
                     await pool.query(
                         'UPDATE driver_user SET sponsor_org_id = ?, driver_status = "active", affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL WHERE user_id = ?',
                         [sponsor_org_id, driver_user_id]
