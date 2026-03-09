@@ -4,6 +4,7 @@ import OrganizationHeader from './OrganizationHeader';
 import OrganizationMembersTab from './OrganizationMembersTab';
 import { fetchOrgData, fetchOrgUsers, fetchDropLogs } from '../../../api/OrganizationApi';
 import { featchApplicationsUser } from '../../../api/ApplicationApi';
+import { fetchUserData } from '../../../api/UserApi';
 import TabGroup from '../../../components/TabGroup';
 import OrganizationApplicationsTab from './OrganizationApplicationsTab';
 import OrganizationContestsTab from './OrganizationContestsTab';
@@ -28,6 +29,17 @@ const OrganizationSummary = () => {
         setOrgData(org);
         const users = await fetchOrgUsers(orgId);
         setOrgUsers(users);
+
+        // Refresh the driver's data from the DB so sponsor_org_id reflects any approval
+        // without requiring a logout/login
+        const freshUser = await fetchUserData(userData.user_id);
+        if (freshUser && freshUser.sponsor_org_id !== userData.sponsor_org_id) {
+            const storage = localStorage.getItem('user') ? localStorage : sessionStorage;
+            const stored = JSON.parse(storage.getItem('user'));
+            storage.setItem('user', JSON.stringify({ ...stored, sponsor_org_id: freshUser.sponsor_org_id }));
+            setUserData(prev => ({ ...prev, sponsor_org_id: freshUser.sponsor_org_id }));
+        }
+
         const applications = await featchApplicationsUser(userData.user_id, 'pending');
         setHasPendingApplication(applications.length > 0);
         // Find the pending application specifically for this org so the driver can withdraw it

@@ -876,6 +876,26 @@ app.post('/api/logout', (req, res) => {
     res.json({ message: 'Logged out successfully' });
 });
 
+// Returns fresh user data for a given user_id, including current sponsor_org_id from the role table
+app.get('/api/user/:user_id', async (req, res) => {
+    const { user_id } = req.params;
+    try {
+        const [users] = await pool.query(
+            'SELECT user_id, email, username, user_type FROM users WHERE user_id = ?',
+            [user_id]
+        );
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const user = users[0];
+        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+        res.json({ user: { ...user, sponsor_org_id } });
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+        res.status(500).json({ error: 'Failed to fetch user data' });
+    }
+});
+
 // --- Update User Route ---
 app.put('/api/user', async (req, res) => {
     const {user_id, field, value } = req.body;
