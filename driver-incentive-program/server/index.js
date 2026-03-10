@@ -1810,6 +1810,102 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
     }
 });
 
+// ─── Recently Viewed Routes ───────────────────────────────────────────────────
+
+// POST /api/catalog/viewed — record that a driver viewed an item
+app.post('/api/catalog/viewed', async (req, res) => {
+    const { driverUserId, itemId } = req.body;
+    if (!driverUserId || !itemId) return res.status(400).json({ error: 'driverUserId and itemId are required' });
+    try {
+        await pool.query(
+            'INSERT INTO recently_viewed (driver_user_id, item_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE viewed_at = NOW()',
+            [driverUserId, itemId]
+        );
+        res.json({ message: 'Recorded' });
+    } catch (error) {
+        console.error('Error recording view:', error);
+        res.status(500).json({ error: 'Failed to record view' });
+    }
+});
+
+// GET /api/catalog/viewed/:driverUserId — get recently viewed items for a driver
+app.get('/api/catalog/viewed/:driverUserId', async (req, res) => {
+    const { driverUserId } = req.params;
+    const { sponsorOrgId } = req.query;
+    if (!sponsorOrgId) return res.status(400).json({ error: 'sponsorOrgId query param required' });
+    try {
+        const [rows] = await pool.query(
+            `SELECT ci.item_id, ci.title, ci.image_url, ci.item_web_url, ci.last_price_value,
+                    ci.points_price, ci.availability_status, rv.viewed_at
+             FROM recently_viewed rv
+             JOIN catalog_items ci ON rv.item_id = ci.item_id
+             WHERE rv.driver_user_id = ? AND ci.sponsor_org_id = ? AND ci.is_active = 1
+             ORDER BY rv.viewed_at DESC
+             LIMIT 8`,
+            [driverUserId, sponsorOrgId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching recently viewed:', error);
+        res.status(500).json({ error: 'Failed to fetch recently viewed' });
+    }
+});
+
+// ─── Favorites Routes ─────────────────────────────────────────────────────────
+
+// POST /api/favorites — add item to driver's favorites
+app.post('/api/favorites', async (req, res) => {
+    const { driverUserId, itemId } = req.body;
+    if (!driverUserId || !itemId) return res.status(400).json({ error: 'driverUserId and itemId are required' });
+    try {
+        await pool.query(
+            'INSERT IGNORE INTO driver_favorites (driver_user_id, item_id) VALUES (?, ?)',
+            [driverUserId, itemId]
+        );
+        res.json({ message: 'Added to favorites' });
+    } catch (error) {
+        console.error('Error adding favorite:', error);
+        res.status(500).json({ error: 'Failed to add favorite' });
+    }
+});
+
+// DELETE /api/favorites/:driverUserId/:itemId — remove item from favorites
+app.delete('/api/favorites/:driverUserId/:itemId', async (req, res) => {
+    const { driverUserId, itemId } = req.params;
+    try {
+        await pool.query(
+            'DELETE FROM driver_favorites WHERE driver_user_id = ? AND item_id = ?',
+            [driverUserId, itemId]
+        );
+        res.json({ message: 'Removed from favorites' });
+    } catch (error) {
+        console.error('Error removing favorite:', error);
+        res.status(500).json({ error: 'Failed to remove favorite' });
+    }
+});
+
+// GET /api/favorites/:driverUserId — get all favorited items for a driver
+app.get('/api/favorites/:driverUserId', async (req, res) => {
+    const { driverUserId } = req.params;
+    const { sponsorOrgId } = req.query;
+    if (!sponsorOrgId) return res.status(400).json({ error: 'sponsorOrgId query param required' });
+    try {
+        const [rows] = await pool.query(
+            `SELECT ci.item_id, ci.title, ci.image_url, ci.item_web_url, ci.last_price_value,
+                    ci.points_price, ci.availability_status
+             FROM driver_favorites df
+             JOIN catalog_items ci ON df.item_id = ci.item_id
+             WHERE df.driver_user_id = ? AND ci.sponsor_org_id = ? AND ci.is_active = 1
+             ORDER BY df.created_at DESC`,
+            [driverUserId, sponsorOrgId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching favorites:', error);
+        res.status(500).json({ error: 'Failed to fetch favorites' });
+    }
+});
+
 // ─── Cart Routes ──────────────────────────────────────────────────────────────
 
 // POST /api/cart — get-or-create active cart for driver+org
@@ -2376,6 +2472,45 @@ app.put('/api/orders/:orderId/cancel', async (req, res) => {
     }
 });
 
+// PATCH /api/orders/:orderId/status — update order status (ship or deliver)
+// placed → shipped (by sponsor), shipped → delivered (by driver)
+app.patch('/api/orders/:orderId/status', async (req, res) => {
+    const { orderId } = req.params;
+    const { status, userId } = req.body;
+    if (!status || !userId) return res.status(400).json({ error: 'status and userId are required' });
+    try {
+        const [[order]] = await pool.query(
+            'SELECT order_id, status, driver_user_id, sponsor_org_id FROM orders WHERE order_id = ?',
+            [orderId]
+        );
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+
+        if (status === 'shipped') {
+            if (order.status !== 'placed') {
+                return res.status(400).json({ error: 'Only placed orders can be marked as shipped' });
+            }
+        } else if (status === 'delivered') {
+            if (order.status !== 'shipped') {
+                return res.status(400).json({ error: 'Only shipped orders can be confirmed as delivered' });
+            }
+            if (order.driver_user_id !== parseInt(userId)) {
+                return res.status(403).json({ error: 'Only the ordering driver can confirm delivery' });
+            }
+        } else {
+            return res.status(400).json({ error: 'Invalid status. Use "shipped" or "delivered"' });
+        }
+
+        await pool.query(
+            'UPDATE orders SET status = ?, updated_at = NOW() WHERE order_id = ?',
+            [status, orderId]
+        );
+        res.json({ message: `Order marked as ${status}` });
+    } catch (error) {
+        console.error('Error updating order status:', error);
+        res.status(500).json({ error: 'Failed to update order status' });
+    }
+});
+
 // --- Transaction Comments Routes -----------------------------------------------------
 
 // GET /api/transaction-comments/:transactionId - returns all comments for a transaction,
@@ -2476,6 +2611,32 @@ if (process.env.NODE_ENV !== 'test') {
             }
         } catch (e) {
             console.warn('Delivery columns migration failed:', e.message);
+        }
+
+        // Create recently_viewed table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS recently_viewed (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_rv (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('recently_viewed migration failed:', e.message);
+        }
+
+        // Create driver_favorites table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS driver_favorites (
+                favorite_id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_fav (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('driver_favorites migration failed:', e.message);
         }
     })();
 

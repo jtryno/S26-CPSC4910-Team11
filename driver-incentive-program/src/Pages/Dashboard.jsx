@@ -67,6 +67,19 @@ const DriverDashboard = ({ user }) => {
 
     useEffect(() => { fetchData(); }, [user.user_id]);
 
+    const handleConfirmDelivery = async (row) => {
+        try {
+            const res = await fetch(`/api/orders/${row.order_id}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'delivered', userId: user.user_id }),
+            });
+            if (res.ok) {
+                setOrders(prev => prev.map(o => o.order_id === row.order_id ? { ...o, status: 'delivered' } : o));
+            }
+        } catch { /* non-critical */ }
+    };
+
     useEffect(() => {
         fetch(`/api/orders/driver/${user.user_id}`)
             .then(res => res.ok ? res.json() : Promise.reject())
@@ -408,18 +421,19 @@ const DriverDashboard = ({ user }) => {
                                 key: 'status',
                                 label: 'Status',
                                 sortable: true,
-                                render: (val) => (
-                                    <span style={{
-                                        padding: '2px 8px',
-                                        borderRadius: '12px',
-                                        fontSize: '12px',
-                                        fontWeight: '600',
-                                        background: val === 'placed' ? '#e3f2fd' : '#f5f5f5',
-                                        color: val === 'placed' ? '#1565c0' : '#444',
-                                    }}>
-                                        {val}
-                                    </span>
-                                ),
+                                render: (val) => {
+                                    const badge = {
+                                        placed:    { bg: '#e3f2fd', color: '#1565c0' },
+                                        shipped:   { bg: '#fff3e0', color: '#e65100' },
+                                        delivered: { bg: '#e8f5e9', color: '#2e7d32' },
+                                        canceled:  { bg: '#f5f5f5', color: '#757575' },
+                                    }[val] || { bg: '#f5f5f5', color: '#444' };
+                                    return (
+                                        <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', background: badge.bg, color: badge.color }}>
+                                            {val}
+                                        </span>
+                                    );
+                                },
                             },
                             { key: 'item_count', label: 'Items', sortable: true },
                             {
@@ -485,6 +499,17 @@ const DriverDashboard = ({ user }) => {
                                         style={{ backgroundColor: '#c62828', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
                                     >
                                         Cancel
+                                    </button>
+                                ) : null,
+                            },
+                            {
+                                label: 'Confirm Delivery',
+                                render: (row) => row.status === 'shipped' ? (
+                                    <button
+                                        onClick={() => handleConfirmDelivery(row)}
+                                        style={{ backgroundColor: '#2e7d32', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+                                    >
+                                        Confirm Delivery
                                     </button>
                                 ) : null,
                             },

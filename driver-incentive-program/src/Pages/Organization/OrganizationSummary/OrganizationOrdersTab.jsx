@@ -3,7 +3,7 @@ import SortableTable from '../../../components/SortableTable';
 import Modal from '../../../components/Modal';
 import Field from '../../../components/Field';
 
-const OrganizationOrdersTab = ({ orgId }) => {
+const OrganizationOrdersTab = ({ orgId, userData }) => {
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filterDriver, setFilterDriver] = useState('');
@@ -11,6 +11,7 @@ const OrganizationOrdersTab = ({ orgId }) => {
     const [detailOpen, setDetailOpen] = useState(false);
     const [selectedOrderId, setSelectedOrderId] = useState(null);
     const [itemsLoading, setItemsLoading] = useState(false);
+    const [shippingIds, setShippingIds] = useState(new Set());
     // null = still loading, number = net points redeemed via orders this month
     const [monthlyRedeemed, setMonthlyRedeemed] = useState(null);
 
@@ -40,6 +41,24 @@ const OrganizationOrdersTab = ({ orgId }) => {
             setSelectedOrderItems([]);
         } finally {
             setItemsLoading(false);
+        }
+    };
+
+    const handleMarkShipped = async (row) => {
+        if (shippingIds.has(row.order_id)) return;
+        setShippingIds(prev => new Set([...prev, row.order_id]));
+        try {
+            const res = await fetch(`/api/orders/${row.order_id}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'shipped', userId: userData?.user_id }),
+            });
+            if (res.ok) {
+                setOrders(prev => prev.map(o => o.order_id === row.order_id ? { ...o, status: 'shipped' } : o));
+            }
+        } catch { /* non-critical */ }
+        finally {
+            setShippingIds(prev => { const next = new Set(prev); next.delete(row.order_id); return next; });
         }
     };
 
@@ -108,18 +127,19 @@ const OrganizationOrdersTab = ({ orgId }) => {
                             key: 'status',
                             label: 'Status',
                             sortable: true,
-                            render: (val) => (
-                                <span style={{
-                                    padding: '2px 8px',
-                                    borderRadius: '12px',
-                                    fontSize: '12px',
-                                    fontWeight: '600',
-                                    background: val === 'placed' ? '#e3f2fd' : '#f5f5f5',
-                                    color: val === 'placed' ? '#1565c0' : '#444',
-                                }}>
-                                    {val}
-                                </span>
-                            ),
+                            render: (val) => {
+                                const badge = {
+                                    placed:    { bg: '#e3f2fd', color: '#1565c0' },
+                                    shipped:   { bg: '#fff3e0', color: '#e65100' },
+                                    delivered: { bg: '#e8f5e9', color: '#2e7d32' },
+                                    canceled:  { bg: '#f5f5f5', color: '#757575' },
+                                }[val] || { bg: '#f5f5f5', color: '#444' };
+                                return (
+                                    <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', background: badge.bg, color: badge.color }}>
+                                        {val}
+                                    </span>
+                                );
+                            },
                         },
                         { key: 'item_count', label: 'Items', sortable: true },
                         {
@@ -137,6 +157,18 @@ const OrganizationOrdersTab = ({ orgId }) => {
                     ]}
                     actions={[
                         { label: 'View Items', onClick: handleViewItems },
+                        {
+                            label: 'Mark Shipped',
+                            render: (row) => row.status === 'placed' ? (
+                                <button
+                                    onClick={() => handleMarkShipped(row)}
+                                    disabled={shippingIds.has(row.order_id)}
+                                    style={{ background: shippingIds.has(row.order_id) ? '#e0e0e0' : '#1976d2', color: shippingIds.has(row.order_id) ? '#999' : '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: shippingIds.has(row.order_id) ? 'not-allowed' : 'pointer', fontSize: '13px' }}
+                                >
+                                    {shippingIds.has(row.order_id) ? 'Shipping...' : 'Mark Shipped'}
+                                </button>
+                            ) : null,
+                        },
                     ]}
                     data={filteredOrders}
                 />
