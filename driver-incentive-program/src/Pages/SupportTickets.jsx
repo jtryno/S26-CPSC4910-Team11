@@ -7,7 +7,9 @@ import {
     fetchTicketsForUser,
     fetchAllTickets,
     updateTicketStatus,
+    reopenTicket,
     fetchOrgTickets,
+    fetchOrgDrivers,
     updateTicketDescription,
     archiveTicket,
     fetchTicketComments,
@@ -144,12 +146,21 @@ const DriverView = ({ user }) => {
     const [submitMsg, setSubmitMsg] = useState(null);
     const [submitting, setSubmitting] = useState(false);
 
+    // category and driver subject (for sponsors) on create form
+    const [ticketCategory, setTicketCategory] = useState('general');
+    const [driverPickerEnabled, setDriverPickerEnabled] = useState(false);
+    const [subjectDriverId, setSubjectDriverId] = useState('');
+    const [orgDrivers, setOrgDrivers] = useState([]);
+
     // edit state
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [editingTicket, setEditingTicket] = useState(null);
     const [editDesc, setEditDesc] = useState('');
     const [editMsg, setEditMsg] = useState(null);
     const [editSaving, setEditSaving] = useState(false);
+
+    // reopen state,tracks which tickets are mid-req
+    const [reopening, setReopening] = useState({});
 
     // fetches the users tickets from the backend and updates list
     const loadTickets = () => {
@@ -161,6 +172,14 @@ const DriverView = ({ user }) => {
 
     // load tickets when the page first renders
     useEffect(() => { loadTickets(); }, [user.user_id]);
+
+    // if a sponsor, load their org's active drivers for the ticket subject picker
+    useEffect(() => {
+        if (user.user_type !== 'sponsor') return;
+        fetchOrgDrivers(user.user_id)
+            .then(data => setOrgDrivers(data || []))
+            .catch(() => setOrgDrivers([]));
+    }, [user.user_id, user.user_type]);
 
     // toggles the expanded detail card for a ticket row
     const toggleExpand = (ticketId) => {
@@ -175,6 +194,9 @@ const DriverView = ({ user }) => {
     const handleOpenModal = () => {
         setTicketTitle('');
         setTicketDesc('');
+        setTicketCategory('general');
+        setDriverPickerEnabled(false);
+        setSubjectDriverId('');
         setSubmitMsg(null);
         setCreateModalOpen(true);
     };
@@ -195,10 +217,12 @@ const DriverView = ({ user }) => {
                 user.user_id,
                 user.sponsor_org_id || null,
                 ticketTitle.trim(),
-                ticketDesc.trim()
+                ticketDesc.trim(),
+                ticketCategory,
+                driverPickerEnabled && subjectDriverId ? parseInt(subjectDriverId) : null
             );
             if (result.ticket_id) {
-                setSubmitMsg({ type: 'success', text: 'Ticket submitted successfully!' });
+                setCreateModalOpen(false);
                 loadTickets();
             } else {
                 setSubmitMsg({ type: 'error', text: result.error || 'Failed to submit ticket.' });
@@ -240,6 +264,23 @@ const DriverView = ({ user }) => {
         }
     };
 
+    // reopens resolved ticket back to open
+    const handleReopen = async (ticket) => {
+        setReopening(prev => ({ ...prev, [ticket.ticket_id]: true }));
+        try {
+            const result = await reopenTicket(ticket.ticket_id, user.user_id, user.user_type);
+            if (result.message) {
+                loadTickets();
+            } else {
+                console.error('Failed to reopen ticket:', result.error);
+            }
+        } catch {
+            console.error('Failed to reopen ticket.');
+        } finally {
+            setReopening(prev => ({ ...prev, [ticket.ticket_id]: false }));
+        }
+    };
+
     // archives the ticket after the user confirms (removes it from this view)
     const handleArchive = async (ticket) => {
         if (!window.confirm(`Archive ticket #${ticket.ticket_id}? It will no longer appear in your ticket list.`)) return;
@@ -255,6 +296,14 @@ const DriverView = ({ user }) => {
     const columns = [
         { key: 'ticket_id', label: 'Ticket #', sortable: true },
         { key: 'title', label: 'Title', sortable: true },
+        {
+            key: 'category',
+            label: 'Category',
+            sortable: true,
+            render: (val) => val === 'security'
+                ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>
+                : <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>,
+        },
         {
             key: 'status',
             label: 'Status',
@@ -321,10 +370,15 @@ const DriverView = ({ user }) => {
                                             <StatusBadge status={t.status} />
                                         </div>
                                         <p style={{ margin: '0 0 8px', color: '#333', whiteSpace: 'pre-wrap' }}>{t.description}</p>
-                                        <p style={{ margin: '0 0 12px', color: '#888', fontSize: '0.85em' }}>
+                                        <p style={{ margin: '0 0 4px', color: '#888', fontSize: '0.85em' }}>
                                             Submitted {new Date(t.created_at).toLocaleString()}
                                         </p>
-                                        {/* edit and archive action buttons */}
+                                        {t.subject_driver_id === user.user_id && t.submitter_first_name && (
+                                            <p style={{ margin: '0 0 10px', color: '#555', fontSize: '0.85em' }}>
+                                                Filed by sponsor: <strong>{t.submitter_first_name} {t.submitter_last_name}</strong>
+                                            </p>
+                                        )}
+                                        {/* edit, reopen, and archive action buttons */}
                                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                                             {t.status === 'open' && (
                                                 <button
@@ -332,6 +386,22 @@ const DriverView = ({ user }) => {
                                                     style={{ backgroundColor: '#1976d2', color: 'white', border: 'none', padding: '6px 14px', borderRadius: '4px', cursor: 'pointer' }}
                                                 >
                                                     Edit
+                                                </button>
+                                            )}
+                                            {t.status === 'resolved' && (
+                                                <button
+                                                    onClick={() => handleReopen(t)}
+                                                    disabled={reopening[t.ticket_id]}
+                                                    style={{
+                                                        backgroundColor: reopening[t.ticket_id] ? '#e0e0e0' : '#f57c00',
+                                                        color: reopening[t.ticket_id] ? '#888' : 'white',
+                                                        border: 'none',
+                                                        padding: '6px 14px',
+                                                        borderRadius: '4px',
+                                                        cursor: reopening[t.ticket_id] ? 'default' : 'pointer',
+                                                    }}
+                                                >
+                                                    {reopening[t.ticket_id] ? 'Reopening...' : 'Reopen Ticket'}
                                                 </button>
                                             )}
                                             <button
@@ -368,6 +438,44 @@ const DriverView = ({ user }) => {
                             style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }}
                         />
                     </div>
+                    <div>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 600, color: '#1a1a1a' }}>Category</label>
+                        <select
+                            value={ticketCategory}
+                            onChange={e => setTicketCategory(e.target.value)}
+                            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }}
+                        >
+                            <option value="general">General</option>
+                            <option value="security">Security Issue</option>
+                        </select>
+                    </div>
+                    {/* sponsors can optionally link the ticket to one of their orgs drivers */}
+                    {user.user_type === 'sponsor' && orgDrivers.length > 0 && (
+                        <div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, color: '#1a1a1a', cursor: 'pointer' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={driverPickerEnabled}
+                                    onChange={e => { setDriverPickerEnabled(e.target.checked); setSubjectDriverId(''); }}
+                                />
+                                Regarding a driver in my organization
+                            </label>
+                            {driverPickerEnabled && (
+                                <select
+                                    value={subjectDriverId}
+                                    onChange={e => setSubjectDriverId(e.target.value)}
+                                    style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', marginTop: '6px' }}
+                                >
+                                    <option value="">— Select a driver —</option>
+                                    {orgDrivers.map(d => (
+                                        <option key={d.user_id} value={d.user_id}>
+                                            {d.first_name} {d.last_name}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
+                        </div>
+                    )}
                     <div>
                         <label style={{ display: 'block', marginBottom: '4px', fontWeight: 600, color: '#1a1a1a' }}>Description</label>
                         <textarea
@@ -426,19 +534,38 @@ const DriverView = ({ user }) => {
     );
 };
 
-// shows the open driver tickets for the sponsors org (sponsors can view and comment but not edit/archive)
+// shows the open driver tickets for the sponsors org (sponsors can view, comment, and resolve)
 const OrgTicketsTab = ({ user }) => {
     const [tickets, setTickets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [expandedIds, setExpandedIds] = useState(new Set());
 
-    useEffect(() => {
+    // resolve with note state
+    const [resolveModalOpen, setResolveModalOpen] = useState(false);
+    const [resolvingTicket, setResolvingTicket] = useState(null);
+    const [resolveNote, setResolveNote] = useState('');
+    const [resolveMsg, setResolveMsg] = useState(null);
+    const [resolveSaving, setResolveSaving] = useState(false);
+
+    // reopen state
+    const [reopening, setReopening] = useState({});
+
+    // edit state (sponsors can edit open tickets they created)
+    const [editModalOpen, setEditModalOpen] = useState(false);
+    const [editingTicket, setEditingTicket] = useState(null);
+    const [editDesc, setEditDesc] = useState('');
+    const [editMsg, setEditMsg] = useState(null);
+    const [editSaving, setEditSaving] = useState(false);
+
+    const loadTickets = () => {
         if (!user.sponsor_org_id) { setLoading(false); return; }
         fetchOrgTickets(user.sponsor_org_id)
             .then(data => { setTickets(data || []); setLoading(false); })
             .catch(err => { setError(err.message); setLoading(false); });
-    }, [user.sponsor_org_id]);
+    };
+
+    useEffect(() => { loadTickets(); }, [user.sponsor_org_id]);
 
     const toggleExpand = (ticketId) => {
         setExpandedIds(prev => {
@@ -448,14 +575,97 @@ const OrgTicketsTab = ({ user }) => {
         });
     };
 
+    const handleOpenEdit = (ticket) => {
+        setEditingTicket(ticket);
+        setEditDesc(ticket.description);
+        setEditMsg(null);
+        setEditModalOpen(true);
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editDesc.trim()) {
+            setEditMsg({ type: 'error', text: 'Description cannot be empty.' });
+            return;
+        }
+        setEditSaving(true);
+        try {
+            const result = await updateTicketDescription(editingTicket.ticket_id, editDesc.trim(), user.user_id);
+            if (result.message) {
+                setEditModalOpen(false);
+                loadTickets();
+            } else {
+                setEditMsg({ type: 'error', text: result.error || 'Failed to save changes.' });
+            }
+        } catch {
+            setEditMsg({ type: 'error', text: 'Network error. Please try again.' });
+        } finally {
+            setEditSaving(false);
+        }
+    };
+
+    const handleReopen = async (ticket) => {
+        setReopening(prev => ({ ...prev, [ticket.ticket_id]: true }));
+        try {
+            const result = await reopenTicket(ticket.ticket_id, user.user_id, user.user_type);
+            if (result.message) {
+                loadTickets();
+            } else {
+                console.error('Failed to reopen ticket:', result.error);
+            }
+        } catch {
+            console.error('Failed to reopen ticket.');
+        } finally {
+            setReopening(prev => ({ ...prev, [ticket.ticket_id]: false }));
+        }
+    };
+
+    const handleOpenResolve = (ticket) => {
+        setResolvingTicket(ticket);
+        setResolveNote('');
+        setResolveMsg(null);
+        setResolveModalOpen(true);
+    };
+
+    const handleResolveWithNote = async () => {
+        setResolveSaving(true);
+        setResolveMsg(null);
+        try {
+            const result = await updateTicketStatus(resolvingTicket.ticket_id, 'resolved', user.user_id, 'sponsor', resolveNote.trim());
+            if (result.message) {
+                setResolveModalOpen(false);
+                loadTickets();
+            } else {
+                setResolveMsg(result.error || 'Failed to resolve ticket.');
+            }
+        } catch {
+            setResolveMsg('Network error. Please try again.');
+        } finally {
+            setResolveSaving(false);
+        }
+    };
+
     const columns = [
         { key: 'ticket_id', label: 'Ticket #', sortable: true },
         { key: 'title', label: 'Title', sortable: true },
+        {
+            key: 'category',
+            label: 'Category',
+            sortable: true,
+            render: (val) => val === 'security'
+                ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>
+                : <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>,
+        },
         {
             key: 'first_name',
             label: 'Submitted By',
             sortable: true,
             render: (val, row) => `${val} ${row.last_name}`,
+        },
+        {
+            key: 'status',
+            label: 'Status',
+            sortable: true,
+            render: (val) => <StatusBadge status={val} />,
         },
         {
             key: 'created_at',
@@ -511,6 +721,45 @@ const OrgTicketsTab = ({ user }) => {
                                         <p style={{ margin: '0 0 4px', color: '#888', fontSize: '0.85em' }}>
                                             Submitted by {t.first_name} {t.last_name} · {new Date(t.created_at).toLocaleString()}
                                         </p>
+                                        {t.subject_first_name && (
+                                            <p style={{ margin: '0 0 8px', color: '#555', fontSize: '0.85em' }}>
+                                                Regarding driver: <strong>{t.subject_first_name} {t.subject_last_name}</strong>
+                                            </p>
+                                        )}
+                                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                                            {t.status === 'open' && t.user_id === user.user_id && (
+                                                <button
+                                                    onClick={() => handleOpenEdit(t)}
+                                                    style={{ backgroundColor: '#1976d2', color: 'white', border: 'none', padding: '6px 14px', borderRadius: '4px', cursor: 'pointer' }}
+                                                >
+                                                    Edit
+                                                </button>
+                                            )}
+                                            {t.status !== 'resolved' && (
+                                                <button
+                                                    onClick={() => handleOpenResolve(t)}
+                                                    style={{ backgroundColor: '#2e7d32', color: 'white', border: 'none', padding: '6px 14px', borderRadius: '4px', cursor: 'pointer' }}
+                                                >
+                                                    Mark Resolved with Note
+                                                </button>
+                                            )}
+                                            {t.status === 'resolved' && (
+                                                <button
+                                                    onClick={() => handleReopen(t)}
+                                                    disabled={reopening[t.ticket_id]}
+                                                    style={{
+                                                        backgroundColor: reopening[t.ticket_id] ? '#e0e0e0' : '#f57c00',
+                                                        color: reopening[t.ticket_id] ? '#888' : 'white',
+                                                        border: 'none',
+                                                        padding: '6px 14px',
+                                                        borderRadius: '4px',
+                                                        cursor: reopening[t.ticket_id] ? 'default' : 'pointer',
+                                                    }}
+                                                >
+                                                    {reopening[t.ticket_id] ? 'Reopening...' : 'Reopen Ticket'}
+                                                </button>
+                                            )}
+                                        </div>
                                         <CommentsSection ticketId={t.ticket_id} userId={user.user_id} />
                                     </div>
                                 ))
@@ -518,6 +767,67 @@ const OrgTicketsTab = ({ user }) => {
                         </div>
                     )
             )}
+
+            {/* editing a driver ticket description (sponsor only, open tickets they created) */}
+            <Modal
+                isOpen={editModalOpen}
+                onClose={() => setEditModalOpen(false)}
+                onSave={handleSaveEdit}
+                title={`Edit Ticket #${editingTicket?.ticket_id}`}
+            >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 600, color: '#1a1a1a' }}>Description</label>
+                        <textarea
+                            value={editDesc}
+                            onChange={e => setEditDesc(e.target.value)}
+                            rows={6}
+                            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', resize: 'vertical' }}
+                        />
+                    </div>
+                    {editMsg && (
+                        <div style={{
+                            background: editMsg.type === 'error' ? '#ffebee' : '#e8f5e9',
+                            color: editMsg.type === 'error' ? '#c62828' : '#2e7d32',
+                            padding: '10px',
+                            borderRadius: '4px',
+                        }}>
+                            {editMsg.text}
+                        </div>
+                    )}
+                    {editSaving && <p style={{ color: '#666', margin: 0 }}>Saving...</p>}
+                </div>
+            </Modal>
+
+            {/* resolving a driver ticket with an optional note */}
+            <Modal
+                isOpen={resolveModalOpen}
+                onClose={() => setResolveModalOpen(false)}
+                onSave={handleResolveWithNote}
+                title={`Resolve Ticket #${resolvingTicket?.ticket_id}`}
+            >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <p style={{ margin: 0, color: '#555', fontSize: '0.9em' }}>
+                        Optionally add a resolution note. It will be saved as a comment on the ticket.
+                    </p>
+                    <div>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 600, color: '#1a1a1a' }}>Resolution Note (optional)</label>
+                        <textarea
+                            value={resolveNote}
+                            onChange={e => setResolveNote(e.target.value)}
+                            placeholder="Describe how this was resolved..."
+                            rows={4}
+                            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', resize: 'vertical' }}
+                        />
+                    </div>
+                    {resolveMsg && (
+                        <div style={{ background: '#ffebee', color: '#c62828', padding: '10px', borderRadius: '4px' }}>
+                            {resolveMsg}
+                        </div>
+                    )}
+                    {resolveSaving && <p style={{ color: '#666', margin: 0 }}>Saving...</p>}
+                </div>
+            </Modal>
         </div>
     );
 };
@@ -553,6 +863,8 @@ const AdminView = ({ user }) => {
     const [userDetailsLoading, setUserDetailsLoading] = useState({});
     // tracks which tickets are currently being updated so we can disable buttons
     const [statusUpdating, setStatusUpdating] = useState({});
+    // security issues filter, when true only show tickets with category = security
+    const [securityOnly, setSecurityOnly] = useState(false);
 
     // load all tickets when admin first visits the page
     useEffect(() => {
@@ -609,16 +921,27 @@ const AdminView = ({ user }) => {
         }
     };
 
+    // tickets shown in the table, filtered to security only when that toggle is active
+    const displayedTickets = securityOnly ? tickets.filter(t => t.category === 'security') : tickets;
+
     // column definitions for the admin ticket table
     const columns = [
         { key: 'ticket_id', label: 'Ticket #', sortable: true },
         { key: 'title', label: 'Title', sortable: true },
         {
+            key: 'category',
+            label: 'Category',
+            sortable: true,
+            render: (val) => val === 'security'
+                ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>
+                : <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>,
+        },
+        {
             key: 'first_name',
             label: 'Submitted By',
             sortable: true,
             // shows full name on top and email below it
-            render: (val, row) => (
+            render: (_val, row) => (
                 <span>
                     {row.first_name} {row.last_name}
                     <br />
@@ -682,9 +1005,43 @@ const AdminView = ({ user }) => {
                     ? <p style={{ color: '#666' }}>No support tickets have been submitted yet.</p>
                     : (
                         <div>
-                            <SortableTable columns={columns} data={tickets} actions={actions} />
+                            {/* filter toggle: all tickets vs security issues only */}
+                            <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+                                <button
+                                    onClick={() => setSecurityOnly(false)}
+                                    style={{
+                                        padding: '6px 16px',
+                                        borderRadius: '4px',
+                                        border: '1px solid #ccc',
+                                        backgroundColor: !securityOnly ? '#1976d2' : '#fff',
+                                        color: !securityOnly ? 'white' : '#333',
+                                        cursor: 'pointer',
+                                        fontWeight: !securityOnly ? 600 : 400,
+                                    }}
+                                >
+                                    All Tickets
+                                </button>
+                                <button
+                                    onClick={() => setSecurityOnly(true)}
+                                    style={{
+                                        padding: '6px 16px',
+                                        borderRadius: '4px',
+                                        border: '1px solid #ccc',
+                                        backgroundColor: securityOnly ? '#880e4f' : '#fff',
+                                        color: securityOnly ? 'white' : '#333',
+                                        cursor: 'pointer',
+                                        fontWeight: securityOnly ? 600 : 400,
+                                    }}
+                                >
+                                    Security Issues Only
+                                </button>
+                            </div>
+                            {displayedTickets.length === 0 && (
+                                <p style={{ color: '#666' }}>No security issue tickets found.</p>
+                            )}
+                            <SortableTable columns={columns} data={displayedTickets} actions={actions} />
                             {/* expanded detail cards for each ticket the admin has opened */}
-                            {tickets
+                            {displayedTickets
                                 .filter(t => expandedIds.has(t.ticket_id))
                                 .map(t => (
                                     <div key={t.ticket_id} style={{
@@ -704,11 +1061,17 @@ const AdminView = ({ user }) => {
                                         <p style={{ margin: '0 0 12px', color: '#333', whiteSpace: 'pre-wrap' }}>{t.description}</p>
 
                                         {/* submitter info line */}
-                                        <p style={{ margin: '0 0 14px', color: '#666', fontSize: '0.85em' }}>
+                                        <p style={{ margin: '0 0 8px', color: '#666', fontSize: '0.85em' }}>
                                             Submitted by {t.first_name} {t.last_name} ({t.email})
                                             {t.org_name ? ` · ${t.org_name}` : ''}
                                             {' · '}{new Date(t.created_at).toLocaleString()}
                                         </p>
+                                        {/* subject driver line, only shown when ticket was filed about a specific driver */}
+                                        {t.subject_first_name && (
+                                            <p style={{ margin: '0 0 14px', color: '#555', fontSize: '0.85em' }}>
+                                                Regarding driver: <strong>{t.subject_first_name} {t.subject_last_name}</strong>
+                                            </p>
+                                        )}
 
                                         {/* status action buttons - disabled when ticket is already at that status */}
                                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>

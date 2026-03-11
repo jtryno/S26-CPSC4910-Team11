@@ -1,13 +1,13 @@
 // creates new support ticket for driver or sponsor
-// sends the user id, their org (if they have one), title, and description to backend
-async function createTicket(userId, sponsorOrgId, title, description) {
+// sends the user id, their org (if they have one), title, description, category, and optional subject driver
+async function createTicket(userId, sponsorOrgId, title, description, category, subjectDriverId) {
     try {
         const response = await fetch('/api/support-tickets', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ userId, sponsorOrgId, title, description }),
+            body: JSON.stringify({ userId, sponsorOrgId, title, description, category: category || 'general', subjectDriverId: subjectDriverId || null }),
         });
         const data = await response.json();
         return data;
@@ -50,20 +50,51 @@ async function fetchAllTickets() {
 }
 
 // updates the status of a ticket (open, in_progress, or resolved)
-// only admins trigger this - called when they click Mark In Progress or Mark Resolved
-async function updateTicketStatus(ticketId, status) {
+// admins can set any status; sponsors can only mark as resolved and may include a note
+async function updateTicketStatus(ticketId, status, userId, userType, note) {
     try {
         const response = await fetch(`/api/support-tickets/${ticketId}/status`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ status }),
+            body: JSON.stringify({ status, userId, userType, note }),
         });
         const data = await response.json();
         return data;
     } catch (error) {
         console.error('Error updating support ticket status:', error);
+        throw error;
+    }
+}
+
+// reopens a resolved ticket, available to the original submitter, the subject driver, or a sponsor in the same org
+async function reopenTicket(ticketId, userId, userType) {
+    try {
+        const response = await fetch(`/api/support-tickets/${ticketId}/reopen`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, userType }),
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error reopening support ticket:', error);
+        throw error;
+    }
+}
+
+// fetches all active drivers in a sponsors org so the sponsor can pick one when creating a ticket
+async function fetchOrgDrivers(sponsorUserId) {
+    try {
+        const response = await fetch(`/api/support-tickets/drivers/${sponsorUserId}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.drivers || [];
+    } catch (error) {
+        console.error('Error fetching org drivers:', error);
         throw error;
     }
 }
@@ -152,7 +183,9 @@ export {
     fetchTicketsForUser,
     fetchAllTickets,
     updateTicketStatus,
+    reopenTicket,
     fetchOrgTickets,
+    fetchOrgDrivers,
     updateTicketDescription,
     archiveTicket,
     fetchTicketComments,

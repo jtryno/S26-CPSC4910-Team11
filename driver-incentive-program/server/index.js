@@ -2184,7 +2184,7 @@ app.get('/api/orders/org/:sponsorOrgId', async (req, res) => {
 // creates new support ticket, called when a driver or sponsor submits the form
 // sponsorOrgId can be null if the user isn't affiliated with an org
 app.post('/api/support-tickets', async (req, res) => {
-    const { userId, sponsorOrgId, title, description } = req.body;
+    const { userId, sponsorOrgId, title, description, category, subjectDriverId } = req.body;
     // make sure both fields are filled in before inserting
     if (!title || !title.trim()) {
         return res.status(400).json({ error: 'Title is required.' });
@@ -2192,10 +2192,16 @@ app.post('/api/support-tickets', async (req, res) => {
     if (!description || !description.trim()) {
         return res.status(400).json({ error: 'Description is required.' });
     }
+    // validate category if provided, default to general
+    const validCategories = ['general', 'security'];
+    const ticketCategory = category || 'general';
+    if (!validCategories.includes(ticketCategory)) {
+        return res.status(400).json({ error: 'Invalid category. Must be general or security.' });
+    }
     try {
         const [result] = await pool.query(
-            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description) VALUES (?, ?, ?, ?)',
-            [userId, sponsorOrgId || null, title.trim(), description.trim()]
+            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id) VALUES (?, ?, ?, ?, ?, ?)',
+            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null]
         );
         res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
     } catch (error) {
@@ -2208,8 +2214,17 @@ app.post('/api/support-tickets', async (req, res) => {
 app.get('/api/support-tickets/user/:userId', async (req, res) => {
     try {
         const [tickets] = await pool.query(
-            'SELECT * FROM support_tickets WHERE user_id = ? AND is_archived = 0 ORDER BY created_at DESC',
-            [req.params.userId]
+            `SELECT st.*,
+                    su_subj.first_name AS subject_first_name, su_subj.last_name AS subject_last_name,
+                    u_submitter.first_name AS submitter_first_name, u_submitter.last_name AS submitter_last_name
+             FROM support_tickets st
+             LEFT JOIN driver_user du_subj ON st.subject_driver_id = du_subj.user_id
+             LEFT JOIN users su_subj ON du_subj.user_id = su_subj.user_id
+             LEFT JOIN users u_submitter ON st.user_id = u_submitter.user_id
+             WHERE ((st.user_id = ? AND st.subject_driver_id IS NULL) OR st.subject_driver_id = ?)
+             AND st.is_archived = 0
+             ORDER BY st.created_at DESC`,
+            [req.params.userId, req.params.userId]
         );
         res.json({ tickets });
     } catch (error) {
@@ -2218,14 +2233,52 @@ app.get('/api/support-tickets/user/:userId', async (req, res) => {
     }
 });
 
-// updates the status of a ticket, only admins can do this (in progress or resolved)
+// updates the status of a ticket
+// admins can set any valid status; sponsors can only mark as resolved (their own or org driver tickets)
 app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
-    const { status } = req.body;
+    const { status, userId, userType, note } = req.body;
     const validStatuses = ['open', 'in_progress', 'resolved'];
     if (!status || !validStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid status. Must be open, in_progress, or resolved.' });
     }
     try {
+        // sponsor path: sponsors can only resolve tickets they own or tickets belonging to their orgs drivers
+        if (userType === 'sponsor') {
+            if (status !== 'resolved') {
+                return res.status(403).json({ error: 'Sponsors can only mark tickets as resolved.' });
+            }
+            const [[sponsorUser]] = await pool.query(
+                'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                [userId]
+            );
+            if (!sponsorUser) {
+                return res.status(403).json({ error: 'Sponsor not found.' });
+            }
+            const [[ticket]] = await pool.query(
+                'SELECT ticket_id, user_id, sponsor_org_id FROM support_tickets WHERE ticket_id = ?',
+                [req.params.ticketId]
+            );
+            if (!ticket) {
+                return res.status(404).json({ error: 'Ticket not found.' });
+            }
+            if (ticket.user_id !== parseInt(userId) && ticket.sponsor_org_id !== sponsorUser.sponsor_org_id) {
+                return res.status(403).json({ error: 'You can only resolve your own tickets or tickets from your organization.' });
+            }
+            await pool.query(
+                'UPDATE support_tickets SET status = ?, updated_at = NOW() WHERE ticket_id = ?',
+                [status, req.params.ticketId]
+            );
+            // if a resolution note was provided, insert it as a comment
+            if (note && note.trim()) {
+                await pool.query(
+                    'INSERT INTO ticket_comments (ticket_id, user_id, body) VALUES (?, ?, ?)',
+                    [req.params.ticketId, userId, note.trim()]
+                );
+            }
+            return res.json({ message: 'Ticket updated successfully' });
+        }
+
+        // admin path: existing behavior, any valid status, no ownership check
         const [result] = await pool.query(
             'UPDATE support_tickets SET status = ? WHERE ticket_id = ?',
             [status, req.params.ticketId]
@@ -2243,14 +2296,19 @@ app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
 
 // returns all tickets in the system for the admin view
 // JOINs on users and sponsor_organization so the admin can see who submitted each ticket and what org they're in
+// also JOINs on driver_user/users for the subject driver if one is attached to the ticket
 app.get('/api/support-tickets', async (_req, res) => {
     try {
         const [tickets] = await pool.query(
             `SELECT st.*, u.first_name, u.last_name, u.email,
-                    so.name AS org_name
+                    so.name AS org_name,
+                    su_subj.first_name AS subject_first_name,
+                    su_subj.last_name AS subject_last_name
              FROM support_tickets st
              JOIN users u ON st.user_id = u.user_id
              LEFT JOIN sponsor_organization so ON st.sponsor_org_id = so.sponsor_org_id
+             LEFT JOIN driver_user du_subj ON st.subject_driver_id = du_subj.user_id
+             LEFT JOIN users su_subj ON du_subj.user_id = su_subj.user_id
              ORDER BY st.created_at DESC`
         );
         res.json({ tickets });
@@ -2265,9 +2323,13 @@ app.get('/api/support-tickets', async (_req, res) => {
 app.get('/api/support-tickets/org/:sponsorOrgId', async (req, res) => {
     try {
         const [tickets] = await pool.query(
-            `SELECT st.*, u.first_name, u.last_name, u.email
+            `SELECT st.*, u.first_name, u.last_name, u.email,
+                    su_subj.first_name AS subject_first_name,
+                    su_subj.last_name AS subject_last_name
              FROM support_tickets st
              JOIN users u ON st.user_id = u.user_id
+             LEFT JOIN driver_user du_subj ON st.subject_driver_id = du_subj.user_id
+             LEFT JOIN users su_subj ON du_subj.user_id = su_subj.user_id
              WHERE st.sponsor_org_id = ? AND st.is_archived = 0
              ORDER BY st.created_at DESC`,
             [req.params.sponsorOrgId]
@@ -2276,6 +2338,31 @@ app.get('/api/support-tickets/org/:sponsorOrgId', async (req, res) => {
     } catch (error) {
         console.error('Error fetching org support tickets:', error);
         res.status(500).json({ error: 'Failed to fetch org support tickets.' });
+    }
+});
+
+// returns all active drivers in a sponsors org, used for the "ticket about a driver" dropdown
+app.get('/api/support-tickets/drivers/:sponsorUserId', async (req, res) => {
+    try {
+        const [[sponsorUser]] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [req.params.sponsorUserId]
+        );
+        if (!sponsorUser) {
+            return res.status(404).json({ error: 'Sponsor not found.' });
+        }
+        const [drivers] = await pool.query(
+            `SELECT u.user_id, u.first_name, u.last_name
+             FROM driver_user du
+             JOIN users u ON du.user_id = u.user_id
+             WHERE du.sponsor_org_id = ? AND du.driver_status = 'active'
+             ORDER BY u.last_name, u.first_name`,
+            [sponsorUser.sponsor_org_id]
+        );
+        res.json({ drivers });
+    } catch (error) {
+        console.error('Error fetching org drivers for ticket:', error);
+        res.status(500).json({ error: 'Failed to fetch drivers.' });
     }
 });
 
@@ -2337,6 +2424,47 @@ app.put('/api/support-tickets/:ticketId/archive', async (req, res) => {
     } catch (error) {
         console.error('Error archiving support ticket:', error);
         res.status(500).json({ error: 'Failed to archive support ticket.' });
+    }
+});
+
+// reopens a ticket that was previously resolved, available to the ticket owner or a sponsor in same org
+app.put('/api/support-tickets/:ticketId/reopen', async (req, res) => {
+    const { userId, userType } = req.body;
+    try {
+        const [[ticket]] = await pool.query(
+            'SELECT ticket_id, user_id, sponsor_org_id, subject_driver_id, status FROM support_tickets WHERE ticket_id = ?',
+            [req.params.ticketId]
+        );
+        if (!ticket) {
+            return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        if (ticket.status !== 'resolved') {
+            return res.status(400).json({ error: 'Only resolved tickets can be reopened.' });
+        }
+        // check that the caller is the ticket owner, the subject driver, or a sponsor whose org owns the ticket
+        const isOwner = ticket.user_id === parseInt(userId);
+        const isSubjectDriver = ticket.subject_driver_id === parseInt(userId);
+        if (!isOwner && !isSubjectDriver) {
+            if (userType === 'sponsor') {
+                const [[sponsorUser]] = await pool.query(
+                    'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                    [userId]
+                );
+                if (!sponsorUser || ticket.sponsor_org_id !== sponsorUser.sponsor_org_id) {
+                    return res.status(403).json({ error: 'You can only reopen tickets you submitted or tickets in your organization.' });
+                }
+            } else {
+                return res.status(403).json({ error: 'You can only reopen your own tickets.' });
+            }
+        }
+        await pool.query(
+            'UPDATE support_tickets SET status = ?, updated_at = NOW() WHERE ticket_id = ?',
+            ['open', req.params.ticketId]
+        );
+        res.json({ message: 'Ticket reopened successfully.' });
+    } catch (error) {
+        console.error('Error reopening support ticket:', error);
+        res.status(500).json({ error: 'Failed to reopen ticket.' });
     }
 });
 
