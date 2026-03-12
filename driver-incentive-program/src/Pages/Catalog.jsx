@@ -1,5 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
 
+const statusBadgeStyle = (status) => ({
+    display: 'inline-block',
+    fontSize: '11px',
+    fontWeight: '600',
+    padding: '2px 8px',
+    borderRadius: '12px',
+    background: status === 'in_stock' ? '#e8f5e9' : '#ffebee',
+    color: status === 'in_stock' ? '#2e7d32' : '#c62828',
+});
+
 const Catalog = () => {
     const user = JSON.parse(localStorage.getItem('user') || sessionStorage.getItem('user') || 'null');
 
@@ -16,6 +26,14 @@ const Catalog = () => {
     const [checkingOut, setCheckingOut] = useState(false);
     const [addingIds, setAddingIds] = useState(new Set());
     const [reviewOpen, setReviewOpen] = useState(false);
+
+    // Favorites (#768)
+    const [favoriteIds, setFavoriteIds] = useState(new Set());
+    const [togglingFavorites, setTogglingFavorites] = useState(new Set());
+    const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+
+    // Recently viewed (#750)
+    const [recentlyViewed, setRecentlyViewed] = useState([]);
 
     const sponsorOrgId = user?.sponsor_org_id;
     const driverUserId = user?.user_id;
@@ -41,6 +59,28 @@ const Catalog = () => {
         } catch { /* non-critical */ }
     }, []);
 
+    const fetchFavorites = useCallback(async () => {
+        if (!driverUserId || !sponsorOrgId) return;
+        try {
+            const res = await fetch(`/api/favorites/${driverUserId}?sponsorOrgId=${sponsorOrgId}`);
+            if (res.ok) {
+                const d = await res.json();
+                setFavoriteIds(new Set((d.items || []).map(i => i.item_id)));
+            }
+        } catch { /* non-critical */ }
+    }, [driverUserId, sponsorOrgId]);
+
+    const fetchRecentlyViewed = useCallback(async () => {
+        if (!driverUserId || !sponsorOrgId) return;
+        try {
+            const res = await fetch(`/api/catalog/viewed/${driverUserId}?sponsorOrgId=${sponsorOrgId}`);
+            if (res.ok) {
+                const d = await res.json();
+                setRecentlyViewed(d.items || []);
+            }
+        } catch { /* non-critical */ }
+    }, [driverUserId, sponsorOrgId]);
+
     useEffect(() => {
         if (!sponsorOrgId || !driverUserId) {
             setLoading(false);
@@ -49,7 +89,6 @@ const Catalog = () => {
 
         const init = async () => {
             try {
-                // Fetch catalog items, balance, and cart in parallel
                 const [catalogRes, cartRes] = await Promise.all([
                     fetch(`/api/catalog/org/${sponsorOrgId}`),
                     fetch('/api/cart', {
@@ -71,7 +110,7 @@ const Catalog = () => {
                     console.error('Failed to initialize cart:', await cartRes.text());
                 }
 
-                await fetchBalance();
+                await Promise.all([fetchBalance(), fetchFavorites(), fetchRecentlyViewed()]);
             } catch (err) {
                 setError(err.message);
             } finally {
@@ -80,10 +119,55 @@ const Catalog = () => {
         };
 
         init();
-    }, [sponsorOrgId, driverUserId, fetchBalance, fetchCart]);
+    }, [sponsorOrgId, driverUserId, fetchBalance, fetchCart, fetchFavorites, fetchRecentlyViewed]);
+
+    // Fire-and-forget: record that the driver viewed this item
+    const recordView = useCallback((itemId) => {
+        if (!driverUserId || !itemId) return;
+        fetch('/api/catalog/viewed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ driverUserId, itemId }),
+        })
+            .then(() => fetchRecentlyViewed())
+            .catch(() => { /* non-critical */ });
+    }, [driverUserId, fetchRecentlyViewed]);
+
+    const handleToggleFavorite = async (item) => {
+        if (togglingFavorites.has(item.item_id)) return;
+        setTogglingFavorites(prev => new Set([...prev, item.item_id]));
+        const isFav = favoriteIds.has(item.item_id);
+        // Optimistic update
+        setFavoriteIds(prev => {
+            const next = new Set(prev);
+            if (isFav) next.delete(item.item_id); else next.add(item.item_id);
+            return next;
+        });
+        try {
+            if (isFav) {
+                await fetch(`/api/favorites/${driverUserId}/${item.item_id}`, { method: 'DELETE' });
+            } else {
+                await fetch('/api/favorites', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ driverUserId, itemId: item.item_id }),
+                });
+            }
+        } catch {
+            // Rollback optimistic update on error
+            setFavoriteIds(prev => {
+                const next = new Set(prev);
+                if (isFav) next.add(item.item_id); else next.delete(item.item_id);
+                return next;
+            });
+        } finally {
+            setTogglingFavorites(prev => { const next = new Set(prev); next.delete(item.item_id); return next; });
+        }
+    };
 
     const handleAddToCart = async (item) => {
         if (!cartId) return;
+        recordView(item.item_id);
         setAddingIds(prev => new Set([...prev, item.item_id]));
         try {
             const res = await fetch(`/api/cart/${cartId}/items`, {
@@ -159,15 +243,36 @@ const Catalog = () => {
     if (loading) return <div className="catalog-page"><h1>Catalog</h1><p>Loading...</p></div>;
     if (error) return <div className="catalog-page"><h1>Catalog</h1><p>Error: {error}</p></div>;
 
+    const displayedItems = showFavoritesOnly
+        ? catalogItems.filter(item => favoriteIds.has(item.item_id))
+        : catalogItems;
+
     return (
         <div className="catalog-page" style={{ position: 'relative' }}>
             {/* Header row */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h1 style={{ margin: 0 }}>Catalog</h1>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <span style={{ fontSize: '14px', color: '#555' }}>
                         Balance: <strong style={{ color: '#2e7d32' }}>{balance.toLocaleString()} pts</strong>
                     </span>
+                    {/* Favorites filter toggle */}
+                    <button
+                        onClick={() => setShowFavoritesOnly(v => !v)}
+                        style={{
+                            padding: '8px 14px',
+                            borderRadius: '4px',
+                            border: `1px solid ${showFavoritesOnly ? '#c62828' : '#ccc'}`,
+                            background: showFavoritesOnly ? '#ffebee' : '#fff',
+                            color: showFavoritesOnly ? '#c62828' : '#555',
+                            cursor: 'pointer',
+                            fontWeight: '600',
+                            fontSize: '14px',
+                        }}
+                    >
+                        {showFavoritesOnly ? '♥ Favorites' : '♡ Favorites'}{favoriteIds.size > 0 ? ` (${favoriteIds.size})` : ''}
+                    </button>
+                    {/* Cart toggle */}
                     <button
                         onClick={() => { setCartOpen(o => !o); setCheckoutMsg(null); }}
                         style={{
@@ -189,11 +294,13 @@ const Catalog = () => {
             <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
                 {/* Product grid */}
                 <div style={{ flex: 1 }}>
-                    {catalogItems.length === 0 ? (
-                        <p style={{ color: '#888' }}>No items in the catalog yet.</p>
+                    {displayedItems.length === 0 ? (
+                        <p style={{ color: '#888' }}>
+                            {showFavoritesOnly ? 'No favorited items yet. Click ♡ on any product to save it.' : 'No items in the catalog yet.'}
+                        </p>
                     ) : (
                         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
-                            {catalogItems.map((item) => (
+                            {displayedItems.map((item) => (
                                 <li key={item.item_id} style={{
                                     border: '1px solid #e0e0e0',
                                     borderRadius: '8px',
@@ -202,14 +309,41 @@ const Catalog = () => {
                                     display: 'flex',
                                     flexDirection: 'column',
                                     gap: '8px',
+                                    position: 'relative',
                                 }}>
+                                    {/* Favorite heart button (#768) */}
+                                    <button
+                                        onClick={() => handleToggleFavorite(item)}
+                                        disabled={togglingFavorites.has(item.item_id)}
+                                        title={favoriteIds.has(item.item_id) ? 'Remove from favorites' : 'Add to favorites'}
+                                        style={{
+                                            position: 'absolute',
+                                            top: '10px',
+                                            right: '10px',
+                                            background: 'none',
+                                            border: 'none',
+                                            cursor: togglingFavorites.has(item.item_id) ? 'default' : 'pointer',
+                                            fontSize: '20px',
+                                            lineHeight: 1,
+                                            color: favoriteIds.has(item.item_id) ? '#c62828' : '#ccc',
+                                            padding: 0,
+                                        }}
+                                    >
+                                        {favoriteIds.has(item.item_id) ? '♥' : '♡'}
+                                    </button>
+
+                                    {/* Stock badge (#616) */}
+                                    <span style={statusBadgeStyle(item.availability_status)}>
+                                        {item.availability_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
+                                    </span>
+
                                     <img
                                         src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/150?text=No+Image'}
                                         alt={item.title}
                                         style={{ width: '100%', height: '150px', objectFit: 'contain' }}
                                         onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/150?text=No+Image'; }}
                                     />
-                                    <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.title}</div>
+                                    <div style={{ fontWeight: '600', fontSize: '14px', paddingRight: '24px' }}>{item.title}</div>
                                     <div style={{ fontSize: '13px', color: '#666' }}>{item.description}</div>
                                     <div style={{ fontSize: '14px', color: '#1a1a1a' }}>
                                         ${parseFloat(item.last_price_value).toFixed(2)}&nbsp;/&nbsp;
@@ -220,6 +354,7 @@ const Catalog = () => {
                                             href={item.item_web_url}
                                             target="_blank"
                                             rel="noopener noreferrer"
+                                            onClick={() => recordView(item.item_id)}
                                             style={{ fontSize: '12px', color: '#1976d2' }}
                                         >
                                             View on eBay ↗
@@ -249,6 +384,41 @@ const Catalog = () => {
                                 </li>
                             ))}
                         </ul>
+                    )}
+
+                    {/* Recently Viewed section (#750) */}
+                    {recentlyViewed.length > 0 && (
+                        <div style={{ marginTop: '40px' }}>
+                            <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', color: '#444' }}>Recently Viewed</h2>
+                            <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '8px' }}>
+                                {recentlyViewed.map((item) => (
+                                    <div key={item.item_id} style={{
+                                        flexShrink: 0,
+                                        width: '140px',
+                                        border: '1px solid #e0e0e0',
+                                        borderRadius: '8px',
+                                        padding: '10px',
+                                        background: '#fafafa',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '6px',
+                                    }}>
+                                        <img
+                                            src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/100?text=?'}
+                                            alt={item.title}
+                                            style={{ width: '100%', height: '80px', objectFit: 'contain' }}
+                                            onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/100?text=?'; }}
+                                        />
+                                        <div style={{ fontSize: '12px', fontWeight: '600', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                                            {item.title}
+                                        </div>
+                                        <div style={{ fontSize: '11px', color: '#1565c0', fontWeight: '600' }}>
+                                            {Number(item.points_price).toLocaleString()} pts
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     )}
                 </div>
 

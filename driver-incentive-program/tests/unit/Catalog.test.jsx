@@ -24,18 +24,22 @@ const makeCatalogItem = (overrides = {}) => ({
 });
 
 /**
- * Sets up the four sequential fetch calls the component makes on mount:
+ * Sets up the six sequential fetch calls the component makes on mount:
  *   1. GET /api/catalog/org/:orgId  (parallel in Promise.all)
  *   2. POST /api/cart               (parallel in Promise.all)
  *   3. GET /api/cart/:cartId        (fetchCart after Promise.all)
- *   4. GET /api/driver/points/:id   (fetchBalance after Promise.all)
+ *   4. GET /api/driver/points/:id   (fetchBalance — parallel in second Promise.all)
+ *   5. GET /api/favorites/:id       (fetchFavorites — parallel in second Promise.all)
+ *   6. GET /api/catalog/viewed/:id  (fetchRecentlyViewed — parallel in second Promise.all)
  */
 const mockInitFetch = (catalogItems = []) => {
     fetch
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: catalogItems }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ cart_id: 1 }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 500 }) });
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 500 }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) });
 };
 
 describe('Catalog Page UI Component', () => {
@@ -154,7 +158,9 @@ const mockInitFetchWithCart = (cartItems = [], balance = 5000) => {
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [makeCatalogItem()] }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ cart_id: 1 }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: cartItems }) })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: balance }) });
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: balance }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) });
 };
 
 describe('Order Review Modal', () => {

@@ -396,9 +396,13 @@ app.put('/api/application/:application_id', async (req, res) => {
                 const {driver_user_id, sponsor_org_id} = appInfo[0];
                 const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
                 const orgName = orgRows[0].name;
+                const [reviewerRows] = await pool.query('SELECT first_name, last_name FROM users WHERE user_id = ?', [user_id]);
+                const reviewerName = reviewerRows.length > 0
+                    ? `${reviewerRows[0].first_name} ${reviewerRows[0].last_name}`
+                    : 'a sponsor';
                 let msg;
                 if (status === 'approved') {
-                    msg = `Your application to join ${orgName} was approved.`;
+                    msg = `Your application to join ${orgName} was approved by ${reviewerName}.`;
                     await pool.query(
                         'UPDATE driver_user SET sponsor_org_id = ?, driver_status = "active", affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL WHERE user_id = ?',
                         [sponsor_org_id, driver_user_id]
@@ -427,6 +431,25 @@ app.post('/api/application', async (req, res) => {
     } catch (error) {
         console.error('Error submitting driver application:', error);
         res.status(500).json({ error: 'Failed to submit driver application' });
+    }
+});
+
+// Allows a driver to withdraw a pending application before it has been reviewed
+app.delete('/api/application/:application_id', async (req, res) => {
+    const { application_id } = req.params;
+    try {
+        // Only withdraw if still pending — prevents canceling already-reviewed applications
+        const [result] = await pool.query(
+            'UPDATE driver_applications SET status = "withdrawn" WHERE application_id = ? AND status = "pending"',
+            [application_id]
+        );
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Application not found or already reviewed' });
+        }
+        res.json({ message: 'Application withdrawn successfully' });
+    } catch (error) {
+        console.error('Error withdrawing application:', error);
+        res.status(500).json({ error: 'Failed to withdraw application' });
     }
 });
 
@@ -858,6 +881,26 @@ app.post('/api/signup', async (req, res) => {
 app.post('/api/logout', (req, res) => {
     res.clearCookie('remember_me');
     res.json({ message: 'Logged out successfully' });
+});
+
+// Returns fresh user data for a given user_id, including current sponsor_org_id from the role table
+app.get('/api/user/:user_id', async (req, res) => {
+    const { user_id } = req.params;
+    try {
+        const [users] = await pool.query(
+            'SELECT user_id, email, username, user_type FROM users WHERE user_id = ?',
+            [user_id]
+        );
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const user = users[0];
+        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+        res.json({ user: { ...user, sponsor_org_id } });
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+        res.status(500).json({ error: 'Failed to fetch user data' });
+    }
 });
 
 // --- Update User Route ---
@@ -1782,6 +1825,103 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
         res.status(500).json({ error: 'Failed to remove item' });
     }
 });
+
+// ─── Recently Viewed Routes ───────────────────────────────────────────────────
+
+// POST /api/catalog/viewed — record that a driver viewed an item
+app.post('/api/catalog/viewed', async (req, res) => {
+    const { driverUserId, itemId } = req.body;
+    if (!driverUserId || !itemId) return res.status(400).json({ error: 'driverUserId and itemId are required' });
+    try {
+        await pool.query(
+            'INSERT INTO recently_viewed (driver_user_id, item_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE viewed_at = NOW()',
+            [driverUserId, itemId]
+        );
+        res.json({ message: 'Recorded' });
+    } catch (error) {
+        console.error('Error recording view:', error);
+        res.status(500).json({ error: 'Failed to record view' });
+    }
+});
+
+// GET /api/catalog/viewed/:driverUserId — get recently viewed items for a driver
+app.get('/api/catalog/viewed/:driverUserId', async (req, res) => {
+    const { driverUserId } = req.params;
+    const { sponsorOrgId } = req.query;
+    if (!sponsorOrgId) return res.status(400).json({ error: 'sponsorOrgId query param required' });
+    try {
+        const [rows] = await pool.query(
+            `SELECT ci.item_id, ci.title, ci.image_url, ci.item_web_url, ci.last_price_value,
+                    ci.points_price, ci.availability_status, rv.viewed_at
+             FROM recently_viewed rv
+             JOIN catalog_items ci ON rv.item_id = ci.item_id
+             WHERE rv.driver_user_id = ? AND ci.sponsor_org_id = ? AND ci.is_active = 1
+             ORDER BY rv.viewed_at DESC
+             LIMIT 8`,
+            [driverUserId, sponsorOrgId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching recently viewed:', error);
+        res.status(500).json({ error: 'Failed to fetch recently viewed' });
+    }
+});
+
+// ─── Favorites Routes ─────────────────────────────────────────────────────────
+
+// POST /api/favorites — add item to driver's favorites
+app.post('/api/favorites', async (req, res) => {
+    const { driverUserId, itemId } = req.body;
+    if (!driverUserId || !itemId) return res.status(400).json({ error: 'driverUserId and itemId are required' });
+    try {
+        await pool.query(
+            'INSERT IGNORE INTO driver_favorites (driver_user_id, item_id) VALUES (?, ?)',
+            [driverUserId, itemId]
+        );
+        res.json({ message: 'Added to favorites' });
+    } catch (error) {
+        console.error('Error adding favorite:', error);
+        res.status(500).json({ error: 'Failed to add favorite' });
+    }
+});
+
+// DELETE /api/favorites/:driverUserId/:itemId — remove item from favorites
+app.delete('/api/favorites/:driverUserId/:itemId', async (req, res) => {
+    const { driverUserId, itemId } = req.params;
+    try {
+        await pool.query(
+            'DELETE FROM driver_favorites WHERE driver_user_id = ? AND item_id = ?',
+            [driverUserId, itemId]
+        );
+        res.json({ message: 'Removed from favorites' });
+    } catch (error) {
+        console.error('Error removing favorite:', error);
+        res.status(500).json({ error: 'Failed to remove favorite' });
+    }
+});
+
+// GET /api/favorites/:driverUserId — get all favorited items for a driver
+app.get('/api/favorites/:driverUserId', async (req, res) => {
+    const { driverUserId } = req.params;
+    const { sponsorOrgId } = req.query;
+    if (!sponsorOrgId) return res.status(400).json({ error: 'sponsorOrgId query param required' });
+    try {
+        const [rows] = await pool.query(
+            `SELECT ci.item_id, ci.title, ci.image_url, ci.item_web_url, ci.last_price_value,
+                    ci.points_price, ci.availability_status
+             FROM driver_favorites df
+             JOIN catalog_items ci ON df.item_id = ci.item_id
+             WHERE df.driver_user_id = ? AND ci.sponsor_org_id = ? AND ci.is_active = 1
+             ORDER BY df.created_at DESC`,
+            [driverUserId, sponsorOrgId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching favorites:', error);
+        res.status(500).json({ error: 'Failed to fetch favorites' });
+    }
+});
+
 // ─── Cart Routes ──────────────────────────────────────────────────────────────
 
 // POST /api/cart — get-or-create active cart for driver+org
@@ -2060,7 +2200,7 @@ app.get('/api/orders/org/:sponsorOrgId', async (req, res) => {
 // creates new support ticket, called when a driver or sponsor submits the form
 // sponsorOrgId can be null if the user isn't affiliated with an org
 app.post('/api/support-tickets', async (req, res) => {
-    const { userId, sponsorOrgId, title, description } = req.body;
+    const { userId, sponsorOrgId, title, description, category, subjectDriverId } = req.body;
     // make sure both fields are filled in before inserting
     if (!title || !title.trim()) {
         return res.status(400).json({ error: 'Title is required.' });
@@ -2068,10 +2208,16 @@ app.post('/api/support-tickets', async (req, res) => {
     if (!description || !description.trim()) {
         return res.status(400).json({ error: 'Description is required.' });
     }
+    // validate category if provided, default to general
+    const validCategories = ['general', 'security'];
+    const ticketCategory = category || 'general';
+    if (!validCategories.includes(ticketCategory)) {
+        return res.status(400).json({ error: 'Invalid category. Must be general or security.' });
+    }
     try {
         const [result] = await pool.query(
-            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description) VALUES (?, ?, ?, ?)',
-            [userId, sponsorOrgId || null, title.trim(), description.trim()]
+            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id) VALUES (?, ?, ?, ?, ?, ?)',
+            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null]
         );
         res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
     } catch (error) {
@@ -2084,8 +2230,17 @@ app.post('/api/support-tickets', async (req, res) => {
 app.get('/api/support-tickets/user/:userId', async (req, res) => {
     try {
         const [tickets] = await pool.query(
-            'SELECT * FROM support_tickets WHERE user_id = ? AND is_archived = 0 ORDER BY created_at DESC',
-            [req.params.userId]
+            `SELECT st.*,
+                    su_subj.first_name AS subject_first_name, su_subj.last_name AS subject_last_name,
+                    u_submitter.first_name AS submitter_first_name, u_submitter.last_name AS submitter_last_name
+             FROM support_tickets st
+             LEFT JOIN driver_user du_subj ON st.subject_driver_id = du_subj.user_id
+             LEFT JOIN users su_subj ON du_subj.user_id = su_subj.user_id
+             LEFT JOIN users u_submitter ON st.user_id = u_submitter.user_id
+             WHERE ((st.user_id = ? AND st.subject_driver_id IS NULL) OR st.subject_driver_id = ?)
+             AND st.is_archived = 0
+             ORDER BY st.created_at DESC`,
+            [req.params.userId, req.params.userId]
         );
         res.json({ tickets });
     } catch (error) {
@@ -2094,14 +2249,52 @@ app.get('/api/support-tickets/user/:userId', async (req, res) => {
     }
 });
 
-// updates the status of a ticket, only admins can do this (in progress or resolved)
+// updates the status of a ticket
+// admins can set any valid status; sponsors can only mark as resolved (their own or org driver tickets)
 app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
-    const { status } = req.body;
+    const { status, userId, userType, note } = req.body;
     const validStatuses = ['open', 'in_progress', 'resolved'];
     if (!status || !validStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid status. Must be open, in_progress, or resolved.' });
     }
     try {
+        // sponsor path: sponsors can only resolve tickets they own or tickets belonging to their orgs drivers
+        if (userType === 'sponsor') {
+            if (status !== 'resolved') {
+                return res.status(403).json({ error: 'Sponsors can only mark tickets as resolved.' });
+            }
+            const [[sponsorUser]] = await pool.query(
+                'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                [userId]
+            );
+            if (!sponsorUser) {
+                return res.status(403).json({ error: 'Sponsor not found.' });
+            }
+            const [[ticket]] = await pool.query(
+                'SELECT ticket_id, user_id, sponsor_org_id FROM support_tickets WHERE ticket_id = ?',
+                [req.params.ticketId]
+            );
+            if (!ticket) {
+                return res.status(404).json({ error: 'Ticket not found.' });
+            }
+            if (ticket.user_id !== parseInt(userId) && ticket.sponsor_org_id !== sponsorUser.sponsor_org_id) {
+                return res.status(403).json({ error: 'You can only resolve your own tickets or tickets from your organization.' });
+            }
+            await pool.query(
+                'UPDATE support_tickets SET status = ?, updated_at = NOW() WHERE ticket_id = ?',
+                [status, req.params.ticketId]
+            );
+            // if a resolution note was provided, insert it as a comment
+            if (note && note.trim()) {
+                await pool.query(
+                    'INSERT INTO ticket_comments (ticket_id, user_id, body) VALUES (?, ?, ?)',
+                    [req.params.ticketId, userId, note.trim()]
+                );
+            }
+            return res.json({ message: 'Ticket updated successfully' });
+        }
+
+        // admin path: existing behavior, any valid status, no ownership check
         const [result] = await pool.query(
             'UPDATE support_tickets SET status = ? WHERE ticket_id = ?',
             [status, req.params.ticketId]
@@ -2129,14 +2322,19 @@ app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
 
 // returns all tickets in the system for the admin view
 // JOINs on users and sponsor_organization so the admin can see who submitted each ticket and what org they're in
+// also JOINs on driver_user/users for the subject driver if one is attached to the ticket
 app.get('/api/support-tickets', async (_req, res) => {
     try {
         const [tickets] = await pool.query(
             `SELECT st.*, u.first_name, u.last_name, u.email,
-                    so.name AS org_name
+                    so.name AS org_name,
+                    su_subj.first_name AS subject_first_name,
+                    su_subj.last_name AS subject_last_name
              FROM support_tickets st
              JOIN users u ON st.user_id = u.user_id
              LEFT JOIN sponsor_organization so ON st.sponsor_org_id = so.sponsor_org_id
+             LEFT JOIN driver_user du_subj ON st.subject_driver_id = du_subj.user_id
+             LEFT JOIN users su_subj ON du_subj.user_id = su_subj.user_id
              ORDER BY st.created_at DESC`
         );
         res.json({ tickets });
@@ -2151,9 +2349,13 @@ app.get('/api/support-tickets', async (_req, res) => {
 app.get('/api/support-tickets/org/:sponsorOrgId', async (req, res) => {
     try {
         const [tickets] = await pool.query(
-            `SELECT st.*, u.first_name, u.last_name, u.email
+            `SELECT st.*, u.first_name, u.last_name, u.email,
+                    su_subj.first_name AS subject_first_name,
+                    su_subj.last_name AS subject_last_name
              FROM support_tickets st
              JOIN users u ON st.user_id = u.user_id
+             LEFT JOIN driver_user du_subj ON st.subject_driver_id = du_subj.user_id
+             LEFT JOIN users su_subj ON du_subj.user_id = su_subj.user_id
              WHERE st.sponsor_org_id = ? AND st.is_archived = 0
              ORDER BY st.created_at DESC`,
             [req.params.sponsorOrgId]
@@ -2162,6 +2364,31 @@ app.get('/api/support-tickets/org/:sponsorOrgId', async (req, res) => {
     } catch (error) {
         console.error('Error fetching org support tickets:', error);
         res.status(500).json({ error: 'Failed to fetch org support tickets.' });
+    }
+});
+
+// returns all active drivers in a sponsors org, used for the "ticket about a driver" dropdown
+app.get('/api/support-tickets/drivers/:sponsorUserId', async (req, res) => {
+    try {
+        const [[sponsorUser]] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [req.params.sponsorUserId]
+        );
+        if (!sponsorUser) {
+            return res.status(404).json({ error: 'Sponsor not found.' });
+        }
+        const [drivers] = await pool.query(
+            `SELECT u.user_id, u.first_name, u.last_name
+             FROM driver_user du
+             JOIN users u ON du.user_id = u.user_id
+             WHERE du.sponsor_org_id = ? AND du.driver_status = 'active'
+             ORDER BY u.last_name, u.first_name`,
+            [sponsorUser.sponsor_org_id]
+        );
+        res.json({ drivers });
+    } catch (error) {
+        console.error('Error fetching org drivers for ticket:', error);
+        res.status(500).json({ error: 'Failed to fetch drivers.' });
     }
 });
 
@@ -2223,6 +2450,47 @@ app.put('/api/support-tickets/:ticketId/archive', async (req, res) => {
     } catch (error) {
         console.error('Error archiving support ticket:', error);
         res.status(500).json({ error: 'Failed to archive support ticket.' });
+    }
+});
+
+// reopens a ticket that was previously resolved, available to the ticket owner or a sponsor in same org
+app.put('/api/support-tickets/:ticketId/reopen', async (req, res) => {
+    const { userId, userType } = req.body;
+    try {
+        const [[ticket]] = await pool.query(
+            'SELECT ticket_id, user_id, sponsor_org_id, subject_driver_id, status FROM support_tickets WHERE ticket_id = ?',
+            [req.params.ticketId]
+        );
+        if (!ticket) {
+            return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        if (ticket.status !== 'resolved') {
+            return res.status(400).json({ error: 'Only resolved tickets can be reopened.' });
+        }
+        // check that the caller is the ticket owner, the subject driver, or a sponsor whose org owns the ticket
+        const isOwner = ticket.user_id === parseInt(userId);
+        const isSubjectDriver = ticket.subject_driver_id === parseInt(userId);
+        if (!isOwner && !isSubjectDriver) {
+            if (userType === 'sponsor') {
+                const [[sponsorUser]] = await pool.query(
+                    'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                    [userId]
+                );
+                if (!sponsorUser || ticket.sponsor_org_id !== sponsorUser.sponsor_org_id) {
+                    return res.status(403).json({ error: 'You can only reopen tickets you submitted or tickets in your organization.' });
+                }
+            } else {
+                return res.status(403).json({ error: 'You can only reopen your own tickets.' });
+            }
+        }
+        await pool.query(
+            'UPDATE support_tickets SET status = ?, updated_at = NOW() WHERE ticket_id = ?',
+            ['open', req.params.ticketId]
+        );
+        res.json({ message: 'Ticket reopened successfully.' });
+    } catch (error) {
+        console.error('Error reopening support ticket:', error);
+        res.status(500).json({ error: 'Failed to reopen ticket.' });
     }
 });
 
@@ -2358,6 +2626,45 @@ app.put('/api/orders/:orderId/cancel', async (req, res) => {
     }
 });
 
+// PATCH /api/orders/:orderId/status — update order status (ship or deliver)
+// placed → shipped (by sponsor), shipped → delivered (by driver)
+app.patch('/api/orders/:orderId/status', async (req, res) => {
+    const { orderId } = req.params;
+    const { status, userId } = req.body;
+    if (!status || !userId) return res.status(400).json({ error: 'status and userId are required' });
+    try {
+        const [[order]] = await pool.query(
+            'SELECT order_id, status, driver_user_id, sponsor_org_id FROM orders WHERE order_id = ?',
+            [orderId]
+        );
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+
+        if (status === 'shipped') {
+            if (order.status !== 'placed') {
+                return res.status(400).json({ error: 'Only placed orders can be marked as shipped' });
+            }
+        } else if (status === 'delivered') {
+            if (order.status !== 'shipped') {
+                return res.status(400).json({ error: 'Only shipped orders can be confirmed as delivered' });
+            }
+            if (order.driver_user_id !== parseInt(userId)) {
+                return res.status(403).json({ error: 'Only the ordering driver can confirm delivery' });
+            }
+        } else {
+            return res.status(400).json({ error: 'Invalid status. Use "shipped" or "delivered"' });
+        }
+
+        await pool.query(
+            'UPDATE orders SET status = ?, updated_at = NOW() WHERE order_id = ?',
+            [status, orderId]
+        );
+        res.json({ message: `Order marked as ${status}` });
+    } catch (error) {
+        console.error('Error updating order status:', error);
+        res.status(500).json({ error: 'Failed to update order status' });
+    }
+});
+
 // --- Transaction Comments Routes -----------------------------------------------------
 
 // GET /api/transaction-comments/:transactionId - returns all comments for a transaction,
@@ -2458,6 +2765,32 @@ if (process.env.NODE_ENV !== 'test') {
             }
         } catch (e) {
             console.warn('Delivery columns migration failed:', e.message);
+        }
+
+        // Create recently_viewed table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS recently_viewed (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_rv (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('recently_viewed migration failed:', e.message);
+        }
+
+        // Create driver_favorites table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS driver_favorites (
+                favorite_id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_fav (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('driver_favorites migration failed:', e.message);
         }
     })();
 
