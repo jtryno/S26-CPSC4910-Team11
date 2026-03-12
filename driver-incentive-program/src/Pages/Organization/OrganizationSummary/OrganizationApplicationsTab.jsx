@@ -10,7 +10,7 @@ const OrganizationApplicationsTab = ({userData, setUserData, orgId, fetchOrg}) =
     const [applications, setApplications] = React.useState([]);
 
     async function getApplications(orgId) {
-        const apps = await fetchApplicationsOrg(orgId, 'pending');
+        const apps = await fetchApplicationsOrg(orgId, null, 'pending');
         setApplications(apps);
     }
 
