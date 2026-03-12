@@ -1,6 +1,6 @@
-async function fetchPasswordChangeLogs(org_id) {
+async function fetchPasswordChangeLogs(org_id, dateRange) {
     try {
-        const response = await fetch(`/api/sponsor/logs/password-change-logs/${org_id}`, {
+        const response = await fetch(`/api/logs/password-change-logs/${org_id}?dateRange=${JSON.stringify(dateRange)}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -17,9 +17,9 @@ async function fetchPasswordChangeLogs(org_id) {
     }
 }
 
-async function fetchLoginLogs(org_id) {
+async function fetchLoginLogs(org_id, dateRange) {
     try {
-        const response = await fetch(`/api/sponsor/logs/login-attempt-logs/${org_id}`, {
+        const response = await fetch(`/api/logs/login-attempt-logs/${org_id}?dateRange=${JSON.stringify(dateRange)}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'

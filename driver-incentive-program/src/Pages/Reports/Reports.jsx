@@ -1,6 +1,7 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
 import SponsorReport from './SponsorReport/SponsorReport';
+import AdminReport from './AdminReport/AdminReport';
 
 
 const Reports = () => {
@@ -10,7 +11,7 @@ const Reports = () => {
         <div>
             <h1>{user_type.charAt(0).toUpperCase() + user_type.slice(1)} Report</h1>
             {user_type === 'admin' && 
-                <p>Here you can view admin reports.</p>
+                <AdminReport />
             }
             {user_type === 'sponsor' && 
                 <SponsorReport />

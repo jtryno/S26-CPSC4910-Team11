@@ -29,9 +29,9 @@ async function featchApplicationsUser(user_id, status) {
     }
 }
 
-async function fetchApplicationsOrg(org_id, status) {
+async function fetchApplicationsOrg(org_id, dateRange, status) {
     try {
-        const response = await fetch(`/api/application/organization/${org_id}?status=${status}`, {
+        const response = await fetch(`/api/application/organization/${org_id}?dateRange=${JSON.stringify(dateRange)}&status=${status}`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
         });

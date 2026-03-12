@@ -98,4 +98,18 @@ async function fetchDropLogs(orgId) {
     }
 }
 
-export { fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization, updateOrganizationField, fetchDropLogs };
+async function fetchOrgPointChanges(orgId, dateRange) {
+    try {
+        const response = await fetch(`/api/organization/${orgId}/point-changes?dateRange=${JSON.stringify(dateRange)}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.changes;
+    } catch (error) {
+        console.error('Error fetching org point changes:', error);
+        throw error;
+    }
+}
+
+export { fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization, updateOrganizationField, fetchDropLogs, fetchOrgPointChanges };
