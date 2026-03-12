@@ -10,6 +10,7 @@ import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
 import cookieParser from 'cookie-parser';
 import process from 'process';
+import { register } from 'module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = path.join(__dirname, '.env');
@@ -360,14 +361,41 @@ app.get('/api/about', async (req, res) => {
 //-- Driver Application Route ---
 app.get('/api/application/organization/:org_id', async (req, res) => {
     const { org_id } = req.params;
-    const { status } = req.query;
+    const { dateRange, status } = req.query;
     try {
-        let query = 'SELECT * FROM driver_applications WHERE sponsor_org_id = ?';
-        const params = [org_id];
+        let query = 'SELECT * FROM driver_applications';
+        const params = [];
+        const conditions = [];
 
-        if (status) {
-            query += ' AND status = ?';
+        if (org_id && org_id !== 'undefined' && org_id !== 'null' && org_id !== 'All') {
+            conditions.push("sponsor_org_id = ?");
+            params.push(org_id);
+        }
+
+        if (status && status !== 'undefined') {
+            conditions.push("status = ?");
             params.push(status);
+        }
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (fromDate && toDate) {
+                conditions.push('applied_at >= ? AND applied_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('applied_at >= ? AND applied_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('applied_at >= ? AND applied_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+        }
+
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
         }
 
         const [applications] = await pool.query(query, params);
@@ -918,11 +946,42 @@ app.put('/api/user', async (req, res) => {
 });
 
 // --- Sponsor Logs Route ---
-app.get('/api/sponsor/logs/password-change-logs/:sponsor_org_id', async (req, res) => {
-    const { sponsor_org_id } = req.params;
+app.get('/api/logs/password-change-logs/:org_id', async (req, res) => {
+    const { org_id } = req.params;
+    const { dateRange } = req.query;
 
     try {
-        const [logs] = await pool.query(`SELECT * FROM password_change_log WHERE user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)`, [sponsor_org_id]);
+        let query = 'SELECT * FROM password_change_log';
+        let params = [];
+        let conditions = [];
+
+        if (org_id && org_id !== 'undefined' && org_id !== 'null' && org_id !== 'All') {
+            conditions.push("user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)");
+            params.push(org_id);
+        }
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (fromDate && toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+        }
+
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        const [logs] = await pool.query(query, params);
 
         res.json({ message: "Logs retrieved successfully", logs });
     } catch (error) {
@@ -931,11 +990,42 @@ app.get('/api/sponsor/logs/password-change-logs/:sponsor_org_id', async (req, re
     }
 });
 
-app.get('/api/sponsor/logs/login-attempt-logs/:sponsor_org_id', async (req, res) => {
-    const { sponsor_org_id } = req.params;
+app.get('/api/logs/login-attempt-logs/:org_id', async (req, res) => {
+    const { org_id } = req.params;
+    const { dateRange } = req.query;
 
     try {
-        const [logs] = await pool.query(`SELECT * FROM login_logs WHERE user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)`, [sponsor_org_id]);
+        let query = 'SELECT * FROM login_logs';
+        let params = [];
+        let conditions = [];
+
+        if (org_id && org_id !== 'undefined' && org_id !== 'null' && org_id !== 'All') {
+            conditions.push("user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)");
+            params.push(org_id);
+        }
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (fromDate && toDate) {
+                conditions.push('login_date >= ? AND login_date < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('login_date >= ? AND login_date < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('login_date >= ? AND login_date < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+        }
+
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        const [logs] = await pool.query(query, params);
 
         res.json({ message: "Logs retrieved successfully", logs });
     } catch (error) {
@@ -1681,6 +1771,49 @@ app.get('/api/organization/:org_id/drop-logs', async (req, res) => {
     } catch (error) {
         console.error('Error fetching org drops:', error);
         res.status(500).json({ error: 'Failed to fetch org drops' });
+    }
+});
+
+app.get('/api/organization/:org_id/point-changes', async (req, res) => {
+    const { org_id } = req.params;
+    const { dateRange } = req.query;
+    try {
+        let query = 'SELECT * FROM point_transactions';
+        let params = [];
+        let conditions = [];
+        
+        if ( org_id && org_id != "undefined" && org_id != "null" && org_id != "All") {
+            conditions.push('sponsor_org_id = ?');
+            params.push(org_id);
+        }
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (fromDate && toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+        }
+
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        const [changes] = await pool.query(query, params);
+        
+        res.json({ message: "Successfully retrieved point changes", changes });
+    } catch (error) {
+        console.error('Error fetching org point changes:', error);
+        res.status(500).json({ error: 'Failed to fetch org point changes' });
     }
 });
 
