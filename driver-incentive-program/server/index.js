@@ -696,8 +696,11 @@ app.post('/api/login', async (req, res) => {
             const shouldLock = newFails >= 5;
 
             await pool.query('UPDATE users SET failed_login_attempts = ?, is_locked = ? WHERE user_id = ?', [newFails, shouldLock, user.user_id]);
-            await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, 'failure', user.user_id]);
-
+            let failureReason = 'incorrect password';
+            if(shouldLock) {
+                failureReason = 'account is locked';
+            }
+            await pool.query('INSERT INTO login_logs (username, login_date, result, user_id, failure_reason) VALUES (?, NOW(), ?, ?, ?)', [user.username, 'failure', user.user_id, failureReason]);
             const newAttempts = (user.failed_login_attempts || 0) + 1;
 
             if (newAttempts >= MAX_LOGIN_ATTEMPTS) {
@@ -1932,10 +1935,23 @@ app.post('/api/catalog/org/:sponsorOrgId/items', async (req, res) => {
 app.delete('/api/catalog/items/:itemId', async (req, res) => {
     const { itemId } = req.params;
     try {
+        const [[item]] = await pool.query(
+            'SELECT title, sponsor_org_id FROM catalog_items WHERE item_id = ? AND is_active = 1',
+            [itemId]
+        );
         await pool.query(
             'UPDATE catalog_items SET is_active = 0, updated_at = NOW() WHERE item_id = ?',
             [itemId]
         );
+        if(item) {
+            const [drivers] = await pool.query(
+                'SELECT user_id FROM driver_user WHERE sponsor_org_id = ? AND driver_status = "active"',
+                [item.sponsor_org_id]
+            );
+            for (const driver of drivers) {
+                await createNotification(driver.user_id, 'catalog_item_removed', `"${item.title}" has been removed from your organization's catalog and is no longer available.`);
+            }
+        }
         res.json({ message: 'Item removed from catalog' });
     } catch (error) {
         console.error('Error removing catalog item:', error);
@@ -2419,6 +2435,16 @@ app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
         // if no rows were affected the ticket id doesn't exist
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Ticket not found.' });
+        }
+        if(status === 'in_progress' || status === 'resolved') {
+            const [[ticket]] = await pool.query('SELECT user_id FROM support_tickets WHERE ticket_id = ?', [req.params.ticketId]);
+            if(ticket) {
+                let statusLabel = 'Resolved';
+                if(status === 'in_progress') {
+                    statusLabel = 'In Progress';
+                }
+                await createNotification(ticket.user_id, 'ticket_updated', `Your support ticket #${req.params.ticketId} has been marked as ${statusLabel}.`);
+            }
         }
         res.json({ message: 'Ticket updated successfully' });
     } catch (error) {
