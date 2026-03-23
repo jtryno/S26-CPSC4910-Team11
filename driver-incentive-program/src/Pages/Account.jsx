@@ -200,9 +200,70 @@ const ProfileTab = ({ userData, setUserData, navigate }) => {
                     </div>
                 </div>
             </div>
+            <div style={{ background: '#f9f9f9', paddingBottom: '30px', paddingLeft: '30px', paddingTop: '0px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+                <h2 style={{ color: '#1a1a1a', marginBottom: '20px' }}>Your Data</h2>
+                <div style={{ display: 'grid', direction: 'row', gap: '20px', marginLeft: '24px' }}>
+                    <p style={{ margin: 0, color: '#555' }}>
+                        Download a copy of all personal data stored in the system, including your profile, login history, notifications, messages, and support tickets
+                        {userData?.user_type === 'driver' ? ', as well as your points, orders, and applications' : ''}.
+                    </p>
+                    <DownloadDataButton userId={userData?.user_id} />
+                </div>
+            </div>
         </div>
     );
 }
+
+const DownloadDataButton = ({ userId }) => {
+    const [downloading, setDownloading] = useState(false);
+
+    const handleDownload = async () => {
+        if (!userId) return;
+        setDownloading(true);
+        try {
+            const response = await fetch(`/api/user/${userId}/download-data?requestingUserId=${userId}`);
+            if (!response.ok) {
+                const errData = await response.json();
+                alert(errData.error || 'Failed to download data');
+                return;
+            }
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `my-data-${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Download failed:', err);
+            alert('Failed to download your data. Please try again.');
+        } finally {
+            setDownloading(false);
+        }
+    };
+
+    return (
+        <button
+            onClick={handleDownload}
+            disabled={downloading}
+            style={{
+                padding: '6px 20px',
+                fontSize: '14px',
+                borderRadius: '4px',
+                cursor: downloading ? 'not-allowed' : 'pointer',
+                justifySelf: 'start',
+                background: '#0066cc',
+                color: 'white',
+                border: 'none',
+                opacity: downloading ? 0.6 : 1,
+            }}
+        >
+            {downloading ? 'Downloading...' : 'Download My Data'}
+        </button>
+    );
+};
 
 const OrganizationTab = () => {
     return (
