@@ -1,17 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const PasswordReset = () => {
-  const [step, setStep] = useState(1); // Step 1: Request token, Step 2: Confirm reset
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialParams = new URLSearchParams(location.search);
+  const initialToken = initialParams.get('token') || '';
+  const initialMode = initialParams.get('mode');
+  const [step, setStep] = useState(initialToken ? 2 : 1); // Step 1: Request token, Step 2: Confirm reset
   const [email, setEmail] = useState('');
-  const [token, setToken] = useState('');
+  const [token, setToken] = useState(initialToken);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(
+    initialToken && initialMode === 'onboarding'
+      ? 'Set your password to finish activating your account.'
+      : ''
+  );
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
   useEffect(() => {
     // Pre-fill email if user is logged in

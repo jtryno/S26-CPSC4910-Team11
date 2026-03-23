@@ -10,7 +10,6 @@ import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
 import cookieParser from 'cookie-parser';
 import process from 'process';
-import { register } from 'module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = path.join(__dirname, '.env');
@@ -341,6 +340,545 @@ async function getSponsorOrgId(userId, userType) {
     return null;
 }
 
+// Maps common CSV header variants onto the fields our importer understands.
+const DRIVER_IMPORT_HEADER_ALIASES = {
+    firstname: 'firstName',
+    lastname: 'lastName',
+    email: 'email',
+    username: 'username',
+    password: 'password',
+    phonenumber: 'phoneNumber',
+    phone: 'phoneNumber',
+    mobile: 'phoneNumber',
+};
+
+const DRIVER_IMPORT_REQUIRED_HEADERS = ['firstName', 'lastName', 'email'];
+const DRIVER_IMPORT_MAX_ROWS = 250;
+
+function normalizeCsvHeader(header) {
+    return String(header || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+}
+
+function parseCsvText(text) {
+    // Handles quoted commas/newlines so sponsors can upload spreadsheet-exported CSVs.
+    const input = String(text || '').replace(/^\uFEFF/, '');
+    const rows = [];
+    let row = [];
+    let value = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < input.length; index += 1) {
+        const char = input[index];
+        const nextChar = input[index + 1];
+
+        if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+                value += '"';
+                index += 1;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (char === ',' && !inQuotes) {
+            row.push(value);
+            value = '';
+            continue;
+        }
+
+        if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && nextChar === '\n') {
+                index += 1;
+            }
+            row.push(value);
+            rows.push(row);
+            row = [];
+            value = '';
+            continue;
+        }
+
+        value += char;
+    }
+
+    if (inQuotes) {
+        throw new Error('CSV contains an unterminated quoted field.');
+    }
+
+    row.push(value);
+    rows.push(row);
+
+    return rows.filter(currentRow => currentRow.some(cell => String(cell || '').trim() !== ''));
+}
+
+function isLikelyEmail(value) {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return false;
+
+    const parts = trimmed.split('@');
+    if (parts.length !== 2) return false;
+
+    return parts[0].length > 0 &&
+        parts[1].includes('.') &&
+        !parts[1].startsWith('.') &&
+        !parts[1].endsWith('.');
+}
+
+function formatPhoneNumber(value) {
+    const digitsOnly = String(value || '').replace(/\D/g, '');
+    if (!digitsOnly) return null;
+    if (digitsOnly.length !== 10) return null;
+
+    return `(${digitsOnly.slice(0, 3)}) ${digitsOnly.slice(3, 6)}-${digitsOnly.slice(6, 10)}`;
+}
+
+function sanitizeUsername(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
+function generateTemporaryPassword() {
+    // Build a strong placeholder password for accounts that still need to finish onboarding.
+    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lowercase = 'abcdefghijkmnopqrstuvwxyz';
+    const digits = '23456789';
+    const special = '!@#$%^&*';
+    const allChars = uppercase + lowercase + digits + special;
+    const chars = [
+        uppercase[crypto.randomInt(0, uppercase.length)],
+        lowercase[crypto.randomInt(0, lowercase.length)],
+        digits[crypto.randomInt(0, digits.length)],
+        special[crypto.randomInt(0, special.length)],
+    ];
+
+    while (chars.length < 12) {
+        chars.push(allChars[crypto.randomInt(0, allChars.length)]);
+    }
+
+    for (let index = chars.length - 1; index > 0; index -= 1) {
+        const swapIndex = crypto.randomInt(0, index + 1);
+        [chars[index], chars[swapIndex]] = [chars[swapIndex], chars[index]];
+    }
+
+    return chars.join('');
+}
+
+async function findAvailableUsername(connection, desiredBase, reservedUsernames = new Set()) {
+    let base = sanitizeUsername(desiredBase);
+    if (!base || base.length < 3) {
+        base = `driver_${crypto.randomInt(1000, 10000)}`;
+    }
+
+    let candidate = base;
+    let suffix = 1;
+
+    while (true) {
+        const normalizedCandidate = candidate.toLowerCase();
+        if (!reservedUsernames.has(normalizedCandidate)) {
+            const [rows] = await connection.query(
+                'SELECT user_id FROM users WHERE username = ? LIMIT 1',
+                [candidate]
+            );
+
+            if (rows.length === 0) {
+                return candidate;
+            }
+        }
+
+        suffix += 1;
+        candidate = `${base}_${suffix}`;
+    }
+}
+
+async function createPasswordResetToken(userId, connection = pool) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await connection.query(
+        'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
+        [userId, token, expiresAt]
+    );
+
+    return { token, expiresAt };
+}
+
+// Reuse one error shape so helper validation can return clean 4xx responses.
+function createHttpError(status, message, details = {}) {
+    const error = new Error(message);
+    error.status = status;
+    Object.assign(error, details);
+    return error;
+}
+
+function isNonEmptyCsvRow(row) {
+    return row.some(cell => String(cell || '').trim() !== '');
+}
+
+function buildFailedImportResult(baseResult, errorMessage) {
+    return {
+        ...baseResult,
+        status: 'failed',
+        error: errorMessage,
+    };
+}
+
+// Confirms the caller can import into this organization and returns the org record.
+async function authorizeOrganizationImport(requestingUserId, sponsorOrgId) {
+    const [requesterRows] = await pool.query(
+        'SELECT user_id, user_type FROM users WHERE user_id = ?',
+        [requestingUserId]
+    );
+
+    if (requesterRows.length === 0) {
+        throw createHttpError(404, 'Requesting user not found');
+    }
+
+    const requester = requesterRows[0];
+    if (!['admin', 'sponsor'].includes(requester.user_type)) {
+        throw createHttpError(403, 'Only sponsors and admins can import organization users');
+    }
+
+    if (requester.user_type === 'sponsor') {
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [requestingUserId]
+        );
+
+        if (
+            sponsorRows.length === 0 ||
+            Number(sponsorRows[0].sponsor_org_id) !== Number(sponsorOrgId)
+        ) {
+            throw createHttpError(403, 'Sponsors can only import users into their own organization');
+        }
+    }
+
+    const [organizationRows] = await pool.query(
+        'SELECT sponsor_org_id, name FROM sponsor_organization WHERE sponsor_org_id = ?',
+        [sponsorOrgId]
+    );
+
+    if (organizationRows.length === 0) {
+        throw createHttpError(404, 'Organization not found');
+    }
+
+    return organizationRows[0];
+}
+
+// Parse and validate the shared CSV structure once before walking the rows.
+function parseOrganizationImportCsv(csvText) {
+    let parsedRows;
+
+    try {
+        parsedRows = parseCsvText(csvText);
+    } catch (error) {
+        throw createHttpError(400, error.message);
+    }
+
+    if (parsedRows.length < 2) {
+        throw createHttpError(400, 'CSV must include a header row and at least one user row');
+    }
+
+    const rawHeaders = parsedRows[0];
+    const headers = rawHeaders.map(
+        header => DRIVER_IMPORT_HEADER_ALIASES[normalizeCsvHeader(header)] || null
+    );
+    const duplicateHeaders = [...new Set(
+        headers.filter((header, index) => header && headers.indexOf(header) !== index)
+    )];
+
+    if (duplicateHeaders.length > 0) {
+        throw createHttpError(
+            400,
+            `CSV contains duplicate supported headers: ${duplicateHeaders.join(', ')}`
+        );
+    }
+
+    const missingHeaders = DRIVER_IMPORT_REQUIRED_HEADERS.filter(header => !headers.includes(header));
+    if (missingHeaders.length > 0) {
+        throw createHttpError(
+            400,
+            `CSV is missing required headers: ${missingHeaders.join(', ')}`
+        );
+    }
+
+    const dataRows = parsedRows.slice(1);
+    const nonEmptyDataRows = dataRows.filter(isNonEmptyCsvRow);
+
+    if (nonEmptyDataRows.length === 0) {
+        throw createHttpError(400, 'CSV does not contain any user rows');
+    }
+
+    if (nonEmptyDataRows.length > DRIVER_IMPORT_MAX_ROWS) {
+        throw createHttpError(
+            400,
+            `CSV import is limited to ${DRIVER_IMPORT_MAX_ROWS} rows at a time`
+        );
+    }
+
+    return { headers, dataRows };
+}
+
+// Maps one CSV row onto the field names used by the importer.
+function mapOrganizationImportRow(headers, row) {
+    const rowData = {};
+
+    headers.forEach((header, index) => {
+        if (header) {
+            rowData[header] = String(row[index] || '').trim();
+        }
+    });
+
+    return rowData;
+}
+
+// Builds the shared result object the UI uses for imported and failed rows.
+function createImportBaseResult(rowData, rowNumber, userRole) {
+    return {
+        rowNumber,
+        firstName: String(rowData.firstName || '').trim(),
+        lastName: String(rowData.lastName || '').trim(),
+        email: String(rowData.email || '').trim().toLowerCase(),
+        userRole,
+    };
+}
+
+// Validate a row up front so DB work only runs for rows that are shaped correctly.
+function prepareOrganizationImportRow(rowData, baseResult, reservedEmails, reservedUsernames) {
+    const { firstName, lastName, email } = baseResult;
+
+    if (!firstName || !lastName || !email) {
+        throw createHttpError(
+            400,
+            'firstName, lastName, and email are required',
+            { result: baseResult }
+        );
+    }
+
+    if (!isLikelyEmail(email)) {
+        throw createHttpError(400, 'Email address is not valid', { result: baseResult });
+    }
+
+    if (reservedEmails.has(email)) {
+        throw createHttpError(
+            400,
+            'This email appears more than once in the CSV',
+            { result: baseResult }
+        );
+    }
+
+    const rawPhoneNumber = String(rowData.phoneNumber || '').trim();
+    const formattedPhoneNumber = rawPhoneNumber ? formatPhoneNumber(rawPhoneNumber) : null;
+    if (rawPhoneNumber && !formattedPhoneNumber) {
+        throw createHttpError(
+            400,
+            'Phone number must contain exactly 10 digits',
+            { result: baseResult }
+        );
+    }
+
+    const providedPassword = String(rowData.password || '').trim();
+    const needsOnboarding = !providedPassword;
+    const passwordToStore = providedPassword || generateTemporaryPassword();
+    if (providedPassword && !isPasswordComplex(passwordToStore)) {
+        throw createHttpError(
+            400,
+            'Password must meet the app complexity rules',
+            { result: baseResult }
+        );
+    }
+
+    const providedUsername = sanitizeUsername(rowData.username);
+    if (rowData.username && providedUsername.length < 3) {
+        throw createHttpError(
+            400,
+            'Username must be at least 3 characters after normalization',
+            { result: baseResult }
+        );
+    }
+
+    if (providedUsername && reservedUsernames.has(providedUsername.toLowerCase())) {
+        throw createHttpError(
+            400,
+            'This username appears more than once in the CSV',
+            { result: baseResult }
+        );
+    }
+
+    return {
+        baseResult,
+        firstName,
+        lastName,
+        email,
+        formattedPhoneNumber,
+        needsOnboarding,
+        passwordToStore,
+        providedUsername,
+        usernameSeed: rowData.email?.split('@')[0] || `${firstName}_${lastName}`,
+    };
+}
+
+// Keeps provided usernames when possible and generates one when the CSV leaves it blank.
+async function resolveImportedUsername(connection, preparedRow, reservedUsernames) {
+    if (preparedRow.providedUsername) {
+        const [existingUsernameRows] = await connection.query(
+            'SELECT user_id FROM users WHERE username = ? LIMIT 1',
+            [preparedRow.providedUsername]
+        );
+
+        if (existingUsernameRows.length > 0) {
+            throw createHttpError(
+                400,
+                'A user with this username already exists',
+                { result: preparedRow.baseResult }
+            );
+        }
+
+        return preparedRow.providedUsername;
+    }
+
+    return findAvailableUsername(connection, preparedRow.usernameSeed, reservedUsernames);
+}
+
+// Writes the imported user into the matching organization membership table.
+function insertOrganizationMembership(connection, userId, sponsorOrgId, userRole, requestingUserId) {
+    if (userRole === 'driver') {
+        return connection.query(
+            'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, NOW())',
+            [userId, sponsorOrgId, 'active']
+        );
+    }
+
+    return connection.query(
+        'INSERT INTO sponsor_user (user_id, sponsor_org_id, created_by_user_id) VALUES (?, ?, ?)',
+        [userId, sponsorOrgId, requestingUserId]
+    );
+}
+
+function createOnboardingPath(token) {
+    return `/password-reset?token=${encodeURIComponent(token)}&mode=onboarding`;
+}
+
+// Returns an onboarding link only when the imported user still needs to set a password.
+async function createOnboardingDetails(connection, userId, needsOnboarding) {
+    if (!needsOnboarding) {
+        return {
+            onboardingToken: null,
+            onboardingPath: null,
+        };
+    }
+
+    const { token } = await createPasswordResetToken(userId, connection);
+    return {
+        onboardingToken: token,
+        onboardingPath: createOnboardingPath(token),
+    };
+}
+
+// Import each row in its own transaction so one bad record does not cancel the whole file.
+async function importOrganizationUserRow({
+    connection,
+    preparedRow,
+    sponsorOrgId,
+    userRole,
+    requestingUserId,
+    reservedUsernames,
+}) {
+    await connection.beginTransaction();
+
+    try {
+        const [existingEmailRows] = await connection.query(
+            'SELECT user_id FROM users WHERE email = ? LIMIT 1',
+            [preparedRow.email]
+        );
+
+        if (existingEmailRows.length > 0) {
+            throw createHttpError(
+                400,
+                'A user with this email already exists',
+                { result: preparedRow.baseResult }
+            );
+        }
+
+        const username = await resolveImportedUsername(
+            connection,
+            preparedRow,
+            reservedUsernames
+        );
+        const passwordHash = hashPassword(preparedRow.passwordToStore);
+        const [userInsertResult] = await connection.query(
+            `INSERT INTO users
+                (first_name, last_name, phone_number, email, username, password_hash, user_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+                preparedRow.firstName,
+                preparedRow.lastName,
+                preparedRow.formattedPhoneNumber,
+                preparedRow.email,
+                username,
+                passwordHash,
+                userRole,
+            ]
+        );
+
+        await insertOrganizationMembership(
+            connection,
+            userInsertResult.insertId,
+            sponsorOrgId,
+            userRole,
+            requestingUserId
+        );
+
+        const { onboardingToken, onboardingPath } = await createOnboardingDetails(
+            connection,
+            userInsertResult.insertId,
+            preparedRow.needsOnboarding
+        );
+
+        await connection.commit();
+
+        return {
+            ...preparedRow.baseResult,
+            status: 'imported',
+            user_id: userInsertResult.insertId,
+            username,
+            onboardingToken,
+            onboardingPath,
+        };
+    } catch (error) {
+        try {
+            await connection.rollback();
+        } catch (rollbackError) {
+            console.error('Failed rolling back organization import row:', rollbackError);
+        }
+
+        if (!error.result) {
+            error.result = preparedRow.baseResult;
+        }
+
+        throw error;
+    }
+}
+
+// Normalizes row-level errors so the UI gets consistent messages.
+function formatImportRowError(error) {
+    if (error?.status && error?.message) {
+        return error.message;
+    }
+
+    if (error?.message?.includes('Duplicate entry')) {
+        return 'A user with this email or username already exists';
+    }
+
+    return 'Failed to import this user row';
+}
+
 // --- About Page Route ---
 app.get('/api/about', async (req, res) => {
     try {
@@ -616,6 +1154,112 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
     }
 });
 
+// Imports driver or sponsor accounts into an organization from a CSV upload.
+const importOrganizationUsersFromCsv = async (req, res) => {
+    const { sponsor_org_id } = req.params;
+    const { requestingUserId, userRole = 'driver', csvText } = req.body;
+    const normalizedUserRole = String(userRole || '').trim().toLowerCase();
+
+    if (!requestingUserId) {
+        return res.status(400).json({ error: 'requestingUserId is required' });
+    }
+
+    if (!['driver', 'sponsor'].includes(normalizedUserRole)) {
+        return res.status(400).json({ error: 'userRole must be "driver" or "sponsor"' });
+    }
+
+    if (!csvText || !String(csvText).trim()) {
+        return res.status(400).json({ error: 'csvText is required' });
+    }
+
+    try {
+        // Load the organization once, then reuse the parsed CSV metadata for every row.
+        const organization = await authorizeOrganizationImport(requestingUserId, sponsor_org_id);
+        const { headers, dataRows } = parseOrganizationImportCsv(csvText);
+
+        const results = [];
+        const reservedEmails = new Set();
+        const reservedUsernames = new Set();
+        let importedCount = 0;
+        let failedCount = 0;
+        let skippedCount = 0;
+
+        const connection = await pool.getConnection();
+
+        try {
+            for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex += 1) {
+                const row = dataRows[rowIndex];
+                const rowNumber = rowIndex + 2;
+
+                if (!isNonEmptyCsvRow(row)) {
+                    skippedCount += 1;
+                    continue;
+                }
+
+                const rowData = mapOrganizationImportRow(headers, row);
+                const baseResult = createImportBaseResult(
+                    rowData,
+                    rowNumber,
+                    normalizedUserRole
+                );
+
+                try {
+                    // Validate the row first, then let the transaction helper handle DB writes.
+                    const preparedRow = prepareOrganizationImportRow(
+                        rowData,
+                        baseResult,
+                        reservedEmails,
+                        reservedUsernames
+                    );
+                    const importedResult = await importOrganizationUserRow({
+                        connection,
+                        preparedRow,
+                        sponsorOrgId: sponsor_org_id,
+                        userRole: normalizedUserRole,
+                        requestingUserId,
+                        reservedUsernames,
+                    });
+
+                    reservedEmails.add(importedResult.email);
+                    reservedUsernames.add(importedResult.username.toLowerCase());
+                    importedCount += 1;
+                    results.push(importedResult);
+                } catch (rowError) {
+                    failedCount += 1;
+                    results.push(
+                        buildFailedImportResult(
+                            rowError.result || baseResult,
+                            formatImportRowError(rowError)
+                        )
+                    );
+                }
+            }
+        } finally {
+            connection.release();
+        }
+
+        res.json({
+            message: `Imported ${importedCount} ${normalizedUserRole} user(s)`,
+            organization_name: organization.name,
+            importedRole: normalizedUserRole,
+            importedCount,
+            failedCount,
+            skippedCount,
+            results,
+        });
+    } catch (error) {
+        if (error.status) {
+            return res.status(error.status).json({ error: error.message });
+        }
+
+        console.error('Error importing organization users from CSV:', error);
+        res.status(500).json({ error: 'Failed to import users' });
+    }
+};
+
+app.post('/api/organization/:sponsor_org_id/users/import', importOrganizationUsersFromCsv);
+app.post('/api/organization/:sponsor_org_id/drivers/import', importOrganizationUsersFromCsv);
+
 // GET /api/organization/:sponsor_org_id/monthly-redeemed-points — total points redeemed via catalog orders this month
 app.get('/api/organization/:sponsor_org_id/monthly-redeemed-points', async (req, res) => {
     const { sponsor_org_id } = req.params;
@@ -792,14 +1436,7 @@ app.post('/api/password-reset/request', async (req, res) => {
         const [users] = await pool.query('SELECT user_id FROM users WHERE email = ?', [email]);
         if (users.length === 0) return res.status(404).json({ message: 'User not found' });
 
-        const token = crypto.randomBytes(32).toString('hex');
-        //  Link expires in 24 hours
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); 
-
-        await pool.query(
-            'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
-            [users[0].user_id, token, expiresAt]
-        );
+        const { token } = await createPasswordResetToken(users[0].user_id);
 
         res.json({ message: 'Reset token generated', token }); 
     } catch (error) {
@@ -1062,8 +1699,15 @@ app.post('/api/user/leave-organization', async (req, res) => {
                 [user_id, sponsor_org_id]
             );
         } else if (user_type === 'sponsor') {
+            const [rows] = await pool.query(
+                'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                [user_id]
+            );
+            if (rows.length === 0) {
+                return res.status(404).json({ error: 'No organization found for this sponsor' });
+            }
             await pool.query(
-                'UPDATE sponsor_user SET sponsor_org_id = NULL WHERE user_id = ?',
+                'DELETE FROM sponsor_user WHERE user_id = ?',
                 [user_id]
             );
         } else {

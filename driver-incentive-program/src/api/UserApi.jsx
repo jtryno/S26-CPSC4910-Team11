@@ -86,7 +86,6 @@ async function signUpUser(userData, userRole) {
     } catch (error) {
         console.error('Error signing up user:', error);
         throw error;
-        return "error";
     }
 }
 
@@ -105,4 +104,27 @@ async function fetchUserData(user_id) {
     }
 }
 
-export { removeFromOrganization, updateField, signUpUser, dropDriver, fetchUserData };
+async function importOrganizationUsersFromCsv(orgId, requestingUserId, userRole, csvText) {
+    try {
+        // The backend validates both the acting user and the target org before importing.
+        const response = await fetch(`/api/organization/${orgId}/users/import`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ requestingUserId, userRole, csvText }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to import users');
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Error importing organization users from CSV:', error);
+        throw error;
+    }
+}
+
+export { removeFromOrganization, updateField, signUpUser, dropDriver, fetchUserData, importOrganizationUsersFromCsv };

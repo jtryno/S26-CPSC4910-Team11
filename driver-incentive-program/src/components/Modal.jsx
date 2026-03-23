@@ -1,6 +1,6 @@
 import React from 'react';
 
-const Modal = ({ isOpen, onClose, onSave, title, children }) => {
+const Modal = ({ isOpen, onClose, onSave, title, children, saveLabel = 'Save', saveDisabled = false, maxWidth = '500px' }) => {
     if (!isOpen) return null;
 
     return (
@@ -20,7 +20,7 @@ const Modal = ({ isOpen, onClose, onSave, title, children }) => {
                 background: '#ffffff',
                 borderRadius: '10px',
                 minWidth: '340px',
-                maxWidth: '500px',
+                maxWidth,
                 width: '100%',
                 boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
                 animation: 'modalFadeIn 0.2s ease-out'
@@ -60,11 +60,14 @@ const Modal = ({ isOpen, onClose, onSave, title, children }) => {
                     {onSave ? 
                         <button 
                             onClick={onSave}
+                            disabled={saveDisabled}
                             style={{
-                                
+                                // Reused by the CSV import modal to prevent duplicate submissions while uploading.
+                                opacity: saveDisabled ? 0.6 : 1,
+                                cursor: saveDisabled ? 'not-allowed' : 'pointer',
                             }}
                         >
-                            Save
+                            {saveLabel}
                         </button> :
                     null}
                 </div>
