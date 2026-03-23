@@ -3100,4 +3100,155 @@ app.put('/api/messages/:messageId/read', async (req, res) => {
     }
 });
 
+// --- Download Personal Data Route ---
+app.get('/api/user/:userId/download-data', async (req, res) => {
+    const { userId } = req.params;
+    const requestingUserId = req.query.requestingUserId;
+
+    // Authorization: user can only download their own data
+    if (!requestingUserId || String(requestingUserId) !== String(userId)) {
+        return res.status(403).json({ error: 'You can only download your own data.' });
+    }
+
+    try {
+        // Fetch core user profile (exclude sensitive fields)
+        const [users] = await pool.query(
+            `SELECT user_id, first_name, last_name, phone_number, email, username,
+                    user_type, two_fa_enabled, created_at
+             FROM users WHERE user_id = ?`,
+            [userId]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = users[0];
+        const data = { profile: user };
+
+        // Role-specific data
+        if (user.user_type === 'driver') {
+            const [driverInfo] = await pool.query(
+                `SELECT du.sponsor_org_id, du.driver_status, du.current_points_balance,
+                        du.affilated_at, du.dropped_at, du.drop_reason,
+                        so.name AS sponsor_org_name
+                 FROM driver_user du
+                 LEFT JOIN sponsor_organization so ON du.sponsor_org_id = so.sponsor_org_id
+                 WHERE du.user_id = ?`,
+                [userId]
+            );
+            data.driverInfo = driverInfo[0] || null;
+
+            const [pointTransactions] = await pool.query(
+                `SELECT transaction_id, sponsor_org_id, point_amount, reason, source, created_at
+                 FROM point_transactions WHERE driver_user_id = ? ORDER BY created_at DESC`,
+                [userId]
+            );
+            data.pointTransactions = pointTransactions;
+
+            const [orders] = await pool.query(
+                `SELECT order_id, sponsor_org_id, status, created_at,
+                        delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
+                        cancel_reason, cancelled_at
+                 FROM orders WHERE driver_user_id = ? ORDER BY created_at DESC`,
+                [userId]
+            );
+            data.orders = orders;
+
+            const [applications] = await pool.query(
+                `SELECT application_id, sponsor_org_id, status, decision_reason, applied_at, reviewed_at
+                 FROM driver_applications WHERE driver_user_id = ? ORDER BY applied_at DESC`,
+                [userId]
+            );
+            data.applications = applications;
+
+            const [pointContests] = await pool.query(
+                `SELECT contest_id, transaction_id, sponsor_org_id, reason, status, created_at
+                 FROM point_contests WHERE driver_user_id = ? ORDER BY created_at DESC`,
+                [userId]
+            );
+            data.pointContests = pointContests;
+        }
+
+        if (user.user_type === 'sponsor') {
+            const [sponsorInfo] = await pool.query(
+                `SELECT su.sponsor_org_id, so.name AS sponsor_org_name, so.point_value
+                 FROM sponsor_user su
+                 LEFT JOIN sponsor_organization so ON su.sponsor_org_id = so.sponsor_org_id
+                 WHERE su.user_id = ?`,
+                [userId]
+            );
+            data.sponsorInfo = sponsorInfo[0] || null;
+        }
+
+        // Login history (all roles)
+        const [loginHistory] = await pool.query(
+            `SELECT log_id, login_date, result, failure_reason
+             FROM login_logs WHERE user_id = ? ORDER BY login_date DESC`,
+            [userId]
+        );
+        data.loginHistory = loginHistory;
+
+        // Password change logs (all roles)
+        const [passwordChangeLogs] = await pool.query(
+            `SELECT log_id, change_type, created_at
+             FROM password_change_log WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.passwordChangeLogs = passwordChangeLogs;
+
+        // Notifications (all roles)
+        const [notifications] = await pool.query(
+            `SELECT notification_id, category, message, read_at, created_at
+             FROM notifications WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.notifications = notifications;
+
+        // Notification preferences (all roles)
+        const [notifPrefs] = await pool.query(
+            `SELECT points_changed_enabled, order_placed_enabled
+             FROM notification_preferences WHERE user_id = ?`,
+            [userId]
+        );
+        data.notificationPreferences = notifPrefs[0] || null;
+
+        // Support tickets (all roles)
+        const [supportTickets] = await pool.query(
+            `SELECT ticket_id, sponsor_org_id, title, description, category, status, created_at, updated_at
+             FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.supportTickets = supportTickets;
+
+        // Messages sent by user (all roles)
+        const [sentMessages] = await pool.query(
+            `SELECT message_id, recipient_id, sponsor_org_id, message_type, message_subject, body, created_at
+             FROM messages WHERE sender_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.sentMessages = sentMessages;
+
+        // Messages received by user (all roles)
+        const [receivedMessages] = await pool.query(
+            `SELECT message_id, sender_id, sponsor_org_id, message_type, message_subject, body, read_at, created_at
+             FROM messages WHERE recipient_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.receivedMessages = receivedMessages;
+
+        data.exportedAt = new Date().toISOString();
+
+        // Send as downloadable JSON file
+        const filename = `personal-data-${userId}-${Date.now()}.json`;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(JSON.stringify(data, null, 2));
+
+    } catch (error) {
+        console.error('Error downloading personal data:', error);
+        res.status(500).json({ error: 'Failed to download personal data' });
+    }
+});
+
 export { app };
