@@ -26,6 +26,7 @@ const Catalog = () => {
     const [checkingOut, setCheckingOut] = useState(false);
     const [addingIds, setAddingIds] = useState(new Set());
     const [reviewOpen, setReviewOpen] = useState(false);
+    const [orderSummary, setOrderSummary] = useState(null);
 
     // Favorites (#768)
     const [favoriteIds, setFavoriteIds] = useState(new Set());
@@ -208,6 +209,8 @@ const Catalog = () => {
                 setCheckoutMsg({ type: 'success', text: `Order placed! ${json.points_spent.toLocaleString()} pts spent.` });
                 setCartItems([]);
                 setCartId(null);
+                setReviewOpen(false);
+                setOrderSummary(json);
                 await fetchBalance();
                 const newCartRes = await fetch('/api/cart', {
                     method: 'POST',
@@ -522,6 +525,94 @@ const Catalog = () => {
                 )}
             </div>
 
+            {/* ── Order Summary Modal ── */}
+            {orderSummary && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '32px',
+                        width: '520px',
+                        maxWidth: '95vw',
+                        maxHeight: '80vh',
+                        overflowY: 'auto',
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
+                    }}>
+                        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                            <div style={{ fontSize: '40px', marginBottom: '8px' }}>&#10003;</div>
+                            <h2 style={{ margin: 0, color: '#2e7d32' }}>Order Confirmed!</h2>
+                            <p style={{ color: '#555', fontSize: '14px', margin: '6px 0 0' }}>
+                                Order #{orderSummary.order_id}
+                            </p>
+                        </div>
+
+                        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {(orderSummary.items || []).map((item) => (
+                                <li key={item.item_id} style={{
+                                    display: 'flex', gap: '12px', alignItems: 'center',
+                                    borderBottom: '1px solid #f0f0f0', paddingBottom: '12px',
+                                }}>
+                                    <img
+                                        src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/50?text=?'}
+                                        alt={item.title}
+                                        style={{ width: '50px', height: '50px', objectFit: 'contain', flexShrink: 0 }}
+                                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/50?text=?'; }}
+                                    />
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ fontWeight: '600', fontSize: '14px' }}>{item.title}</div>
+                                        <div style={{ fontSize: '13px', color: '#666' }}>
+                                            Qty {item.quantity} &middot; {(item.points_price_at_purchase * item.quantity).toLocaleString()} pts
+                                        </div>
+                                    </div>
+                                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                        <div style={{ fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>
+                                            ${(item.price_usd_at_purchase * item.quantity).toFixed(2)}
+                                        </div>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+
+                        <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '12px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: '600' }}>
+                                <span>Points Spent</span>
+                                <span style={{ color: '#c62828' }}>{orderSummary.points_spent.toLocaleString()} pts</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: '#555' }}>
+                                <span>USD Value</span>
+                                <span>${orderSummary.total_usd.toFixed(2)}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: '#555' }}>
+                                <span>Remaining Balance</span>
+                                <span style={{ color: '#2e7d32', fontWeight: '600' }}>{orderSummary.remaining_balance.toLocaleString()} pts</span>
+                            </div>
+                        </div>
+
+                        <p style={{ fontSize: '13px', color: '#777', margin: '0 0 16px', textAlign: 'center' }}>
+                            You can enter your delivery address from the Dashboard.
+                        </p>
+
+                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                            <button
+                                onClick={() => setOrderSummary(null)}
+                                style={{
+                                    padding: '10px 24px', borderRadius: '4px', border: 'none',
+                                    background: '#1976d2', color: '#fff',
+                                    cursor: 'pointer', fontWeight: '600', fontSize: '14px',
+                                }}
+                            >
+                                Continue Shopping
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ── Order Review Modal ── */}
             {reviewOpen && (
                 <div style={{
@@ -596,16 +687,14 @@ const Catalog = () => {
                                 style={{
                                     padding: '8px 20px', borderRadius: '4px',
                                     border: '1px solid #ccc', background: '#f5f5f5',
+                                    color: '#333',
                                     cursor: checkingOut ? 'not-allowed' : 'pointer',
                                 }}
                             >
                                 Back
                             </button>
                             <button
-                                onClick={async () => {
-                                    const success = await handleCheckout();
-                                    if (success) setReviewOpen(false);
-                                }}
+                                onClick={() => handleCheckout()}
                                 disabled={checkingOut}
                                 style={{
                                     padding: '8px 20px', borderRadius: '4px', border: 'none',
