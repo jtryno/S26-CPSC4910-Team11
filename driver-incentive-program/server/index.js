@@ -1504,13 +1504,44 @@ app.get('/api/session', async (req, res) => {
 
     try {
         const [users] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [userId]);
-        if (users.length > 0) {
-            const user = users[0];
-            const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
-            res.json({ loggedIn: true, user: { ...user, sponsor_org_id } });
-        } else {
-            res.status(401).json({ loggedIn: false });
+        if (users.length === 0) {
+            return res.status(401).json({ loggedIn: false });
         }
+        const realUser = users[0];
+        const realSponsorOrgId = await getSponsorOrgId(realUser.user_id, realUser.user_type);
+
+        // Check for active impersonation
+        const impersonatingId = req.cookies.impersonating;
+        if (impersonatingId) {
+            const [targetUsers] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [impersonatingId]);
+            if (targetUsers.length > 0) {
+                const targetUser = targetUsers[0];
+
+                // Re-validate impersonation permissions
+                let permitted = false;
+                if (realUser.user_type === 'admin' && targetUser.user_type !== 'admin') {
+                    permitted = true;
+                } else if (realUser.user_type === 'sponsor' && targetUser.user_type === 'driver') {
+                    const actorOrgId = await getSponsorOrgId(realUser.user_id, 'sponsor');
+                    const targetOrgId = await getSponsorOrgId(targetUser.user_id, 'driver');
+                    permitted = actorOrgId && targetOrgId && actorOrgId === targetOrgId;
+                }
+
+                if (permitted) {
+                    const targetSponsorOrgId = await getSponsorOrgId(targetUser.user_id, targetUser.user_type);
+                    return res.json({
+                        loggedIn: true,
+                        isImpersonating: true,
+                        user: { ...targetUser, sponsor_org_id: targetSponsorOrgId },
+                        originalUser: { ...realUser, sponsor_org_id: realSponsorOrgId },
+                    });
+                }
+            }
+            // Target user gone or permissions revoked — end impersonation
+            res.clearCookie('impersonating');
+        }
+
+        res.json({ loggedIn: true, user: { ...realUser, sponsor_org_id: realSponsorOrgId } });
     } catch (error) {
         res.status(500).json({ error: 'Session check failed' });
     }
@@ -1554,7 +1585,122 @@ app.post('/api/signup', async (req, res) => {
 // --- Logout Route ---
 app.post('/api/logout', (req, res) => {
     res.clearCookie('remember_me');
+    res.clearCookie('impersonating');
     res.json({ message: 'Logged out successfully' });
+});
+
+// --- Impersonation Routes ---
+// Start impersonation: admin can assume driver/sponsor, sponsor can assume driver in same org
+app.post('/api/impersonate', async (req, res) => {
+    const realUserId = req.cookies.remember_me || req.body.actorUserId;
+    if (!realUserId) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { targetUserId } = req.body;
+    if (!targetUserId) {
+        return res.status(400).json({ error: 'targetUserId is required' });
+    }
+
+    try {
+        // Get the real (acting) user
+        const [actors] = await pool.query('SELECT user_id, username, user_type FROM users WHERE user_id = ?', [realUserId]);
+        if (actors.length === 0) {
+            return res.status(401).json({ error: 'Actor user not found' });
+        }
+        const actor = actors[0];
+
+        if (!['admin', 'sponsor'].includes(actor.user_type)) {
+            return res.status(403).json({ error: 'Only admins and sponsors can assume identities' });
+        }
+
+        // Get the target user
+        const [targets] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [targetUserId]);
+        if (targets.length === 0) {
+            return res.status(404).json({ error: 'Target user not found' });
+        }
+        const target = targets[0];
+
+        if (target.user_id === actor.user_id) {
+            return res.status(400).json({ error: 'Cannot assume your own identity' });
+        }
+
+        // Permission checks
+        if (actor.user_type === 'admin') {
+            if (target.user_type === 'admin') {
+                return res.status(403).json({ error: 'Cannot assume identity of another admin' });
+            }
+        } else if (actor.user_type === 'sponsor') {
+            if (target.user_type !== 'driver') {
+                return res.status(403).json({ error: 'Sponsors can only assume identity of drivers' });
+            }
+            // Verify same organization
+            const sponsorOrgId = await getSponsorOrgId(actor.user_id, 'sponsor');
+            const driverOrgId = await getSponsorOrgId(target.user_id, 'driver');
+            if (!sponsorOrgId || !driverOrgId || sponsorOrgId !== driverOrgId) {
+                return res.status(403).json({ error: 'Can only assume identity of drivers in your organization' });
+            }
+        }
+
+        // Set impersonation cookie (4 hour expiry)
+        res.cookie('impersonating', target.user_id, {
+            maxAge: 4 * 60 * 60 * 1000,
+            httpOnly: true,
+            sameSite: 'lax',
+        });
+
+        // Audit log
+        await pool.query(
+            `INSERT INTO impersonation_log (actor_user_id, actor_username, actor_user_type, target_user_id, target_username, target_user_type, action)
+             VALUES (?, ?, ?, ?, ?, ?, 'start')`,
+            [actor.user_id, actor.username, actor.user_type, target.user_id, target.username, target.user_type]
+        );
+
+        const targetSponsorOrgId = await getSponsorOrgId(target.user_id, target.user_type);
+        res.json({ user: { ...target, sponsor_org_id: targetSponsorOrgId } });
+    } catch (error) {
+        console.error('Impersonation start error:', error);
+        res.status(500).json({ error: 'Server error during impersonation' });
+    }
+});
+
+// Exit impersonation: restore original identity
+app.post('/api/impersonate/exit', async (req, res) => {
+    const realUserId = req.cookies.remember_me || req.body.actorUserId;
+    if (!realUserId) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const impersonatedId = req.cookies.impersonating;
+
+    try {
+        // Audit log the exit
+        if (impersonatedId) {
+            const [actors] = await pool.query('SELECT user_id, username, user_type FROM users WHERE user_id = ?', [realUserId]);
+            const [targets] = await pool.query('SELECT user_id, username, user_type FROM users WHERE user_id = ?', [impersonatedId]);
+            if (actors.length > 0 && targets.length > 0) {
+                await pool.query(
+                    `INSERT INTO impersonation_log (actor_user_id, actor_username, actor_user_type, target_user_id, target_username, target_user_type, action)
+                     VALUES (?, ?, ?, ?, ?, ?, 'exit')`,
+                    [actors[0].user_id, actors[0].username, actors[0].user_type, targets[0].user_id, targets[0].username, targets[0].user_type]
+                );
+            }
+        }
+
+        res.clearCookie('impersonating');
+
+        // Return the real user's data
+        const [users] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [realUserId]);
+        if (users.length === 0) {
+            return res.status(401).json({ error: 'User not found' });
+        }
+        const user = users[0];
+        const sponsorOrgId = await getSponsorOrgId(user.user_id, user.user_type);
+        res.json({ user: { ...user, sponsor_org_id: sponsorOrgId } });
+    } catch (error) {
+        console.error('Impersonation exit error:', error);
+        res.status(500).json({ error: 'Server error during impersonation exit' });
+    }
 });
 
 // Returns fresh user data for a given user_id, including current sponsor_org_id from the role table

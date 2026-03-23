@@ -4,6 +4,7 @@ import EditableField from '../components/EditableField';
 import SortableTable from '../components/SortableTable';
 import SignupModal from '../components/SignupModal';
 import { fetchOrganizations } from '../api/OrganizationApi';
+import { startImpersonation } from '../api/ImpersonationApi';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -1989,11 +1990,13 @@ const SponsorDashboard = ({ user }) => {
 };
 
 const AdminDashboard = ({ user }) => {
+    const navigate = useNavigate();
     const [searchEmail, setSearchEmail] = useState('');
     const [searchedUser, setSearchedUser] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
+    const [impersonating, setImpersonating] = useState(false);
 
     // Delete modal state
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -2192,8 +2195,35 @@ const AdminDashboard = ({ user }) => {
                         </div>
                     </div>
 
-                    {/* Delete User Button */}
-                    <div style={{ marginTop: '28px', borderTop: '1px solid #e0e0e0', paddingTop: '20px' }}>
+                    {/* Action Buttons */}
+                    <div style={{ marginTop: '28px', borderTop: '1px solid #e0e0e0', paddingTop: '20px', display: 'flex', gap: '12px' }}>
+                        {searchedUser.user_type !== 'admin' && (
+                            <button
+                                onClick={async () => {
+                                    setImpersonating(true);
+                                    try {
+                                        await startImpersonation(searchedUser.user_id);
+                                        navigate('/dashboard');
+                                    } catch (err) {
+                                        setError(err.message || 'Failed to assume identity');
+                                        setImpersonating(false);
+                                    }
+                                }}
+                                disabled={impersonating}
+                                style={{
+                                    padding: '8px 20px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #1976d2',
+                                    background: '#1976d2',
+                                    color: '#fff',
+                                    cursor: impersonating ? 'not-allowed' : 'pointer',
+                                    fontSize: '14px',
+                                    fontWeight: '600',
+                                }}
+                            >
+                                {impersonating ? 'Switching...' : 'Assume Identity'}
+                            </button>
+                        )}
                         <button
                             onClick={() => { setDeleteMsg(null); setDeleteModalOpen(true); }}
                             style={{

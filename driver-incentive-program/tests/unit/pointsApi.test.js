@@ -848,7 +848,21 @@ describe('POST /api/orders (points redemption)', () => {
             .mockResolvedValueOnce([{}])                                // INSERT order_items
             .mockResolvedValueOnce([{}])                                // INSERT point_transaction (deduction)
             .mockResolvedValueOnce([{}]);                               // UPDATE cart status
-        pool.query.mockResolvedValue([{}]);                             // notifications
+        // After commit, pool.query is used for:
+        //   1. createNotification: pref lookup (order_placed_enabled)
+        //   2. createNotification: INSERT notification
+        //   3. Fetch order items for response summary
+        pool.query
+            .mockResolvedValueOnce([[{ order_placed_enabled: 1 }]])      // createNotification: pref check
+            .mockResolvedValueOnce([{}])                                 // createNotification: INSERT notification
+            .mockResolvedValueOnce([cfg.items.map(i => ({               // Fetch order items for summary
+                item_id: i.item_id,
+                quantity: i.quantity,
+                points_price_at_purchase: i.points_price,
+                price_usd_at_purchase: parseFloat(i.last_price_value),
+                title: `Item ${i.item_id}`,
+                image_url: null,
+            }))]);
     };
 
     // All three fields (driverUserId, sponsorOrgId, cartId) are required
@@ -970,7 +984,15 @@ describe('POST /api/orders (points redemption)', () => {
             .mockResolvedValueOnce([{}])
             .mockResolvedValueOnce([{}])
             .mockResolvedValueOnce([{}]);
-        pool.query.mockResolvedValue([{}]);
+        pool.query
+            .mockResolvedValueOnce([[{ order_placed_enabled: 1 }]])      // createNotification: pref check
+            .mockResolvedValueOnce([{}])                                 // createNotification: INSERT
+            .mockResolvedValueOnce([[{                                   // Fetch order items for summary
+                item_id: 1, quantity: 3,
+                points_price_at_purchase: 150,
+                price_usd_at_purchase: 15.00,
+                title: 'Item 1', image_url: null,
+            }]]);
 
         const res = await request(app).post('/api/orders').send(validOrder);
 
