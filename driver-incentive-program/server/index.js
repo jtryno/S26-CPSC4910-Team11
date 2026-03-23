@@ -355,6 +355,7 @@ const DRIVER_IMPORT_HEADER_ALIASES = {
 const DRIVER_IMPORT_REQUIRED_HEADERS = ['firstName', 'lastName', 'email'];
 const DRIVER_IMPORT_MAX_ROWS = 250;
 
+// Normalizes header text so variants like "first_name" and "First Name" map the same way.
 function normalizeCsvHeader(header) {
     return String(header || '')
         .trim()
@@ -362,8 +363,8 @@ function normalizeCsvHeader(header) {
         .replace(/[^a-z0-9]/g, '');
 }
 
+// Parses raw CSV text into rows while still handling quoted commas and line breaks.
 function parseCsvText(text) {
-    // Handles quoted commas/newlines so sponsors can upload spreadsheet-exported CSVs.
     const input = String(text || '').replace(/^\uFEFF/, '');
     const rows = [];
     let row = [];
@@ -414,6 +415,7 @@ function parseCsvText(text) {
     return rows.filter(currentRow => currentRow.some(cell => String(cell || '').trim() !== ''));
 }
 
+// Uses a lightweight check to catch obviously invalid email values before DB work starts.
 function isLikelyEmail(value) {
     const trimmed = String(value || '').trim();
     if (!trimmed) return false;
@@ -427,6 +429,7 @@ function isLikelyEmail(value) {
         !parts[1].endsWith('.');
 }
 
+// Formats 10-digit phone numbers into the same display format the app already uses.
 function formatPhoneNumber(value) {
     const digitsOnly = String(value || '').replace(/\D/g, '');
     if (!digitsOnly) return null;
@@ -435,6 +438,7 @@ function formatPhoneNumber(value) {
     return `(${digitsOnly.slice(0, 3)}) ${digitsOnly.slice(3, 6)}-${digitsOnly.slice(6, 10)}`;
 }
 
+// Converts uploaded usernames into the lowercase underscore format we store in the DB.
 function sanitizeUsername(value) {
     return String(value || '')
         .trim()
@@ -444,8 +448,8 @@ function sanitizeUsername(value) {
         .replace(/^_+|_+$/g, '');
 }
 
+// Builds a strong placeholder password for accounts that still need to finish onboarding.
 function generateTemporaryPassword() {
-    // Build a strong placeholder password for accounts that still need to finish onboarding.
     const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
     const lowercase = 'abcdefghijkmnopqrstuvwxyz';
     const digits = '23456789';
@@ -470,6 +474,7 @@ function generateTemporaryPassword() {
     return chars.join('');
 }
 
+// Finds an unused username by checking both this CSV batch and the existing users table.
 async function findAvailableUsername(connection, desiredBase, reservedUsernames = new Set()) {
     let base = sanitizeUsername(desiredBase);
     if (!base || base.length < 3) {
@@ -497,6 +502,7 @@ async function findAvailableUsername(connection, desiredBase, reservedUsernames 
     }
 }
 
+// Creates the password reset token we reuse for onboarding links and normal resets.
 async function createPasswordResetToken(userId, connection = pool) {
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -509,7 +515,7 @@ async function createPasswordResetToken(userId, connection = pool) {
     return { token, expiresAt };
 }
 
-// Reuse one error shape so helper validation can return clean 4xx responses.
+// Creates a consistent error object so helper functions can bubble clean 4xx responses back up.
 function createHttpError(status, message, details = {}) {
     const error = new Error(message);
     error.status = status;
@@ -517,10 +523,12 @@ function createHttpError(status, message, details = {}) {
     return error;
 }
 
+// Treats rows with only empty cells as blank so they can be skipped cleanly.
 function isNonEmptyCsvRow(row) {
     return row.some(cell => String(cell || '').trim() !== '');
 }
 
+// Shapes failed row results so the modal can render them the same way every time.
 function buildFailedImportResult(baseResult, errorMessage) {
     return {
         ...baseResult,
@@ -529,7 +537,7 @@ function buildFailedImportResult(baseResult, errorMessage) {
     };
 }
 
-// Confirms the caller can import into this organization and returns the org record.
+// Confirms the acting user can import into this organization and returns the org record.
 async function authorizeOrganizationImport(requestingUserId, sponsorOrgId) {
     const [requesterRows] = await pool.query(
         'SELECT user_id, user_type FROM users WHERE user_id = ?',
@@ -571,7 +579,7 @@ async function authorizeOrganizationImport(requestingUserId, sponsorOrgId) {
     return organizationRows[0];
 }
 
-// Parse and validate the shared CSV structure once before walking the rows.
+// Parses the upload once and validates the shared CSV rules before we touch any data rows.
 function parseOrganizationImportCsv(csvText) {
     let parsedRows;
 
@@ -625,7 +633,7 @@ function parseOrganizationImportCsv(csvText) {
     return { headers, dataRows };
 }
 
-// Maps one CSV row onto the field names used by the importer.
+// Maps one raw CSV row onto the normalized field names used by the importer.
 function mapOrganizationImportRow(headers, row) {
     const rowData = {};
 
@@ -638,7 +646,7 @@ function mapOrganizationImportRow(headers, row) {
     return rowData;
 }
 
-// Builds the shared result object the UI uses for imported and failed rows.
+// Builds the shared result shape the UI uses for both imported and failed rows.
 function createImportBaseResult(rowData, rowNumber, userRole) {
     return {
         rowNumber,
@@ -649,7 +657,7 @@ function createImportBaseResult(rowData, rowNumber, userRole) {
     };
 }
 
-// Validate a row up front so DB work only runs for rows that are shaped correctly.
+// Validates and normalizes one CSV row before any inserts or uniqueness checks run.
 function prepareOrganizationImportRow(rowData, baseResult, reservedEmails, reservedUsernames) {
     const { firstName, lastName, email } = baseResult;
 
@@ -724,7 +732,7 @@ function prepareOrganizationImportRow(rowData, baseResult, reservedEmails, reser
     };
 }
 
-// Keeps provided usernames when possible and generates one when the CSV leaves it blank.
+// Reuses a provided username when valid, otherwise generates the next available username.
 async function resolveImportedUsername(connection, preparedRow, reservedUsernames) {
     if (preparedRow.providedUsername) {
         const [existingUsernameRows] = await connection.query(
@@ -746,7 +754,7 @@ async function resolveImportedUsername(connection, preparedRow, reservedUsername
     return findAvailableUsername(connection, preparedRow.usernameSeed, reservedUsernames);
 }
 
-// Writes the imported user into the matching organization membership table.
+// Inserts the new user into the role-specific organization table after the base user record is created.
 function insertOrganizationMembership(connection, userId, sponsorOrgId, userRole, requestingUserId) {
     if (userRole === 'driver') {
         return connection.query(
@@ -761,11 +769,12 @@ function insertOrganizationMembership(connection, userId, sponsorOrgId, userRole
     );
 }
 
+// Builds the frontend password setup link that imported users can follow to finish onboarding.
 function createOnboardingPath(token) {
     return `/password-reset?token=${encodeURIComponent(token)}&mode=onboarding`;
 }
 
-// Returns an onboarding link only when the imported user still needs to set a password.
+// Creates onboarding details only for imports where the CSV did not provide a password.
 async function createOnboardingDetails(connection, userId, needsOnboarding) {
     if (!needsOnboarding) {
         return {
@@ -781,7 +790,7 @@ async function createOnboardingDetails(connection, userId, needsOnboarding) {
     };
 }
 
-// Import each row in its own transaction so one bad record does not cancel the whole file.
+// Imports one row inside its own transaction so a single bad record does not cancel the whole file.
 async function importOrganizationUserRow({
     connection,
     preparedRow,
@@ -866,7 +875,7 @@ async function importOrganizationUserRow({
     }
 }
 
-// Normalizes row-level errors so the UI gets consistent messages.
+// Converts row-level exceptions into the simpler messages shown in the import results table.
 function formatImportRowError(error) {
     if (error?.status && error?.message) {
         return error.message;
