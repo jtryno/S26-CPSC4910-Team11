@@ -1,14 +1,17 @@
 import React from 'react';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import SortableTable from '../../../components/SortableTable';
 import SignupModal from '../../../components/SignupModal';
 import { dropDriver } from '../../../api/UserApi';
+import { startImpersonation } from '../../../api/ImpersonationApi';
 import Modal from '../../../components/Modal';
 import InputField from '../../../components/InputField';
 import SponsorPurchaseModal from './SponsorPurchaseModal';
 import DriverCsvImportModal from './DriverCSVImportModal';
 
 const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgId}) => {
+    const navigate = useNavigate();
     const [signupModalOpen, setSignupModalOpen] = useState(false);
     const [csvImportOpen, setCsvImportOpen] = useState(false);
     const [isRemoveOpen, setRemoveOpen] = useState(false);
@@ -82,6 +85,24 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                 actions={(() => {
                     if (canManageMembers) {
                         return [
+                            {
+                                label: 'View As',
+                                render: (row) => (row.user_type === 'driver' || (userData?.user_type === 'admin' && row.user_type === 'sponsor')) ? (
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                await startImpersonation(row.user_id);
+                                                navigate('/dashboard');
+                                            } catch (err) {
+                                                alert(err.message || 'Failed to assume identity');
+                                            }
+                                        }}
+                                        style={{ backgroundColor: '#ff9800', color: '#1a1a1a', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600' }}
+                                    >
+                                        View As
+                                    </button>
+                                ) : null,
+                            },
                             {
                                 label: 'Purchase for Driver',
                                 render: (row) => row.user_type === 'driver' ? (
