@@ -2239,7 +2239,28 @@ app.post('/api/orders', async (req, res) => {
 
         await conn.commit();
         await createNotification(driverUserId, 'order_placed', `Your order #${orderId} was placed successfully for ${totalPoints.toLocaleString()} points.`, {related_order_id: orderId});
-        res.json({ message: 'Order placed successfully', order_id: orderId, points_spent: totalPoints });
+
+        // Fetch full order details for the summary
+        const [orderItems] = await pool.query(
+            `SELECT oi.item_id, oi.quantity, oi.points_price_at_purchase, oi.price_usd_at_purchase,
+                    ci.title, ci.image_url
+             FROM order_items oi
+             JOIN catalog_items ci ON oi.item_id = ci.item_id
+             WHERE oi.order_id = ?`,
+            [orderId]
+        );
+
+        const totalUsd = orderItems.reduce((sum, i) => sum + (i.price_usd_at_purchase * i.quantity), 0);
+        const remainingBalance = driverRow.current_points_balance - totalPoints;
+
+        res.json({
+            message: 'Order placed successfully',
+            order_id: orderId,
+            points_spent: totalPoints,
+            total_usd: totalUsd,
+            remaining_balance: remainingBalance,
+            items: orderItems,
+        });
     } catch (error) {
         await conn.rollback();
         console.error('Error placing order:', error);
