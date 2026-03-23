@@ -2,14 +2,15 @@ import React from 'react';
 import { useState } from 'react';
 import SortableTable from '../../../components/SortableTable';
 import SignupModal from '../../../components/SignupModal';
-import { removeFromOrganization } from '../../../api/UserApi';
 import { dropDriver } from '../../../api/UserApi';
 import Modal from '../../../components/Modal';
 import InputField from '../../../components/InputField';
 import SponsorPurchaseModal from './SponsorPurchaseModal';
+import DriverCsvImportModal from './DriverCSVImportModal';
 
 const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgId}) => {
     const [signupModalOpen, setSignupModalOpen] = useState(false);
+    const [csvImportOpen, setCsvImportOpen] = useState(false);
     const [isRemoveOpen, setRemoveOpen] = useState(false);
     const [selectedMember, setSelectedMember] = useState(null);
     const [dropReason, setDropReason] = useState('');
@@ -21,17 +22,27 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
         setDropReason('');
     }
 
-    const isSponsorOrAdmin = userData?.user_type === 'sponsor' || userData?.user_type === 'admin';
+    // Sponsors only get member-management actions inside their own organization; admins always can.
+    const canManageMembers = userData?.user_type === 'admin' ||
+        (userData?.user_type === 'sponsor' && Number(userData?.sponsor_org_id) === Number(orgId));
 
     return (
         <div style={{ display: 'grid', direction: 'column', margin: '20px', gap: '20px'}}>
-            { userData.user_type !== 'driver' &&
-                <button
-                    style={{ width: '200px'}}
-                    onClick={() => setSignupModalOpen(true)}
-                >
-                    Create Org User
-                </button>
+            { canManageMembers &&
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                        style={{ width: '200px'}}
+                        onClick={() => setSignupModalOpen(true)}
+                    >
+                        Create Org User
+                    </button>
+                    <button
+                        style={{ width: '200px'}}
+                        onClick={() => setCsvImportOpen(true)}
+                    >
+                        Import Drivers/Sponsors CSV
+                    </button>
+                </div>
             }
             <SignupModal
                 isOpen={signupModalOpen}
@@ -44,13 +55,20 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                 orgId={orgId}
                 createdByUserId={userData?.user_id}
             />
+            <DriverCsvImportModal
+                isOpen={csvImportOpen}
+                onClose={() => setCsvImportOpen(false)}
+                orgId={orgId}
+                requestingUserId={userData?.user_id}
+                onImported={fetchOrg}
+            />
             <SortableTable
                 columns={[
                     { key: 'user_id', label: 'User ID', sortable: true },
                     { key: 'username', label: 'Username', sortable: true },
                     { key: 'user_type', label: 'Role', sortable: true },
-                    ...(isSponsorOrAdmin ? [{ key: 'points', label: 'Points', sortable: true }] : []),
-                    ...(isSponsorOrAdmin ? [{
+                    ...(canManageMembers ? [{ key: 'points', label: 'Points', sortable: true }] : []),
+                    ...(canManageMembers ? [{
                         key: 'last_login',
                         label: 'Last Login',
                         sortable: true,
@@ -62,7 +80,7 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                     }] : []),
                 ]}
                 actions={(() => {
-                    if(userData?.user_type !== 'driver') {
+                    if (canManageMembers) {
                         return [
                             {
                                 label: 'Purchase for Driver',
