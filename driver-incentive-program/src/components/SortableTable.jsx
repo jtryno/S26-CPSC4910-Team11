@@ -65,7 +65,9 @@ const SortableTable = ({ columns, data, actions }) => {
                         </th>
                     ))}
                     {actions && actions.map((action, actionIndex) => (
-                        <th key={actionIndex} style={{ textAlign: 'left', padding: '2px' }}>{action.label}</th>
+                        <th key={actionIndex} style={{ textAlign: 'left', padding: '2px' }}>
+                            {typeof action.label === 'function' ? action.headerLabel || '' : action.label}
+                        </th>
                     ))}
                 </tr>
             </thead>
@@ -85,7 +87,7 @@ const SortableTable = ({ columns, data, actions }) => {
                             <td key={actionIndex} style={{ padding: '2px' }}>
                                 {action.render ? action.render(row) : (
                                     <button style={{ backgroundColor: action.color || '#007bff', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px' }} onClick={() => action.onClick(row)}>
-                                        {action.label}
+                                        {typeof action.label === 'function' ? action.label(row) : action.label}
                                     </button>
                                 )}
                             </td>

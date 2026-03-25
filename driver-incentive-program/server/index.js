@@ -132,7 +132,8 @@ async function searchEbayCatalog(query = null, limit = 30) {
                         image,
                         rawImageUrl: rawImageUrl || '',
                         itemWebUrl: item.itemWebUrl || '',
-                        itemId: item.itemId
+                        itemId: item.itemId,
+                        category: item.categories?.[0]?.categoryName || null,
                     };
                 });
 
@@ -2683,11 +2684,15 @@ app.get('/api/catalog/org/:sponsorOrgId', async (req, res) => {
     const { sponsorOrgId } = req.params;
     try {
         const [rows] = await pool.query(
-            `SELECT ci.*, so.point_value
+            `SELECT ci.*, so.point_value,
+                (SELECT COUNT(DISTINCT o.driver_user_id)
+                 FROM order_items oi
+                 JOIN orders o ON oi.order_id = o.order_id
+                 WHERE oi.item_id = ci.item_id AND o.status != 'cancelled') AS driver_purchase_count
              FROM catalog_items ci
              JOIN sponsor_organization so ON ci.sponsor_org_id = so.sponsor_org_id
              WHERE ci.sponsor_org_id = ? AND ci.is_active = 1
-             ORDER BY ci.created_at DESC`,
+             ORDER BY ci.is_featured DESC, ci.created_at DESC`,
             [sponsorOrgId]
         );
         res.json({ items: rows });
@@ -2700,7 +2705,7 @@ app.get('/api/catalog/org/:sponsorOrgId', async (req, res) => {
 // POST /api/catalog/org/:sponsorOrgId/items — sponsor adds eBay item to catalog
 app.post('/api/catalog/org/:sponsorOrgId/items', async (req, res) => {
     const { sponsorOrgId } = req.params;
-    const { ebay_item_id, title, item_web_url, image_url, description, last_price_value } = req.body;
+    const { ebay_item_id, title, item_web_url, image_url, description, last_price_value, category } = req.body;
     if (!ebay_item_id || !title || !last_price_value) {
         return res.status(400).json({ error: 'ebay_item_id, title, and last_price_value are required' });
     }
@@ -2718,10 +2723,10 @@ app.post('/api/catalog/org/:sponsorOrgId/items', async (req, res) => {
             `INSERT INTO catalog_items
                (sponsor_org_id, ebay_item_id, title, item_web_url, image_url, description,
                 last_price_value, last_price_currency, availability_status, last_api_refresh_at,
-                points_price, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', 'in_stock', NOW(), ?, 1)`,
+                points_price, is_active, category)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', 'in_stock', NOW(), ?, 1, ?)`,
             [sponsorOrgId, ebay_item_id, title, item_web_url || null, image_url || null,
-             description || null, last_price_value, points_price]
+             description || null, last_price_value, points_price, category || null]
         );
         res.status(201).json({ message: 'Item added to catalog', item_id: result.insertId });
     } catch (error) {
@@ -2755,6 +2760,39 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
     } catch (error) {
         console.error('Error removing catalog item:', error);
         res.status(500).json({ error: 'Failed to remove item' });
+    }
+});
+
+// PUT /api/catalog/items/:itemId/featured — sponsor toggles featured flag (#6249)
+app.put('/api/catalog/items/:itemId/featured', async (req, res) => {
+    const { itemId } = req.params;
+    const { is_featured } = req.body;
+    try {
+        await pool.query(
+            'UPDATE catalog_items SET is_featured = ?, updated_at = NOW() WHERE item_id = ?',
+            [is_featured ? 1 : 0, itemId]
+        );
+        res.json({ message: 'Featured status updated' });
+    } catch (error) {
+        console.error('Error updating featured status:', error);
+        res.status(500).json({ error: 'Failed to update featured status' });
+    }
+});
+
+// PUT /api/catalog/items/:itemId/sale-price — sponsor sets/clears a sale price (#6224)
+app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
+    const { itemId } = req.params;
+    const { sale_price } = req.body;
+    const price = sale_price !== undefined && sale_price !== '' ? parseFloat(sale_price) : null;
+    try {
+        await pool.query(
+            'UPDATE catalog_items SET sale_price = ?, updated_at = NOW() WHERE item_id = ?',
+            [price, itemId]
+        );
+        res.json({ message: 'Sale price updated' });
+    } catch (error) {
+        console.error('Error updating sale price:', error);
+        res.status(500).json({ error: 'Failed to update sale price' });
     }
 });
 

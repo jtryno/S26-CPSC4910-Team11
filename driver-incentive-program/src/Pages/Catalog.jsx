@@ -21,6 +21,7 @@ const Catalog = () => {
     const [cartId, setCartId] = useState(null);
     const [cartItems, setCartItems] = useState([]);
     const [cartOpen, setCartOpen] = useState(false);
+    const [cartRestored, setCartRestored] = useState(false);
 
     const [checkoutMsg, setCheckoutMsg] = useState(null);
     const [checkingOut, setCheckingOut] = useState(false);
@@ -35,6 +36,11 @@ const Catalog = () => {
 
     // Recently viewed (#750)
     const [recentlyViewed, setRecentlyViewed] = useState([]);
+
+    // Sort & filter (#6221, #6224, #6282)
+    const [sortBy, setSortBy] = useState('featured');
+    const [showOnSaleOnly, setShowOnSaleOnly] = useState(false);
+    const [selectedCategories, setSelectedCategories] = useState(new Set());
 
     const sponsorOrgId = user?.sponsor_org_id;
     const driverUserId = user?.user_id;
@@ -55,7 +61,10 @@ const Catalog = () => {
             const res = await fetch(`/api/cart/${id}`);
             if (res.ok) {
                 const d = await res.json();
-                setCartItems(d.items || []);
+                const items = d.items || [];
+                setCartItems(items);
+                // Show "cart restored" banner if items were already saved (#6247)
+                if (items.length > 0) setCartRestored(true);
             }
         } catch { /* non-critical */ }
     }, []);
@@ -122,6 +131,13 @@ const Catalog = () => {
         init();
     }, [sponsorOrgId, driverUserId, fetchBalance, fetchCart, fetchFavorites, fetchRecentlyViewed]);
 
+    // Auto-dismiss cart restored banner after 4s
+    useEffect(() => {
+        if (!cartRestored) return;
+        const t = setTimeout(() => setCartRestored(false), 4000);
+        return () => clearTimeout(t);
+    }, [cartRestored]);
+
     // Fire-and-forget: record that the driver viewed this item
     const recordView = useCallback((itemId) => {
         if (!driverUserId || !itemId) return;
@@ -138,7 +154,6 @@ const Catalog = () => {
         if (togglingFavorites.has(item.item_id)) return;
         setTogglingFavorites(prev => new Set([...prev, item.item_id]));
         const isFav = favoriteIds.has(item.item_id);
-        // Optimistic update
         setFavoriteIds(prev => {
             const next = new Set(prev);
             if (isFav) next.delete(item.item_id); else next.add(item.item_id);
@@ -155,7 +170,6 @@ const Catalog = () => {
                 });
             }
         } catch {
-            // Rollback optimistic update on error
             setFavoriteIds(prev => {
                 const next = new Set(prev);
                 if (isFav) next.add(item.item_id); else next.delete(item.item_id);
@@ -176,9 +190,7 @@ const Catalog = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ itemId: item.item_id, quantity: 1 }),
             });
-            if (res.ok) {
-                await fetchCart(cartId);
-            }
+            if (res.ok) await fetchCart(cartId);
         } catch { /* non-critical */ }
         setAddingIds(prev => { const next = new Set(prev); next.delete(item.item_id); return next; });
     };
@@ -192,6 +204,8 @@ const Catalog = () => {
     };
 
     const cartTotal = cartItems.reduce((sum, ci) => sum + ci.points_price_at_add * ci.quantity, 0);
+    // Total quantity across all cart items (#6226)
+    const cartTotalQty = cartItems.reduce((sum, ci) => sum + ci.quantity, 0);
     const canCheckout = cartItems.length > 0 && cartTotal <= balance;
 
     const handleCheckout = async () => {
@@ -234,6 +248,55 @@ const Catalog = () => {
         }
     };
 
+    // ── Filtering & sorting (#6221, #6224, #6282) ──────────────────────────────
+
+    // Unique non-null categories from catalog for the filter UI
+    const availableCategories = [...new Set(
+        catalogItems.map(i => i.category).filter(Boolean)
+    )].sort();
+
+    const toggleCategory = (cat) => {
+        setSelectedCategories(prev => {
+            const next = new Set(prev);
+            if (next.has(cat)) next.delete(cat); else next.add(cat);
+            return next;
+        });
+    };
+
+    const isOnSale = (item) =>
+        item.sale_price !== null && item.sale_price !== undefined &&
+        parseFloat(item.sale_price) < parseFloat(item.last_price_value);
+
+    let displayedItems = catalogItems;
+    if (showFavoritesOnly) displayedItems = displayedItems.filter(i => favoriteIds.has(i.item_id));
+    if (showOnSaleOnly) displayedItems = displayedItems.filter(isOnSale);
+    if (selectedCategories.size > 0) displayedItems = displayedItems.filter(i => selectedCategories.has(i.category));
+
+    displayedItems = [...displayedItems].sort((a, b) => {
+        // Featured items always float to top (#6249)
+        const featuredDiff = (b.is_featured ? 1 : 0) - (a.is_featured ? 1 : 0);
+        if (featuredDiff !== 0) return featuredDiff;
+
+        switch (sortBy) {
+            case 'oldest':
+                return new Date(a.created_at) - new Date(b.created_at);
+            case 'price_asc':
+                return parseFloat(a.points_price) - parseFloat(b.points_price);
+            case 'price_desc':
+                return parseFloat(b.points_price) - parseFloat(a.points_price);
+            case 'name_asc':
+                return a.title.localeCompare(b.title);
+            case 'on_sale': {
+                const aSale = isOnSale(a) ? 1 : 0;
+                const bSale = isOnSale(b) ? 1 : 0;
+                if (bSale !== aSale) return bSale - aSale;
+                return new Date(b.created_at) - new Date(a.created_at);
+            }
+            default: // newest
+                return new Date(b.created_at) - new Date(a.created_at);
+        }
+    });
+
     if (!user || !sponsorOrgId) {
         return (
             <div className="catalog-page">
@@ -246,19 +309,34 @@ const Catalog = () => {
     if (loading) return <div className="catalog-page"><h1>Catalog</h1><p>Loading...</p></div>;
     if (error) return <div className="catalog-page"><h1>Catalog</h1><p>Error: {error}</p></div>;
 
-    const displayedItems = showFavoritesOnly
-        ? catalogItems.filter(item => favoriteIds.has(item.item_id))
-        : catalogItems;
-
     return (
         <div className="catalog-page" style={{ position: 'relative' }}>
+            {/* Cart restored banner (#6247) */}
+            {cartRestored && (
+                <div style={{
+                    marginBottom: '12px',
+                    padding: '8px 14px',
+                    borderRadius: '4px',
+                    background: '#e3f2fd',
+                    color: '#1565c0',
+                    fontSize: '13px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                }}>
+                    <span>Your cart was restored with {cartTotalQty} item{cartTotalQty !== 1 ? 's' : ''}.</span>
+                    <button onClick={() => setCartRestored(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'inherit' }}>×</button>
+                </div>
+            )}
+
             {/* Header row */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h1 style={{ margin: 0 }}>Catalog</h1>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <span style={{ fontSize: '14px', color: '#555' }}>
                         Balance: <strong style={{ color: '#2e7d32' }}>{balance.toLocaleString()} pts</strong>
                     </span>
+
                     {/* Favorites filter toggle */}
                     <button
                         onClick={() => setShowFavoritesOnly(v => !v)}
@@ -275,10 +353,29 @@ const Catalog = () => {
                     >
                         {showFavoritesOnly ? '♥ Favorites' : '♡ Favorites'}{favoriteIds.size > 0 ? ` (${favoriteIds.size})` : ''}
                     </button>
-                    {/* Cart toggle */}
+
+                    {/* On Sale filter toggle (#6224) */}
+                    <button
+                        onClick={() => setShowOnSaleOnly(v => !v)}
+                        style={{
+                            padding: '8px 14px',
+                            borderRadius: '4px',
+                            border: `1px solid ${showOnSaleOnly ? '#e65100' : '#ccc'}`,
+                            background: showOnSaleOnly ? '#fff3e0' : '#fff',
+                            color: showOnSaleOnly ? '#e65100' : '#555',
+                            cursor: 'pointer',
+                            fontWeight: '600',
+                            fontSize: '14px',
+                        }}
+                    >
+                        On Sale{catalogItems.filter(isOnSale).length > 0 ? ` (${catalogItems.filter(isOnSale).length})` : ''}
+                    </button>
+
+                    {/* Cart toggle with total quantity badge (#6226) */}
                     <button
                         onClick={() => { setCartOpen(o => !o); setCheckoutMsg(null); }}
                         style={{
+                            position: 'relative',
                             padding: '8px 16px',
                             borderRadius: '4px',
                             border: '1px solid #1976d2',
@@ -289,9 +386,99 @@ const Catalog = () => {
                             fontSize: '14px',
                         }}
                     >
-                        Cart {cartItems.length > 0 ? `(${cartItems.length})` : ''}
+                        Cart
+                        {cartTotalQty > 0 && (
+                            <span style={{
+                                position: 'absolute',
+                                top: '-8px',
+                                right: '-8px',
+                                background: '#c62828',
+                                color: '#fff',
+                                borderRadius: '50%',
+                                minWidth: '20px',
+                                height: '20px',
+                                fontSize: '11px',
+                                fontWeight: '700',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '0 4px',
+                                lineHeight: 1,
+                            }}>
+                                {cartTotalQty}
+                            </span>
+                        )}
                     </button>
                 </div>
+            </div>
+
+            {/* Sort & Category filter bar (#6221, #6282) */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                {/* Sort dropdown */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <label style={{ fontSize: '13px', color: '#555', whiteSpace: 'nowrap' }}>Sort by:</label>
+                    <select
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value)}
+                        style={{
+                            padding: '6px 10px',
+                            borderRadius: '4px',
+                            border: '1px solid #ccc',
+                            fontSize: '13px',
+                            background: '#fff',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        <option value="featured">Featured First</option>
+                        <option value="newest">Newest</option>
+                        <option value="oldest">Oldest</option>
+                        <option value="price_asc">Price: Low to High</option>
+                        <option value="price_desc">Price: High to Low</option>
+                        <option value="name_asc">Name: A–Z</option>
+                        <option value="on_sale">On Sale First</option>
+                    </select>
+                </div>
+
+                {/* Multi-category filter (#6282) */}
+                {availableCategories.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '13px', color: '#555', whiteSpace: 'nowrap' }}>Categories:</span>
+                        {availableCategories.map(cat => (
+                            <label
+                                key={cat}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    padding: '4px 10px',
+                                    borderRadius: '12px',
+                                    border: `1px solid ${selectedCategories.has(cat) ? '#1976d2' : '#ccc'}`,
+                                    background: selectedCategories.has(cat) ? '#e3f2fd' : '#fff',
+                                    color: selectedCategories.has(cat) ? '#1976d2' : '#555',
+                                    fontSize: '12px',
+                                    cursor: 'pointer',
+                                    userSelect: 'none',
+                                }}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedCategories.has(cat)}
+                                    onChange={() => toggleCategory(cat)}
+                                    style={{ display: 'none' }}
+                                />
+                                {cat}
+                            </label>
+                        ))}
+                        {selectedCategories.size > 0 && (
+                            <button
+                                onClick={() => setSelectedCategories(new Set())}
+                                style={{ fontSize: '12px', color: '#999', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
 
             <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
@@ -299,93 +486,166 @@ const Catalog = () => {
                 <div style={{ flex: 1 }}>
                     {displayedItems.length === 0 ? (
                         <p style={{ color: '#888' }}>
-                            {showFavoritesOnly ? 'No favorited items yet. Click ♡ on any product to save it.' : 'No items in the catalog yet.'}
+                            {showFavoritesOnly ? 'No favorited items yet. Click ♡ on any product to save it.'
+                                : showOnSaleOnly ? 'No sale items right now.'
+                                : selectedCategories.size > 0 ? 'No items match the selected categories.'
+                                : 'No items in the catalog yet.'}
                         </p>
                     ) : (
                         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
-                            {displayedItems.map((item) => (
-                                <li key={item.item_id} style={{
-                                    border: '1px solid #e0e0e0',
-                                    borderRadius: '8px',
-                                    padding: '16px',
-                                    background: '#fff',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '8px',
-                                    position: 'relative',
-                                }}>
-                                    {/* Favorite heart button (#768) */}
-                                    <button
-                                        onClick={() => handleToggleFavorite(item)}
-                                        disabled={togglingFavorites.has(item.item_id)}
-                                        title={favoriteIds.has(item.item_id) ? 'Remove from favorites' : 'Add to favorites'}
-                                        style={{
-                                            position: 'absolute',
-                                            top: '10px',
-                                            right: '10px',
-                                            background: 'none',
-                                            border: 'none',
-                                            cursor: togglingFavorites.has(item.item_id) ? 'default' : 'pointer',
-                                            fontSize: '20px',
-                                            lineHeight: 1,
-                                            color: favoriteIds.has(item.item_id) ? '#c62828' : '#ccc',
-                                            padding: 0,
-                                        }}
-                                    >
-                                        {favoriteIds.has(item.item_id) ? '♥' : '♡'}
-                                    </button>
+                            {displayedItems.map((item) => {
+                                const onSale = isOnSale(item);
+                                const salePts = onSale
+                                    ? Math.ceil(parseFloat(item.sale_price) / parseFloat(item.last_price_value) * parseFloat(item.points_price))
+                                    : null;
 
-                                    {/* Stock badge (#616) */}
-                                    <span style={statusBadgeStyle(item.availability_status)}>
-                                        {item.availability_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
-                                    </span>
+                                return (
+                                    <li key={item.item_id} style={{
+                                        border: item.is_featured ? '2px solid #fbc02d' : '1px solid #e0e0e0',
+                                        borderRadius: '8px',
+                                        padding: '16px',
+                                        background: '#fff',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '8px',
+                                        position: 'relative',
+                                    }}>
+                                        {/* Featured badge (#6249) */}
+                                        {item.is_featured ? (
+                                            <span style={{
+                                                position: 'absolute',
+                                                top: '8px',
+                                                left: '8px',
+                                                background: '#fbc02d',
+                                                color: '#fff',
+                                                fontSize: '10px',
+                                                fontWeight: '700',
+                                                padding: '2px 6px',
+                                                borderRadius: '10px',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: '0.5px',
+                                            }}>
+                                                Featured
+                                            </span>
+                                        ) : null}
 
-                                    <img
-                                        src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/150?text=No+Image'}
-                                        alt={item.title}
-                                        style={{ width: '100%', height: '150px', objectFit: 'contain' }}
-                                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/150?text=No+Image'; }}
-                                    />
-                                    <div style={{ fontWeight: '600', fontSize: '14px', paddingRight: '24px' }}>{item.title}</div>
-                                    <div style={{ fontSize: '13px', color: '#666' }}>{item.description}</div>
-                                    <div style={{ fontSize: '14px', color: '#1a1a1a' }}>
-                                        ${parseFloat(item.last_price_value).toFixed(2)}&nbsp;/&nbsp;
-                                        <strong style={{ color: '#1565c0' }}>{Number(item.points_price).toLocaleString()} pts</strong>
-                                    </div>
-                                    {item.item_web_url && (
-                                        <a
-                                            href={item.item_web_url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={() => recordView(item.item_id)}
-                                            style={{ fontSize: '12px', color: '#1976d2' }}
+                                        {/* Sale badge (#6224) */}
+                                        {onSale && (
+                                            <span style={{
+                                                position: 'absolute',
+                                                top: item.is_featured ? '28px' : '8px',
+                                                left: '8px',
+                                                background: '#e65100',
+                                                color: '#fff',
+                                                fontSize: '10px',
+                                                fontWeight: '700',
+                                                padding: '2px 6px',
+                                                borderRadius: '10px',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: '0.5px',
+                                            }}>
+                                                Sale
+                                            </span>
+                                        )}
+
+                                        {/* Favorite heart */}
+                                        <button
+                                            onClick={() => handleToggleFavorite(item)}
+                                            disabled={togglingFavorites.has(item.item_id)}
+                                            title={favoriteIds.has(item.item_id) ? 'Remove from favorites' : 'Add to favorites'}
+                                            style={{
+                                                position: 'absolute',
+                                                top: '10px',
+                                                right: '10px',
+                                                background: 'none',
+                                                border: 'none',
+                                                cursor: togglingFavorites.has(item.item_id) ? 'default' : 'pointer',
+                                                fontSize: '20px',
+                                                lineHeight: 1,
+                                                color: favoriteIds.has(item.item_id) ? '#c62828' : '#ccc',
+                                                padding: 0,
+                                            }}
                                         >
-                                            View on eBay ↗
-                                        </a>
-                                    )}
-                                    <button
-                                        onClick={() => handleAddToCart(item)}
-                                        disabled={!cartId || addingIds.has(item.item_id) || item.availability_status === 'out_of_stock'}
-                                        title={!cartId ? 'Cart unavailable — please refresh' : undefined}
-                                        style={{
-                                            marginTop: 'auto',
-                                            padding: '8px',
-                                            borderRadius: '4px',
-                                            border: 'none',
-                                            background: item.availability_status === 'out_of_stock' ? '#e0e0e0'
-                                                : !cartId ? '#e0e0e0'
-                                                : addingIds.has(item.item_id) ? '#90caf9' : '#1976d2',
-                                            color: item.availability_status === 'out_of_stock' || !cartId ? '#999' : '#fff',
-                                            cursor: !cartId || item.availability_status === 'out_of_stock' || addingIds.has(item.item_id) ? 'not-allowed' : 'pointer',
-                                            fontWeight: '600',
-                                            fontSize: '13px',
-                                        }}
-                                    >
-                                        {item.availability_status === 'out_of_stock' ? 'Out of Stock'
-                                            : addingIds.has(item.item_id) ? 'Adding...' : 'Add to Cart'}
-                                    </button>
-                                </li>
-                            ))}
+                                            {favoriteIds.has(item.item_id) ? '♥' : '♡'}
+                                        </button>
+
+                                        {/* Stock badge */}
+                                        <span style={{ ...statusBadgeStyle(item.availability_status), marginTop: '4px' }}>
+                                            {item.availability_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
+                                        </span>
+
+                                        <img
+                                            src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/150?text=No+Image'}
+                                            alt={item.title}
+                                            style={{ width: '100%', height: '150px', objectFit: 'contain' }}
+                                            onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/150?text=No+Image'; }}
+                                        />
+                                        <div style={{ fontWeight: '600', fontSize: '14px', paddingRight: '24px' }}>{item.title}</div>
+                                        <div style={{ fontSize: '13px', color: '#666' }}>{item.description}</div>
+
+                                        {/* Price — strikethrough original if on sale (#6224) */}
+                                        <div style={{ fontSize: '14px', color: '#1a1a1a' }}>
+                                            {onSale ? (
+                                                <>
+                                                    <span style={{ textDecoration: 'line-through', color: '#999', marginRight: '6px' }}>
+                                                        ${parseFloat(item.last_price_value).toFixed(2)}
+                                                    </span>
+                                                    <span style={{ color: '#e65100', fontWeight: '700' }}>
+                                                        ${parseFloat(item.sale_price).toFixed(2)}
+                                                    </span>
+                                                    &nbsp;/&nbsp;
+                                                    <strong style={{ color: '#e65100' }}>{Number(salePts).toLocaleString()} pts</strong>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    ${parseFloat(item.last_price_value).toFixed(2)}&nbsp;/&nbsp;
+                                                    <strong style={{ color: '#1565c0' }}>{Number(item.points_price).toLocaleString()} pts</strong>
+                                                </>
+                                            )}
+                                        </div>
+
+                                        {/* Driver purchase count (#6222) */}
+                                        {item.driver_purchase_count > 0 && (
+                                            <div style={{ fontSize: '11px', color: '#888' }}>
+                                                {item.driver_purchase_count} driver{item.driver_purchase_count !== 1 ? 's' : ''} bought this
+                                            </div>
+                                        )}
+
+                                        {item.item_web_url && (
+                                            <a
+                                                href={item.item_web_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={() => recordView(item.item_id)}
+                                                style={{ fontSize: '12px', color: '#1976d2' }}
+                                            >
+                                                View on eBay ↗
+                                            </a>
+                                        )}
+                                        <button
+                                            onClick={() => handleAddToCart(item)}
+                                            disabled={!cartId || addingIds.has(item.item_id) || item.availability_status === 'out_of_stock'}
+                                            title={!cartId ? 'Cart unavailable — please refresh' : undefined}
+                                            style={{
+                                                marginTop: 'auto',
+                                                padding: '8px',
+                                                borderRadius: '4px',
+                                                border: 'none',
+                                                background: item.availability_status === 'out_of_stock' ? '#e0e0e0'
+                                                    : !cartId ? '#e0e0e0'
+                                                    : addingIds.has(item.item_id) ? '#90caf9' : '#1976d2',
+                                                color: item.availability_status === 'out_of_stock' || !cartId ? '#999' : '#fff',
+                                                cursor: !cartId || item.availability_status === 'out_of_stock' || addingIds.has(item.item_id) ? 'not-allowed' : 'pointer',
+                                                fontWeight: '600',
+                                                fontSize: '13px',
+                                            }}
+                                        >
+                                            {item.availability_status === 'out_of_stock' ? 'Out of Stock'
+                                                : addingIds.has(item.item_id) ? 'Adding...' : 'Add to Cart'}
+                                        </button>
+                                    </li>
+                                );
+                            })}
                         </ul>
                     )}
 
