@@ -10,6 +10,14 @@ const OrganizationCatalogTab = ({ orgId }) => {
     const [addingIds, setAddingIds] = useState(new Set());
     const [message, setMessage] = useState(null);
 
+    // Sale price editing state (#6224)
+    const [salePriceEditing, setSalePriceEditing] = useState(null); // item_id being edited
+    const [salePriceInput, setSalePriceInput] = useState('');
+    const [savingSale, setSavingSale] = useState(false);
+
+    // Featured toggling state (#6249)
+    const [togglingFeatured, setTogglingFeatured] = useState(new Set());
+
     const fetchCatalog = async () => {
         setLoading(true);
         try {
@@ -56,6 +64,7 @@ const OrganizationCatalogTab = ({ orgId }) => {
                     image_url: ebayItem.rawImageUrl || '',
                     description: ebayItem.description || '',
                     last_price_value: parseFloat(ebayItem.price) || 0,
+                    category: ebayItem.category || null,
                 }),
             });
             if (res.ok) {
@@ -83,6 +92,64 @@ const OrganizationCatalogTab = ({ orgId }) => {
             }
         } catch {
             alert('Network error.');
+        }
+    };
+
+    // Toggle featured for a catalog item (#6249)
+    const handleToggleFeatured = async (item) => {
+        if (togglingFeatured.has(item.item_id)) return;
+        setTogglingFeatured(prev => new Set([...prev, item.item_id]));
+        try {
+            const res = await fetch(`/api/catalog/items/${item.item_id}/featured`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_featured: !item.is_featured }),
+            });
+            if (res.ok) {
+                await fetchCatalog();
+            } else {
+                setMessage({ type: 'error', text: 'Failed to update featured status.' });
+            }
+        } catch {
+            setMessage({ type: 'error', text: 'Network error.' });
+        } finally {
+            setTogglingFeatured(prev => { const next = new Set(prev); next.delete(item.item_id); return next; });
+        }
+    };
+
+    // Save sale price for a catalog item (#6224)
+    const handleSaveSalePrice = async (item) => {
+        setSavingSale(true);
+        const val = salePriceInput.trim();
+        const price = val === '' ? null : parseFloat(val);
+        if (val !== '' && (isNaN(price) || price < 0)) {
+            setMessage({ type: 'error', text: 'Enter a valid price or leave blank to remove the sale.' });
+            setSavingSale(false);
+            return;
+        }
+        if (price !== null && price >= parseFloat(item.last_price_value)) {
+            setMessage({ type: 'error', text: 'Sale price must be lower than the original price.' });
+            setSavingSale(false);
+            return;
+        }
+        try {
+            const res = await fetch(`/api/catalog/items/${item.item_id}/sale-price`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sale_price: price }),
+            });
+            if (res.ok) {
+                setSalePriceEditing(null);
+                setSalePriceInput('');
+                await fetchCatalog();
+                setMessage({ type: 'success', text: price === null ? 'Sale removed.' : `Sale price set to $${price.toFixed(2)}.` });
+            } else {
+                setMessage({ type: 'error', text: 'Failed to update sale price.' });
+            }
+        } catch {
+            setMessage({ type: 'error', text: 'Network error.' });
+        } finally {
+            setSavingSale(false);
         }
     };
 
@@ -131,12 +198,68 @@ const OrganizationCatalogTab = ({ orgId }) => {
                                 />
                             ),
                         },
-                        { key: 'title', label: 'Title', sortable: true },
+                        {
+                            key: 'title',
+                            label: 'Title',
+                            sortable: true,
+                            render: (val, row) => (
+                                <span>
+                                    {row.is_featured ? <span style={{ background: '#fbc02d', color: '#fff', fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '8px', marginRight: '6px' }}>Featured</span> : null}
+                                    {val}
+                                </span>
+                            ),
+                        },
                         {
                             key: 'last_price_value',
                             label: 'USD Price',
                             sortable: true,
-                            render: (val) => `$${parseFloat(val).toFixed(2)}`,
+                            render: (val, row) => {
+                                const onSale = row.sale_price !== null && row.sale_price !== undefined &&
+                                    parseFloat(row.sale_price) < parseFloat(val);
+                                if (salePriceEditing === row.item_id) {
+                                    return (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: '#999', textDecoration: 'line-through', fontSize: '12px' }}>${parseFloat(val).toFixed(2)}</span>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                placeholder="sale $"
+                                                value={salePriceInput}
+                                                onChange={(e) => setSalePriceInput(e.target.value)}
+                                                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveSalePrice(row); if (e.key === 'Escape') { setSalePriceEditing(null); setSalePriceInput(''); } }}
+                                                autoFocus
+                                                style={{ width: '72px', padding: '3px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #1976d2' }}
+                                            />
+                                            <button
+                                                onClick={() => handleSaveSalePrice(row)}
+                                                disabled={savingSale}
+                                                style={{ padding: '3px 8px', fontSize: '12px', borderRadius: '4px', border: 'none', background: '#2e7d32', color: '#fff', cursor: 'pointer' }}
+                                            >
+                                                {savingSale ? '...' : 'Save'}
+                                            </button>
+                                            <button
+                                                onClick={() => { setSalePriceEditing(null); setSalePriceInput(''); }}
+                                                style={{ padding: '3px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #ccc', background: '#fff', cursor: 'pointer' }}
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+                                    );
+                                }
+                                return (
+                                    <span>
+                                        {onSale ? (
+                                            <>
+                                                <span style={{ textDecoration: 'line-through', color: '#999', marginRight: '4px', fontSize: '12px' }}>${parseFloat(val).toFixed(2)}</span>
+                                                <span style={{ color: '#e65100', fontWeight: '600' }}>${parseFloat(row.sale_price).toFixed(2)}</span>
+                                            </>
+                                        ) : (
+                                            `$${parseFloat(val).toFixed(2)}`
+                                        )}
+                                    </span>
+                                );
+                            },
                         },
                         {
                             key: 'points_price',
@@ -145,9 +268,31 @@ const OrganizationCatalogTab = ({ orgId }) => {
                             render: (val) => `${Number(val).toLocaleString()} pts`,
                         },
                         { key: 'availability_status', label: 'Availability', sortable: true },
+                        { key: 'category', label: 'Category', sortable: true, render: (val) => val || '—' },
                     ]}
                     actions={[
-                        { label: 'Remove', onClick: handleRemove },
+                        {
+                            headerLabel: 'Featured',
+                            label: (item) => togglingFeatured.has(item.item_id) ? '...' : item.is_featured ? 'Unfeature' : 'Feature',
+                            onClick: handleToggleFeatured,
+                        },
+                        {
+                            headerLabel: 'Sale Price',
+                            label: (item) => salePriceEditing === item.item_id ? 'Cancel' : item.sale_price !== null ? 'Edit Sale' : 'Set Sale',
+                            onClick: (item) => {
+                                if (salePriceEditing === item.item_id) {
+                                    setSalePriceEditing(null);
+                                    setSalePriceInput('');
+                                } else {
+                                    setSalePriceEditing(item.item_id);
+                                    setSalePriceInput(item.sale_price !== null ? String(item.sale_price) : '');
+                                }
+                            },
+                        },
+                        {
+                            label: 'Remove',
+                            onClick: handleRemove,
+                        },
                     ]}
                     data={catalogItems}
                 />
@@ -214,6 +359,9 @@ const OrganizationCatalogTab = ({ orgId }) => {
                                 {item.title}
                             </div>
                             <div style={{ fontSize: '13px', color: '#555' }}>${parseFloat(item.price).toFixed(2)}</div>
+                            {item.category && (
+                                <div style={{ fontSize: '11px', color: '#888' }}>{item.category}</div>
+                            )}
                             <button
                                 onClick={() => handleAdd(item)}
                                 disabled={addingIds.has(item.itemId)}
