@@ -906,6 +906,49 @@ app.get('/api/about', async (req, res) => {
     }
 });
 
+app.get('/api/organization/:orgId/drivers', async (req, res) => {
+    const { orgId } = req.params;
+    const { dateRange, driverId } = req.query;
+    try {
+        let query = 'Select driver_user.*, users.username FROM driver_user JOIN users ON driver_user.user_id = users.user_id WHERE driver_user.sponsor_org_id = ?'
+        const params = [orgId]
+        const conditions = [];
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
+                conditions.push("driver_user.user_id = ?");
+                params.push(driverId);
+            }
+
+            if (fromDate && toDate) {
+                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+
+            if (conditions.length > 0) {
+                query += " AND " + conditions.join(' AND ');
+            }
+
+            const [drivers] = await pool.query(query, params);
+            res.json({ drivers })
+        }
+    } catch (error) {
+        console.log("failed");
+        console.error('Error fetching org drivers:', error);
+        res.status(500).json({ error: 'Failed to fetch org drivers' });
+    }
+});
+
 //-- Driver Application Route ---
 app.get('/api/application/organization/:org_id', async (req, res) => {
     const { org_id } = req.params;
