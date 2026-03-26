@@ -13,7 +13,7 @@ const SponsorReport = () => {
         <div>
             <TabGroup
                 tabs={[
-                    { label: "Driver Point Tracking", content: <DriverPointTrackingTab /> },
+                    { label: "Driver Point Tracking", content: <DriverPointTrackingTab orgId={userData?.sponsor_org_id} /> },
                     { label: "Audit Logs", content: <AuditLogsTab orgId={userData?.sponsor_org_id} /> }
                 ]}
             />
