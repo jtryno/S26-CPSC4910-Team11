@@ -225,7 +225,7 @@ describe('Order Review Modal', () => {
         await openReviewModal();
 
         fetch
-            .mockResolvedValueOnce({ ok: true, json: async () => ({ order_id: 99, points_spent: 300 }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ order_id: 99, points_spent: 300, total_usd: 3.00, remaining_balance: 4700, items: [] }) })
             .mockResolvedValueOnce({ ok: true, json: async () => ({ cart_id: 2 }) })
             .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 700 }) });
 

@@ -17,6 +17,7 @@ import Reports from './Pages/Reports/Reports'
 import { FaUser } from 'react-icons/fa';
 import Notifications from './Pages/Notifications'
 import Messages from './Pages/Messages'
+import ImpersonationBanner from './components/ImpersonationBanner'
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -76,7 +77,14 @@ useEffect(() => {
           localStorage.setItem('user', JSON.stringify(data.user));
           setIsLoggedIn(true);
           setUserData(data.user);
-          
+
+          // Restore impersonation state if session indicates active impersonation
+          if (data.isImpersonating && data.originalUser) {
+            localStorage.setItem('impersonation_original_user', JSON.stringify(data.originalUser));
+          } else {
+            localStorage.removeItem('impersonation_original_user');
+          }
+
           if (data.user.sponsor_org_id) {
             try {
               const orgRes = await fetch(`/api/organization/${data.user.sponsor_org_id}`);
@@ -314,6 +322,7 @@ useEffect(() => {
       sessionStorage.removeItem('user');
       localStorage.removeItem('lastActivityTime');
       sessionStorage.removeItem('lastActivityTime');
+      localStorage.removeItem('impersonation_original_user');
 
       // signal other tabs to logout (writes to localStorage so storage event fires)
       localStorage.setItem('logout', Date.now().toString());
@@ -335,6 +344,7 @@ useEffect(() => {
       sessionStorage.removeItem('user');
       localStorage.removeItem('lastActivityTime');
       sessionStorage.removeItem('lastActivityTime');
+      localStorage.removeItem('impersonation_original_user');
       localStorage.setItem('logout', Date.now().toString());
       localStorage.removeItem('logout');
       setIsLoggedIn(false);
@@ -346,6 +356,7 @@ useEffect(() => {
 
   return (
     <>
+      <ImpersonationBanner />
       <nav className="navbar">
         <div className="nav-brand">
           <Link to="/">Driver Incentive</Link>

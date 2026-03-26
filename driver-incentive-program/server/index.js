@@ -10,7 +10,6 @@ import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
 import cookieParser from 'cookie-parser';
 import process from 'process';
-import { register } from 'module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = path.join(__dirname, '.env');
@@ -133,7 +132,8 @@ async function searchEbayCatalog(query = null, limit = 30) {
                         image,
                         rawImageUrl: rawImageUrl || '',
                         itemWebUrl: item.itemWebUrl || '',
-                        itemId: item.itemId
+                        itemId: item.itemId,
+                        category: item.categories?.[0]?.categoryName || null,
                     };
                 });
 
@@ -341,6 +341,554 @@ async function getSponsorOrgId(userId, userType) {
     return null;
 }
 
+// Maps common CSV header variants onto the fields our importer understands.
+const DRIVER_IMPORT_HEADER_ALIASES = {
+    firstname: 'firstName',
+    lastname: 'lastName',
+    email: 'email',
+    username: 'username',
+    password: 'password',
+    phonenumber: 'phoneNumber',
+    phone: 'phoneNumber',
+    mobile: 'phoneNumber',
+};
+
+const DRIVER_IMPORT_REQUIRED_HEADERS = ['firstName', 'lastName', 'email'];
+const DRIVER_IMPORT_MAX_ROWS = 250;
+
+// Normalizes header text so variants like "first_name" and "First Name" map the same way.
+function normalizeCsvHeader(header) {
+    return String(header || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+}
+
+// Parses raw CSV text into rows while still handling quoted commas and line breaks.
+function parseCsvText(text) {
+    const input = String(text || '').replace(/^\uFEFF/, '');
+    const rows = [];
+    let row = [];
+    let value = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < input.length; index += 1) {
+        const char = input[index];
+        const nextChar = input[index + 1];
+
+        if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+                value += '"';
+                index += 1;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (char === ',' && !inQuotes) {
+            row.push(value);
+            value = '';
+            continue;
+        }
+
+        if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && nextChar === '\n') {
+                index += 1;
+            }
+            row.push(value);
+            rows.push(row);
+            row = [];
+            value = '';
+            continue;
+        }
+
+        value += char;
+    }
+
+    if (inQuotes) {
+        throw new Error('CSV contains an unterminated quoted field.');
+    }
+
+    row.push(value);
+    rows.push(row);
+
+    return rows.filter(currentRow => currentRow.some(cell => String(cell || '').trim() !== ''));
+}
+
+// Uses a lightweight check to catch obviously invalid email values before DB work starts.
+function isLikelyEmail(value) {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return false;
+
+    const parts = trimmed.split('@');
+    if (parts.length !== 2) return false;
+
+    return parts[0].length > 0 &&
+        parts[1].includes('.') &&
+        !parts[1].startsWith('.') &&
+        !parts[1].endsWith('.');
+}
+
+// Formats 10-digit phone numbers into the same display format the app already uses.
+function formatPhoneNumber(value) {
+    const digitsOnly = String(value || '').replace(/\D/g, '');
+    if (!digitsOnly) return null;
+    if (digitsOnly.length !== 10) return null;
+
+    return `(${digitsOnly.slice(0, 3)}) ${digitsOnly.slice(3, 6)}-${digitsOnly.slice(6, 10)}`;
+}
+
+// Converts uploaded usernames into the lowercase underscore format we store in the DB.
+function sanitizeUsername(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
+// Builds a strong placeholder password for accounts that still need to finish onboarding.
+function generateTemporaryPassword() {
+    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lowercase = 'abcdefghijkmnopqrstuvwxyz';
+    const digits = '23456789';
+    const special = '!@#$%^&*';
+    const allChars = uppercase + lowercase + digits + special;
+    const chars = [
+        uppercase[crypto.randomInt(0, uppercase.length)],
+        lowercase[crypto.randomInt(0, lowercase.length)],
+        digits[crypto.randomInt(0, digits.length)],
+        special[crypto.randomInt(0, special.length)],
+    ];
+
+    while (chars.length < 12) {
+        chars.push(allChars[crypto.randomInt(0, allChars.length)]);
+    }
+
+    for (let index = chars.length - 1; index > 0; index -= 1) {
+        const swapIndex = crypto.randomInt(0, index + 1);
+        [chars[index], chars[swapIndex]] = [chars[swapIndex], chars[index]];
+    }
+
+    return chars.join('');
+}
+
+// Finds an unused username by checking both this CSV batch and the existing users table.
+async function findAvailableUsername(connection, desiredBase, reservedUsernames = new Set()) {
+    let base = sanitizeUsername(desiredBase);
+    if (!base || base.length < 3) {
+        base = `driver_${crypto.randomInt(1000, 10000)}`;
+    }
+
+    let candidate = base;
+    let suffix = 1;
+
+    while (true) {
+        const normalizedCandidate = candidate.toLowerCase();
+        if (!reservedUsernames.has(normalizedCandidate)) {
+            const [rows] = await connection.query(
+                'SELECT user_id FROM users WHERE username = ? LIMIT 1',
+                [candidate]
+            );
+
+            if (rows.length === 0) {
+                return candidate;
+            }
+        }
+
+        suffix += 1;
+        candidate = `${base}_${suffix}`;
+    }
+}
+
+// Creates the password reset token we reuse for onboarding links and normal resets.
+async function createPasswordResetToken(userId, connection = pool) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await connection.query(
+        'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
+        [userId, token, expiresAt]
+    );
+
+    return { token, expiresAt };
+}
+
+// Creates a consistent error object so helper functions can bubble clean 4xx responses back up.
+function createHttpError(status, message, details = {}) {
+    const error = new Error(message);
+    error.status = status;
+    Object.assign(error, details);
+    return error;
+}
+
+// Treats rows with only empty cells as blank so they can be skipped cleanly.
+function isNonEmptyCsvRow(row) {
+    return row.some(cell => String(cell || '').trim() !== '');
+}
+
+// Shapes failed row results so the modal can render them the same way every time.
+function buildFailedImportResult(baseResult, errorMessage) {
+    return {
+        ...baseResult,
+        status: 'failed',
+        error: errorMessage,
+    };
+}
+
+// Confirms the acting user can import into this organization and returns the org record.
+async function authorizeOrganizationImport(requestingUserId, sponsorOrgId) {
+    const [requesterRows] = await pool.query(
+        'SELECT user_id, user_type FROM users WHERE user_id = ?',
+        [requestingUserId]
+    );
+
+    if (requesterRows.length === 0) {
+        throw createHttpError(404, 'Requesting user not found');
+    }
+
+    const requester = requesterRows[0];
+    if (!['admin', 'sponsor'].includes(requester.user_type)) {
+        throw createHttpError(403, 'Only sponsors and admins can import organization users');
+    }
+
+    if (requester.user_type === 'sponsor') {
+        const [sponsorRows] = await pool.query(
+            'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+            [requestingUserId]
+        );
+
+        if (
+            sponsorRows.length === 0 ||
+            Number(sponsorRows[0].sponsor_org_id) !== Number(sponsorOrgId)
+        ) {
+            throw createHttpError(403, 'Sponsors can only import users into their own organization');
+        }
+    }
+
+    const [organizationRows] = await pool.query(
+        'SELECT sponsor_org_id, name FROM sponsor_organization WHERE sponsor_org_id = ?',
+        [sponsorOrgId]
+    );
+
+    if (organizationRows.length === 0) {
+        throw createHttpError(404, 'Organization not found');
+    }
+
+    return organizationRows[0];
+}
+
+// Parses the upload once and validates the shared CSV rules before we touch any data rows.
+function parseOrganizationImportCsv(csvText) {
+    let parsedRows;
+
+    try {
+        parsedRows = parseCsvText(csvText);
+    } catch (error) {
+        throw createHttpError(400, error.message);
+    }
+
+    if (parsedRows.length < 2) {
+        throw createHttpError(400, 'CSV must include a header row and at least one user row');
+    }
+
+    const rawHeaders = parsedRows[0];
+    const headers = rawHeaders.map(
+        header => DRIVER_IMPORT_HEADER_ALIASES[normalizeCsvHeader(header)] || null
+    );
+    const duplicateHeaders = [...new Set(
+        headers.filter((header, index) => header && headers.indexOf(header) !== index)
+    )];
+
+    if (duplicateHeaders.length > 0) {
+        throw createHttpError(
+            400,
+            `CSV contains duplicate supported headers: ${duplicateHeaders.join(', ')}`
+        );
+    }
+
+    const missingHeaders = DRIVER_IMPORT_REQUIRED_HEADERS.filter(header => !headers.includes(header));
+    if (missingHeaders.length > 0) {
+        throw createHttpError(
+            400,
+            `CSV is missing required headers: ${missingHeaders.join(', ')}`
+        );
+    }
+
+    const dataRows = parsedRows.slice(1);
+    const nonEmptyDataRows = dataRows.filter(isNonEmptyCsvRow);
+
+    if (nonEmptyDataRows.length === 0) {
+        throw createHttpError(400, 'CSV does not contain any user rows');
+    }
+
+    if (nonEmptyDataRows.length > DRIVER_IMPORT_MAX_ROWS) {
+        throw createHttpError(
+            400,
+            `CSV import is limited to ${DRIVER_IMPORT_MAX_ROWS} rows at a time`
+        );
+    }
+
+    return { headers, dataRows };
+}
+
+// Maps one raw CSV row onto the normalized field names used by the importer.
+function mapOrganizationImportRow(headers, row) {
+    const rowData = {};
+
+    headers.forEach((header, index) => {
+        if (header) {
+            rowData[header] = String(row[index] || '').trim();
+        }
+    });
+
+    return rowData;
+}
+
+// Builds the shared result shape the UI uses for both imported and failed rows.
+function createImportBaseResult(rowData, rowNumber, userRole) {
+    return {
+        rowNumber,
+        firstName: String(rowData.firstName || '').trim(),
+        lastName: String(rowData.lastName || '').trim(),
+        email: String(rowData.email || '').trim().toLowerCase(),
+        userRole,
+    };
+}
+
+// Validates and normalizes one CSV row before any inserts or uniqueness checks run.
+function prepareOrganizationImportRow(rowData, baseResult, reservedEmails, reservedUsernames) {
+    const { firstName, lastName, email } = baseResult;
+
+    if (!firstName || !lastName || !email) {
+        throw createHttpError(
+            400,
+            'firstName, lastName, and email are required',
+            { result: baseResult }
+        );
+    }
+
+    if (!isLikelyEmail(email)) {
+        throw createHttpError(400, 'Email address is not valid', { result: baseResult });
+    }
+
+    if (reservedEmails.has(email)) {
+        throw createHttpError(
+            400,
+            'This email appears more than once in the CSV',
+            { result: baseResult }
+        );
+    }
+
+    const rawPhoneNumber = String(rowData.phoneNumber || '').trim();
+    const formattedPhoneNumber = rawPhoneNumber ? formatPhoneNumber(rawPhoneNumber) : null;
+    if (rawPhoneNumber && !formattedPhoneNumber) {
+        throw createHttpError(
+            400,
+            'Phone number must contain exactly 10 digits',
+            { result: baseResult }
+        );
+    }
+
+    const providedPassword = String(rowData.password || '').trim();
+    const needsOnboarding = !providedPassword;
+    const passwordToStore = providedPassword || generateTemporaryPassword();
+    if (providedPassword && !isPasswordComplex(passwordToStore)) {
+        throw createHttpError(
+            400,
+            'Password must meet the app complexity rules',
+            { result: baseResult }
+        );
+    }
+
+    const providedUsername = sanitizeUsername(rowData.username);
+    if (rowData.username && providedUsername.length < 3) {
+        throw createHttpError(
+            400,
+            'Username must be at least 3 characters after normalization',
+            { result: baseResult }
+        );
+    }
+
+    if (providedUsername && reservedUsernames.has(providedUsername.toLowerCase())) {
+        throw createHttpError(
+            400,
+            'This username appears more than once in the CSV',
+            { result: baseResult }
+        );
+    }
+
+    return {
+        baseResult,
+        firstName,
+        lastName,
+        email,
+        formattedPhoneNumber,
+        needsOnboarding,
+        passwordToStore,
+        providedUsername,
+        usernameSeed: rowData.email?.split('@')[0] || `${firstName}_${lastName}`,
+    };
+}
+
+// Reuses a provided username when valid, otherwise generates the next available username.
+async function resolveImportedUsername(connection, preparedRow, reservedUsernames) {
+    if (preparedRow.providedUsername) {
+        const [existingUsernameRows] = await connection.query(
+            'SELECT user_id FROM users WHERE username = ? LIMIT 1',
+            [preparedRow.providedUsername]
+        );
+
+        if (existingUsernameRows.length > 0) {
+            throw createHttpError(
+                400,
+                'A user with this username already exists',
+                { result: preparedRow.baseResult }
+            );
+        }
+
+        return preparedRow.providedUsername;
+    }
+
+    return findAvailableUsername(connection, preparedRow.usernameSeed, reservedUsernames);
+}
+
+// Inserts the new user into the role-specific organization table after the base user record is created.
+function insertOrganizationMembership(connection, userId, sponsorOrgId, userRole, requestingUserId) {
+    if (userRole === 'driver') {
+        return connection.query(
+            'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, NOW())',
+            [userId, sponsorOrgId, 'active']
+        );
+    }
+
+    return connection.query(
+        'INSERT INTO sponsor_user (user_id, sponsor_org_id, created_by_user_id) VALUES (?, ?, ?)',
+        [userId, sponsorOrgId, requestingUserId]
+    );
+}
+
+// Builds the frontend password setup link that imported users can follow to finish onboarding.
+function createOnboardingPath(token) {
+    return `/password-reset?token=${encodeURIComponent(token)}&mode=onboarding`;
+}
+
+// Creates onboarding details only for imports where the CSV did not provide a password.
+async function createOnboardingDetails(connection, userId, needsOnboarding) {
+    if (!needsOnboarding) {
+        return {
+            onboardingToken: null,
+            onboardingPath: null,
+        };
+    }
+
+    const { token } = await createPasswordResetToken(userId, connection);
+    return {
+        onboardingToken: token,
+        onboardingPath: createOnboardingPath(token),
+    };
+}
+
+// Imports one row inside its own transaction so a single bad record does not cancel the whole file.
+async function importOrganizationUserRow({
+    connection,
+    preparedRow,
+    sponsorOrgId,
+    userRole,
+    requestingUserId,
+    reservedUsernames,
+}) {
+    await connection.beginTransaction();
+
+    try {
+        const [existingEmailRows] = await connection.query(
+            'SELECT user_id FROM users WHERE email = ? LIMIT 1',
+            [preparedRow.email]
+        );
+
+        if (existingEmailRows.length > 0) {
+            throw createHttpError(
+                400,
+                'A user with this email already exists',
+                { result: preparedRow.baseResult }
+            );
+        }
+
+        const username = await resolveImportedUsername(
+            connection,
+            preparedRow,
+            reservedUsernames
+        );
+        const passwordHash = hashPassword(preparedRow.passwordToStore);
+        const [userInsertResult] = await connection.query(
+            `INSERT INTO users
+                (first_name, last_name, phone_number, email, username, password_hash, user_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+                preparedRow.firstName,
+                preparedRow.lastName,
+                preparedRow.formattedPhoneNumber,
+                preparedRow.email,
+                username,
+                passwordHash,
+                userRole,
+            ]
+        );
+
+        await insertOrganizationMembership(
+            connection,
+            userInsertResult.insertId,
+            sponsorOrgId,
+            userRole,
+            requestingUserId
+        );
+
+        const { onboardingToken, onboardingPath } = await createOnboardingDetails(
+            connection,
+            userInsertResult.insertId,
+            preparedRow.needsOnboarding
+        );
+
+        await connection.commit();
+
+        return {
+            ...preparedRow.baseResult,
+            status: 'imported',
+            user_id: userInsertResult.insertId,
+            username,
+            onboardingToken,
+            onboardingPath,
+        };
+    } catch (error) {
+        try {
+            await connection.rollback();
+        } catch (rollbackError) {
+            console.error('Failed rolling back organization import row:', rollbackError);
+        }
+
+        if (!error.result) {
+            error.result = preparedRow.baseResult;
+        }
+
+        throw error;
+    }
+}
+
+// Converts row-level exceptions into the simpler messages shown in the import results table.
+function formatImportRowError(error) {
+    if (error?.status && error?.message) {
+        return error.message;
+    }
+
+    if (error?.message?.includes('Duplicate entry')) {
+        return 'A user with this email or username already exists';
+    }
+
+    return 'Failed to import this user row';
+}
+
 // --- About Page Route ---
 app.get('/api/about', async (req, res) => {
     try {
@@ -355,6 +903,49 @@ app.get('/api/about', async (req, res) => {
     } catch (error) {
         console.error('Error fetching about info:', error);
         res.status(500).json({ error: 'Failed to fetch about info' });
+    }
+});
+
+app.get('/api/organization/:orgId/drivers', async (req, res) => {
+    const { orgId } = req.params;
+    const { dateRange, driverId } = req.query;
+    try {
+        let query = 'Select driver_user.*, users.username FROM driver_user JOIN users ON driver_user.user_id = users.user_id WHERE driver_user.sponsor_org_id = ?'
+        const params = [orgId]
+        const conditions = [];
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
+                conditions.push("driver_user.user_id = ?");
+                params.push(driverId);
+            }
+
+            if (fromDate && toDate) {
+                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+
+            if (conditions.length > 0) {
+                query += " AND " + conditions.join(' AND ');
+            }
+
+            const [drivers] = await pool.query(query, params);
+            res.json({ drivers })
+        }
+    } catch (error) {
+        console.log("failed");
+        console.error('Error fetching org drivers:', error);
+        res.status(500).json({ error: 'Failed to fetch org drivers' });
     }
 });
 
@@ -616,6 +1207,112 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
     }
 });
 
+// Imports driver or sponsor accounts into an organization from a CSV upload.
+const importOrganizationUsersFromCsv = async (req, res) => {
+    const { sponsor_org_id } = req.params;
+    const { requestingUserId, userRole = 'driver', csvText } = req.body;
+    const normalizedUserRole = String(userRole || '').trim().toLowerCase();
+
+    if (!requestingUserId) {
+        return res.status(400).json({ error: 'requestingUserId is required' });
+    }
+
+    if (!['driver', 'sponsor'].includes(normalizedUserRole)) {
+        return res.status(400).json({ error: 'userRole must be "driver" or "sponsor"' });
+    }
+
+    if (!csvText || !String(csvText).trim()) {
+        return res.status(400).json({ error: 'csvText is required' });
+    }
+
+    try {
+        // Load the organization once, then reuse the parsed CSV metadata for every row.
+        const organization = await authorizeOrganizationImport(requestingUserId, sponsor_org_id);
+        const { headers, dataRows } = parseOrganizationImportCsv(csvText);
+
+        const results = [];
+        const reservedEmails = new Set();
+        const reservedUsernames = new Set();
+        let importedCount = 0;
+        let failedCount = 0;
+        let skippedCount = 0;
+
+        const connection = await pool.getConnection();
+
+        try {
+            for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex += 1) {
+                const row = dataRows[rowIndex];
+                const rowNumber = rowIndex + 2;
+
+                if (!isNonEmptyCsvRow(row)) {
+                    skippedCount += 1;
+                    continue;
+                }
+
+                const rowData = mapOrganizationImportRow(headers, row);
+                const baseResult = createImportBaseResult(
+                    rowData,
+                    rowNumber,
+                    normalizedUserRole
+                );
+
+                try {
+                    // Validate the row first, then let the transaction helper handle DB writes.
+                    const preparedRow = prepareOrganizationImportRow(
+                        rowData,
+                        baseResult,
+                        reservedEmails,
+                        reservedUsernames
+                    );
+                    const importedResult = await importOrganizationUserRow({
+                        connection,
+                        preparedRow,
+                        sponsorOrgId: sponsor_org_id,
+                        userRole: normalizedUserRole,
+                        requestingUserId,
+                        reservedUsernames,
+                    });
+
+                    reservedEmails.add(importedResult.email);
+                    reservedUsernames.add(importedResult.username.toLowerCase());
+                    importedCount += 1;
+                    results.push(importedResult);
+                } catch (rowError) {
+                    failedCount += 1;
+                    results.push(
+                        buildFailedImportResult(
+                            rowError.result || baseResult,
+                            formatImportRowError(rowError)
+                        )
+                    );
+                }
+            }
+        } finally {
+            connection.release();
+        }
+
+        res.json({
+            message: `Imported ${importedCount} ${normalizedUserRole} user(s)`,
+            organization_name: organization.name,
+            importedRole: normalizedUserRole,
+            importedCount,
+            failedCount,
+            skippedCount,
+            results,
+        });
+    } catch (error) {
+        if (error.status) {
+            return res.status(error.status).json({ error: error.message });
+        }
+
+        console.error('Error importing organization users from CSV:', error);
+        res.status(500).json({ error: 'Failed to import users' });
+    }
+};
+
+app.post('/api/organization/:sponsor_org_id/users/import', importOrganizationUsersFromCsv);
+app.post('/api/organization/:sponsor_org_id/drivers/import', importOrganizationUsersFromCsv);
+
 // GET /api/organization/:sponsor_org_id/monthly-redeemed-points — total points redeemed via catalog orders this month
 app.get('/api/organization/:sponsor_org_id/monthly-redeemed-points', async (req, res) => {
     const { sponsor_org_id } = req.params;
@@ -792,14 +1489,7 @@ app.post('/api/password-reset/request', async (req, res) => {
         const [users] = await pool.query('SELECT user_id FROM users WHERE email = ?', [email]);
         if (users.length === 0) return res.status(404).json({ message: 'User not found' });
 
-        const token = crypto.randomBytes(32).toString('hex');
-        //  Link expires in 24 hours
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); 
-
-        await pool.query(
-            'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
-            [users[0].user_id, token, expiresAt]
-        );
+        const { token } = await createPasswordResetToken(users[0].user_id);
 
         res.json({ message: 'Reset token generated', token }); 
     } catch (error) {
@@ -858,13 +1548,44 @@ app.get('/api/session', async (req, res) => {
 
     try {
         const [users] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [userId]);
-        if (users.length > 0) {
-            const user = users[0];
-            const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
-            res.json({ loggedIn: true, user: { ...user, sponsor_org_id } });
-        } else {
-            res.status(401).json({ loggedIn: false });
+        if (users.length === 0) {
+            return res.status(401).json({ loggedIn: false });
         }
+        const realUser = users[0];
+        const realSponsorOrgId = await getSponsorOrgId(realUser.user_id, realUser.user_type);
+
+        // Check for active impersonation
+        const impersonatingId = req.cookies.impersonating;
+        if (impersonatingId) {
+            const [targetUsers] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [impersonatingId]);
+            if (targetUsers.length > 0) {
+                const targetUser = targetUsers[0];
+
+                // Re-validate impersonation permissions
+                let permitted = false;
+                if (realUser.user_type === 'admin' && targetUser.user_type !== 'admin') {
+                    permitted = true;
+                } else if (realUser.user_type === 'sponsor' && targetUser.user_type === 'driver') {
+                    const actorOrgId = await getSponsorOrgId(realUser.user_id, 'sponsor');
+                    const targetOrgId = await getSponsorOrgId(targetUser.user_id, 'driver');
+                    permitted = actorOrgId && targetOrgId && actorOrgId === targetOrgId;
+                }
+
+                if (permitted) {
+                    const targetSponsorOrgId = await getSponsorOrgId(targetUser.user_id, targetUser.user_type);
+                    return res.json({
+                        loggedIn: true,
+                        isImpersonating: true,
+                        user: { ...targetUser, sponsor_org_id: targetSponsorOrgId },
+                        originalUser: { ...realUser, sponsor_org_id: realSponsorOrgId },
+                    });
+                }
+            }
+            // Target user gone or permissions revoked — end impersonation
+            res.clearCookie('impersonating');
+        }
+
+        res.json({ loggedIn: true, user: { ...realUser, sponsor_org_id: realSponsorOrgId } });
     } catch (error) {
         res.status(500).json({ error: 'Session check failed' });
     }
@@ -908,7 +1629,122 @@ app.post('/api/signup', async (req, res) => {
 // --- Logout Route ---
 app.post('/api/logout', (req, res) => {
     res.clearCookie('remember_me');
+    res.clearCookie('impersonating');
     res.json({ message: 'Logged out successfully' });
+});
+
+// --- Impersonation Routes ---
+// Start impersonation: admin can assume driver/sponsor, sponsor can assume driver in same org
+app.post('/api/impersonate', async (req, res) => {
+    const realUserId = req.cookies.remember_me || req.body.actorUserId;
+    if (!realUserId) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { targetUserId } = req.body;
+    if (!targetUserId) {
+        return res.status(400).json({ error: 'targetUserId is required' });
+    }
+
+    try {
+        // Get the real (acting) user
+        const [actors] = await pool.query('SELECT user_id, username, user_type FROM users WHERE user_id = ?', [realUserId]);
+        if (actors.length === 0) {
+            return res.status(401).json({ error: 'Actor user not found' });
+        }
+        const actor = actors[0];
+
+        if (!['admin', 'sponsor'].includes(actor.user_type)) {
+            return res.status(403).json({ error: 'Only admins and sponsors can assume identities' });
+        }
+
+        // Get the target user
+        const [targets] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [targetUserId]);
+        if (targets.length === 0) {
+            return res.status(404).json({ error: 'Target user not found' });
+        }
+        const target = targets[0];
+
+        if (target.user_id === actor.user_id) {
+            return res.status(400).json({ error: 'Cannot assume your own identity' });
+        }
+
+        // Permission checks
+        if (actor.user_type === 'admin') {
+            if (target.user_type === 'admin') {
+                return res.status(403).json({ error: 'Cannot assume identity of another admin' });
+            }
+        } else if (actor.user_type === 'sponsor') {
+            if (target.user_type !== 'driver') {
+                return res.status(403).json({ error: 'Sponsors can only assume identity of drivers' });
+            }
+            // Verify same organization
+            const sponsorOrgId = await getSponsorOrgId(actor.user_id, 'sponsor');
+            const driverOrgId = await getSponsorOrgId(target.user_id, 'driver');
+            if (!sponsorOrgId || !driverOrgId || sponsorOrgId !== driverOrgId) {
+                return res.status(403).json({ error: 'Can only assume identity of drivers in your organization' });
+            }
+        }
+
+        // Set impersonation cookie (4 hour expiry)
+        res.cookie('impersonating', target.user_id, {
+            maxAge: 4 * 60 * 60 * 1000,
+            httpOnly: true,
+            sameSite: 'lax',
+        });
+
+        // Audit log
+        await pool.query(
+            `INSERT INTO impersonation_log (actor_user_id, actor_username, actor_user_type, target_user_id, target_username, target_user_type, action)
+             VALUES (?, ?, ?, ?, ?, ?, 'start')`,
+            [actor.user_id, actor.username, actor.user_type, target.user_id, target.username, target.user_type]
+        );
+
+        const targetSponsorOrgId = await getSponsorOrgId(target.user_id, target.user_type);
+        res.json({ user: { ...target, sponsor_org_id: targetSponsorOrgId } });
+    } catch (error) {
+        console.error('Impersonation start error:', error);
+        res.status(500).json({ error: 'Server error during impersonation' });
+    }
+});
+
+// Exit impersonation: restore original identity
+app.post('/api/impersonate/exit', async (req, res) => {
+    const realUserId = req.cookies.remember_me || req.body.actorUserId;
+    if (!realUserId) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const impersonatedId = req.cookies.impersonating;
+
+    try {
+        // Audit log the exit
+        if (impersonatedId) {
+            const [actors] = await pool.query('SELECT user_id, username, user_type FROM users WHERE user_id = ?', [realUserId]);
+            const [targets] = await pool.query('SELECT user_id, username, user_type FROM users WHERE user_id = ?', [impersonatedId]);
+            if (actors.length > 0 && targets.length > 0) {
+                await pool.query(
+                    `INSERT INTO impersonation_log (actor_user_id, actor_username, actor_user_type, target_user_id, target_username, target_user_type, action)
+                     VALUES (?, ?, ?, ?, ?, ?, 'exit')`,
+                    [actors[0].user_id, actors[0].username, actors[0].user_type, targets[0].user_id, targets[0].username, targets[0].user_type]
+                );
+            }
+        }
+
+        res.clearCookie('impersonating');
+
+        // Return the real user's data
+        const [users] = await pool.query('SELECT user_id, email, username, user_type FROM users WHERE user_id = ?', [realUserId]);
+        if (users.length === 0) {
+            return res.status(401).json({ error: 'User not found' });
+        }
+        const user = users[0];
+        const sponsorOrgId = await getSponsorOrgId(user.user_id, user.user_type);
+        res.json({ user: { ...user, sponsor_org_id: sponsorOrgId } });
+    } catch (error) {
+        console.error('Impersonation exit error:', error);
+        res.status(500).json({ error: 'Server error during impersonation exit' });
+    }
 });
 
 // Returns fresh user data for a given user_id, including current sponsor_org_id from the role table
@@ -1062,8 +1898,15 @@ app.post('/api/user/leave-organization', async (req, res) => {
                 [user_id, sponsor_org_id]
             );
         } else if (user_type === 'sponsor') {
+            const [rows] = await pool.query(
+                'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                [user_id]
+            );
+            if (rows.length === 0) {
+                return res.status(404).json({ error: 'No organization found for this sponsor' });
+            }
             await pool.query(
-                'UPDATE sponsor_user SET sponsor_org_id = NULL WHERE user_id = ?',
+                'DELETE FROM sponsor_user WHERE user_id = ?',
                 [user_id]
             );
         } else {
@@ -1884,11 +2727,15 @@ app.get('/api/catalog/org/:sponsorOrgId', async (req, res) => {
     const { sponsorOrgId } = req.params;
     try {
         const [rows] = await pool.query(
-            `SELECT ci.*, so.point_value
+            `SELECT ci.*, so.point_value,
+                (SELECT COUNT(DISTINCT o.driver_user_id)
+                 FROM order_items oi
+                 JOIN orders o ON oi.order_id = o.order_id
+                 WHERE oi.item_id = ci.item_id AND o.status != 'cancelled') AS driver_purchase_count
              FROM catalog_items ci
              JOIN sponsor_organization so ON ci.sponsor_org_id = so.sponsor_org_id
              WHERE ci.sponsor_org_id = ? AND ci.is_active = 1
-             ORDER BY ci.created_at DESC`,
+             ORDER BY ci.is_featured DESC, ci.created_at DESC`,
             [sponsorOrgId]
         );
         res.json({ items: rows });
@@ -1901,7 +2748,7 @@ app.get('/api/catalog/org/:sponsorOrgId', async (req, res) => {
 // POST /api/catalog/org/:sponsorOrgId/items — sponsor adds eBay item to catalog
 app.post('/api/catalog/org/:sponsorOrgId/items', async (req, res) => {
     const { sponsorOrgId } = req.params;
-    const { ebay_item_id, title, item_web_url, image_url, description, last_price_value } = req.body;
+    const { ebay_item_id, title, item_web_url, image_url, description, last_price_value, category } = req.body;
     if (!ebay_item_id || !title || !last_price_value) {
         return res.status(400).json({ error: 'ebay_item_id, title, and last_price_value are required' });
     }
@@ -1919,10 +2766,10 @@ app.post('/api/catalog/org/:sponsorOrgId/items', async (req, res) => {
             `INSERT INTO catalog_items
                (sponsor_org_id, ebay_item_id, title, item_web_url, image_url, description,
                 last_price_value, last_price_currency, availability_status, last_api_refresh_at,
-                points_price, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', 'in_stock', NOW(), ?, 1)`,
+                points_price, is_active, category)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', 'in_stock', NOW(), ?, 1, ?)`,
             [sponsorOrgId, ebay_item_id, title, item_web_url || null, image_url || null,
-             description || null, last_price_value, points_price]
+             description || null, last_price_value, points_price, category || null]
         );
         res.status(201).json({ message: 'Item added to catalog', item_id: result.insertId });
     } catch (error) {
@@ -1956,6 +2803,39 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
     } catch (error) {
         console.error('Error removing catalog item:', error);
         res.status(500).json({ error: 'Failed to remove item' });
+    }
+});
+
+// PUT /api/catalog/items/:itemId/featured — sponsor toggles featured flag (#6249)
+app.put('/api/catalog/items/:itemId/featured', async (req, res) => {
+    const { itemId } = req.params;
+    const { is_featured } = req.body;
+    try {
+        await pool.query(
+            'UPDATE catalog_items SET is_featured = ?, updated_at = NOW() WHERE item_id = ?',
+            [is_featured ? 1 : 0, itemId]
+        );
+        res.json({ message: 'Featured status updated' });
+    } catch (error) {
+        console.error('Error updating featured status:', error);
+        res.status(500).json({ error: 'Failed to update featured status' });
+    }
+});
+
+// PUT /api/catalog/items/:itemId/sale-price — sponsor sets/clears a sale price (#6224)
+app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
+    const { itemId } = req.params;
+    const { sale_price } = req.body;
+    const price = sale_price !== undefined && sale_price !== '' ? parseFloat(sale_price) : null;
+    try {
+        await pool.query(
+            'UPDATE catalog_items SET sale_price = ?, updated_at = NOW() WHERE item_id = ?',
+            [price, itemId]
+        );
+        res.json({ message: 'Sale price updated' });
+    } catch (error) {
+        console.error('Error updating sale price:', error);
+        res.status(500).json({ error: 'Failed to update sale price' });
     }
 });
 
@@ -2239,7 +3119,28 @@ app.post('/api/orders', async (req, res) => {
 
         await conn.commit();
         await createNotification(driverUserId, 'order_placed', `Your order #${orderId} was placed successfully for ${totalPoints.toLocaleString()} points.`, {related_order_id: orderId});
-        res.json({ message: 'Order placed successfully', order_id: orderId, points_spent: totalPoints });
+
+        // Fetch full order details for the summary
+        const [orderItems] = await pool.query(
+            `SELECT oi.item_id, oi.quantity, oi.points_price_at_purchase, oi.price_usd_at_purchase,
+                    ci.title, ci.image_url
+             FROM order_items oi
+             JOIN catalog_items ci ON oi.item_id = ci.item_id
+             WHERE oi.order_id = ?`,
+            [orderId]
+        );
+
+        const totalUsd = orderItems.reduce((sum, i) => sum + (i.price_usd_at_purchase * i.quantity), 0);
+        const remainingBalance = driverRow.current_points_balance - totalPoints;
+
+        res.json({
+            message: 'Order placed successfully',
+            order_id: orderId,
+            points_spent: totalPoints,
+            total_usd: totalUsd,
+            remaining_balance: remainingBalance,
+            items: orderItems,
+        });
     } catch (error) {
         await conn.rollback();
         console.error('Error placing order:', error);
@@ -2330,10 +3231,30 @@ app.get('/api/orders/org/:sponsorOrgId', async (req, res) => {
 
 // Support Tickets
 
+// returns a list of all items a driver has purchased across all orders, used for the complaint item picker
+app.get('/api/support-tickets/purchased-items/:driverId', async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `SELECT oi.order_item_id, oi.order_id, ci.item_id, ci.title, ci.image_url,
+                    oi.quantity, oi.points_price_at_purchase, o.created_at AS order_date
+             FROM order_items oi
+             JOIN orders o ON oi.order_id = o.order_id
+             JOIN catalog_items ci ON oi.item_id = ci.item_id
+             WHERE o.driver_user_id = ?
+             ORDER BY o.created_at DESC, ci.title ASC`,
+            [req.params.driverId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching purchased items:', error);
+        res.status(500).json({ error: 'Failed to fetch purchased items.' });
+    }
+});
+
 // creates new support ticket, called when a driver or sponsor submits the form
 // sponsorOrgId can be null if the user isn't affiliated with an org
 app.post('/api/support-tickets', async (req, res) => {
-    const { userId, sponsorOrgId, title, description, category, subjectDriverId } = req.body;
+    const { userId, sponsorOrgId, title, description, category, subjectDriverId, relatedOrderItemId } = req.body;
     // make sure both fields are filled in before inserting
     if (!title || !title.trim()) {
         return res.status(400).json({ error: 'Title is required.' });
@@ -2342,15 +3263,15 @@ app.post('/api/support-tickets', async (req, res) => {
         return res.status(400).json({ error: 'Description is required.' });
     }
     // validate category if provided, default to general
-    const validCategories = ['general', 'security'];
+    const validCategories = ['general', 'security', 'catalog_order'];
     const ticketCategory = category || 'general';
     if (!validCategories.includes(ticketCategory)) {
-        return res.status(400).json({ error: 'Invalid category. Must be general or security.' });
+        return res.status(400).json({ error: 'Invalid category. Must be general, security, or catalog_order.' });
     }
     try {
         const [result] = await pool.query(
-            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id) VALUES (?, ?, ?, ?, ?, ?)',
-            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null]
+            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id, related_order_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null, relatedOrderItemId || null]
         );
         res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
     } catch (error) {
@@ -2561,19 +3482,29 @@ app.put('/api/support-tickets/:ticketId', async (req, res) => {
 });
 
 // archives a ticket instead of deleting it (archived tickets hidden from driver/sponsor views)
-// drivers and sponsors can only archive their own
+// admins can archive any ticket; sponsors can archive their own or any ticket in their org; drivers can only archive their own
 app.put('/api/support-tickets/:ticketId/archive', async (req, res) => {
     const { userId, userType } = req.body;
     try {
         const [[ticket]] = await pool.query(
-            'SELECT ticket_id, user_id FROM support_tickets WHERE ticket_id = ?',
+            'SELECT ticket_id, user_id, sponsor_org_id FROM support_tickets WHERE ticket_id = ?',
             [req.params.ticketId]
         );
         if (!ticket) {
             return res.status(404).json({ error: 'Ticket not found.' });
         }
         if (userType !== 'admin' && ticket.user_id !== parseInt(userId)) {
-            return res.status(403).json({ error: 'You can only archive your own tickets.' });
+            if (userType === 'sponsor') {
+                const [[sponsorUser]] = await pool.query(
+                    'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                    [userId]
+                );
+                if (!sponsorUser || ticket.sponsor_org_id !== sponsorUser.sponsor_org_id) {
+                    return res.status(403).json({ error: 'You can only archive tickets in your organization.' });
+                }
+            } else {
+                return res.status(403).json({ error: 'You can only archive your own tickets.' });
+            }
         }
         await pool.query(
             'UPDATE support_tickets SET is_archived = 1, updated_at = NOW() WHERE ticket_id = ?',
@@ -3253,6 +4184,157 @@ app.put('/api/messages/:messageId/read', async (req, res) => {
     } catch (error) {
         console.error('Error marking message as read:', error);
         res.status(500).json({error: 'Failed to mark message as read'});
+    }
+});
+
+// --- Download Personal Data Route ---
+app.get('/api/user/:userId/download-data', async (req, res) => {
+    const { userId } = req.params;
+    const requestingUserId = req.query.requestingUserId;
+
+    // Authorization: user can only download their own data
+    if (!requestingUserId || String(requestingUserId) !== String(userId)) {
+        return res.status(403).json({ error: 'You can only download your own data.' });
+    }
+
+    try {
+        // Fetch core user profile (exclude sensitive fields)
+        const [users] = await pool.query(
+            `SELECT user_id, first_name, last_name, phone_number, email, username,
+                    user_type, two_fa_enabled, created_at
+             FROM users WHERE user_id = ?`,
+            [userId]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = users[0];
+        const data = { profile: user };
+
+        // Role-specific data
+        if (user.user_type === 'driver') {
+            const [driverInfo] = await pool.query(
+                `SELECT du.sponsor_org_id, du.driver_status, du.current_points_balance,
+                        du.affilated_at, du.dropped_at, du.drop_reason,
+                        so.name AS sponsor_org_name
+                 FROM driver_user du
+                 LEFT JOIN sponsor_organization so ON du.sponsor_org_id = so.sponsor_org_id
+                 WHERE du.user_id = ?`,
+                [userId]
+            );
+            data.driverInfo = driverInfo[0] || null;
+
+            const [pointTransactions] = await pool.query(
+                `SELECT transaction_id, sponsor_org_id, point_amount, reason, source, created_at
+                 FROM point_transactions WHERE driver_user_id = ? ORDER BY created_at DESC`,
+                [userId]
+            );
+            data.pointTransactions = pointTransactions;
+
+            const [orders] = await pool.query(
+                `SELECT order_id, sponsor_org_id, status, created_at,
+                        delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
+                        cancel_reason, cancelled_at
+                 FROM orders WHERE driver_user_id = ? ORDER BY created_at DESC`,
+                [userId]
+            );
+            data.orders = orders;
+
+            const [applications] = await pool.query(
+                `SELECT application_id, sponsor_org_id, status, decision_reason, applied_at, reviewed_at
+                 FROM driver_applications WHERE driver_user_id = ? ORDER BY applied_at DESC`,
+                [userId]
+            );
+            data.applications = applications;
+
+            const [pointContests] = await pool.query(
+                `SELECT contest_id, transaction_id, sponsor_org_id, reason, status, created_at
+                 FROM point_contests WHERE driver_user_id = ? ORDER BY created_at DESC`,
+                [userId]
+            );
+            data.pointContests = pointContests;
+        }
+
+        if (user.user_type === 'sponsor') {
+            const [sponsorInfo] = await pool.query(
+                `SELECT su.sponsor_org_id, so.name AS sponsor_org_name, so.point_value
+                 FROM sponsor_user su
+                 LEFT JOIN sponsor_organization so ON su.sponsor_org_id = so.sponsor_org_id
+                 WHERE su.user_id = ?`,
+                [userId]
+            );
+            data.sponsorInfo = sponsorInfo[0] || null;
+        }
+
+        // Login history (all roles)
+        const [loginHistory] = await pool.query(
+            `SELECT log_id, login_date, result, failure_reason
+             FROM login_logs WHERE user_id = ? ORDER BY login_date DESC`,
+            [userId]
+        );
+        data.loginHistory = loginHistory;
+
+        // Password change logs (all roles)
+        const [passwordChangeLogs] = await pool.query(
+            `SELECT log_id, change_type, created_at
+             FROM password_change_log WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.passwordChangeLogs = passwordChangeLogs;
+
+        // Notifications (all roles)
+        const [notifications] = await pool.query(
+            `SELECT notification_id, category, message, read_at, created_at
+             FROM notifications WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.notifications = notifications;
+
+        // Notification preferences (all roles)
+        const [notifPrefs] = await pool.query(
+            `SELECT points_changed_enabled, order_placed_enabled
+             FROM notification_preferences WHERE user_id = ?`,
+            [userId]
+        );
+        data.notificationPreferences = notifPrefs[0] || null;
+
+        // Support tickets (all roles)
+        const [supportTickets] = await pool.query(
+            `SELECT ticket_id, sponsor_org_id, title, description, category, status, created_at, updated_at
+             FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.supportTickets = supportTickets;
+
+        // Messages sent by user (all roles)
+        const [sentMessages] = await pool.query(
+            `SELECT message_id, recipient_id, sponsor_org_id, message_type, message_subject, body, created_at
+             FROM messages WHERE sender_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.sentMessages = sentMessages;
+
+        // Messages received by user (all roles)
+        const [receivedMessages] = await pool.query(
+            `SELECT message_id, sender_id, sponsor_org_id, message_type, message_subject, body, read_at, created_at
+             FROM messages WHERE recipient_id = ? ORDER BY created_at DESC`,
+            [userId]
+        );
+        data.receivedMessages = receivedMessages;
+
+        data.exportedAt = new Date().toISOString();
+
+        // Send as downloadable JSON file
+        const filename = `personal-data-${userId}-${Date.now()}.json`;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(JSON.stringify(data, null, 2));
+
+    } catch (error) {
+        console.error('Error downloading personal data:', error);
+        res.status(500).json({ error: 'Failed to download personal data' });
     }
 });
 
