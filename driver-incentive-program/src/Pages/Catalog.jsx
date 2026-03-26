@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import ReviewsSection from '../components/ReviewsSection';
 
 const statusBadgeStyle = (status) => ({
     display: 'inline-block',
@@ -529,6 +530,7 @@ const Catalog = () => {
                                             </span>
                                         ) : null}
 
+
                                         {/* Sale badge (#6224) */}
                                         {onSale && (
                                             <span style={{
@@ -610,6 +612,11 @@ const Catalog = () => {
                                                 {item.driver_purchase_count} driver{item.driver_purchase_count !== 1 ? 's' : ''} bought this
                                             </div>
                                         )}
+                                        
+                                        <ReviewsSection
+                                            itemId={item.item_id}
+                                            currentUser={user}
+                                        />
 
                                         {item.item_web_url && (
                                             <a
