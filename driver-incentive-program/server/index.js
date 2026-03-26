@@ -3030,7 +3030,7 @@ app.post('/api/catalog/reviews', async (req, res) => {
     if(rating < 1 || rating > 5) {
         return res.status(400).json({ error: 'Rating must be between 1 and 5' });
     }
-    if(reviewText.length() > REVIEW_CHAR_LIMIT) {
+    if(reviewText.length > REVIEW_CHAR_LIMIT) {
         return res.status(400).json({ error: `Review must be ${REVIEW_CHAR_LIMIT} characters or fewer` });
     }
  

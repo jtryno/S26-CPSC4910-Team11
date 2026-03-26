@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import ReviewsSection from '../components/ReviewsSection';
 
 const statusBadgeStyle = (status) => ({
     display: 'inline-block',
@@ -349,6 +350,11 @@ const Catalog = () => {
                                         ${parseFloat(item.last_price_value).toFixed(2)}&nbsp;/&nbsp;
                                         <strong style={{ color: '#1565c0' }}>{Number(item.points_price).toLocaleString()} pts</strong>
                                     </div>
+                                    <ReviewsSection
+                                        itemId={item.item_id}
+                                        currentUser={user}
+                                    />
+
                                     {item.item_web_url && (
                                         <a
                                             href={item.item_web_url}
