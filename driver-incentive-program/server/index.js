@@ -3188,10 +3188,30 @@ app.get('/api/orders/org/:sponsorOrgId', async (req, res) => {
 
 // Support Tickets
 
+// returns a list of all items a driver has purchased across all orders, used for the complaint item picker
+app.get('/api/support-tickets/purchased-items/:driverId', async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `SELECT oi.order_item_id, oi.order_id, ci.item_id, ci.title, ci.image_url,
+                    oi.quantity, oi.points_price_at_purchase, o.created_at AS order_date
+             FROM order_items oi
+             JOIN orders o ON oi.order_id = o.order_id
+             JOIN catalog_items ci ON oi.item_id = ci.item_id
+             WHERE o.driver_user_id = ?
+             ORDER BY o.created_at DESC, ci.title ASC`,
+            [req.params.driverId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching purchased items:', error);
+        res.status(500).json({ error: 'Failed to fetch purchased items.' });
+    }
+});
+
 // creates new support ticket, called when a driver or sponsor submits the form
 // sponsorOrgId can be null if the user isn't affiliated with an org
 app.post('/api/support-tickets', async (req, res) => {
-    const { userId, sponsorOrgId, title, description, category, subjectDriverId } = req.body;
+    const { userId, sponsorOrgId, title, description, category, subjectDriverId, relatedOrderItemId } = req.body;
     // make sure both fields are filled in before inserting
     if (!title || !title.trim()) {
         return res.status(400).json({ error: 'Title is required.' });
@@ -3200,15 +3220,15 @@ app.post('/api/support-tickets', async (req, res) => {
         return res.status(400).json({ error: 'Description is required.' });
     }
     // validate category if provided, default to general
-    const validCategories = ['general', 'security'];
+    const validCategories = ['general', 'security', 'catalog_order'];
     const ticketCategory = category || 'general';
     if (!validCategories.includes(ticketCategory)) {
-        return res.status(400).json({ error: 'Invalid category. Must be general or security.' });
+        return res.status(400).json({ error: 'Invalid category. Must be general, security, or catalog_order.' });
     }
     try {
         const [result] = await pool.query(
-            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id) VALUES (?, ?, ?, ?, ?, ?)',
-            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null]
+            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id, related_order_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null, relatedOrderItemId || null]
         );
         res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
     } catch (error) {
@@ -3419,19 +3439,29 @@ app.put('/api/support-tickets/:ticketId', async (req, res) => {
 });
 
 // archives a ticket instead of deleting it (archived tickets hidden from driver/sponsor views)
-// drivers and sponsors can only archive their own
+// admins can archive any ticket; sponsors can archive their own or any ticket in their org; drivers can only archive their own
 app.put('/api/support-tickets/:ticketId/archive', async (req, res) => {
     const { userId, userType } = req.body;
     try {
         const [[ticket]] = await pool.query(
-            'SELECT ticket_id, user_id FROM support_tickets WHERE ticket_id = ?',
+            'SELECT ticket_id, user_id, sponsor_org_id FROM support_tickets WHERE ticket_id = ?',
             [req.params.ticketId]
         );
         if (!ticket) {
             return res.status(404).json({ error: 'Ticket not found.' });
         }
         if (userType !== 'admin' && ticket.user_id !== parseInt(userId)) {
-            return res.status(403).json({ error: 'You can only archive your own tickets.' });
+            if (userType === 'sponsor') {
+                const [[sponsorUser]] = await pool.query(
+                    'SELECT sponsor_org_id FROM sponsor_user WHERE user_id = ?',
+                    [userId]
+                );
+                if (!sponsorUser || ticket.sponsor_org_id !== sponsorUser.sponsor_org_id) {
+                    return res.status(403).json({ error: 'You can only archive tickets in your organization.' });
+                }
+            } else {
+                return res.status(403).json({ error: 'You can only archive your own tickets.' });
+            }
         }
         await pool.query(
             'UPDATE support_tickets SET is_archived = 1, updated_at = NOW() WHERE ticket_id = ?',

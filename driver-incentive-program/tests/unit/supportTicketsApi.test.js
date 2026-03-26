@@ -73,13 +73,13 @@ describe('POST /api/support-tickets', () => {
         expect(res.body).toHaveProperty('error', 'Description is required.');
     });
 
-    // category must be 'general' or 'security'
+    // category must be 'general' or 'security' or 'catalog_order'
     it('returns 400 when category is an invalid value', async () => {
         const res = await request(app)
             .post('/api/support-tickets')
             .send({ ...validBody, category: 'billing' });
         expect(res.status).toBe(400);
-        expect(res.body).toHaveProperty('error', 'Invalid category. Must be general or security.');
+        expect(res.body).toHaveProperty('error', 'Invalid category. Must be general, security, or catalog_order.');
     });
 
     // -- Success paths --

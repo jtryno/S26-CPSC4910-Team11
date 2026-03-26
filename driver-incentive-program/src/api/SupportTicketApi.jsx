@@ -1,18 +1,33 @@
 // creates new support ticket for driver or sponsor
-// sends the user id, their org (if they have one), title, description, category, and optional subject driver
-async function createTicket(userId, sponsorOrgId, title, description, category, subjectDriverId) {
+// sends the user id, their org (if they have one), title, description, category, optional subject driver, and optional order item for catalog_order complaints
+async function createTicket(userId, sponsorOrgId, title, description, category, subjectDriverId, relatedOrderItemId) {
     try {
         const response = await fetch('/api/support-tickets', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ userId, sponsorOrgId, title, description, category: category || 'general', subjectDriverId: subjectDriverId || null }),
+            body: JSON.stringify({ userId, sponsorOrgId, title, description, category: category || 'general', subjectDriverId: subjectDriverId || null, relatedOrderItemId: relatedOrderItemId || null }),
         });
         const data = await response.json();
         return data;
     } catch (error) {
         console.error('Error creating support ticket:', error);
+        throw error;
+    }
+}
+
+// gets a flat list of all items the driver has purchased across all orders, used for the catalog order complaint item picker
+async function fetchPurchasedItems(driverId) {
+    try {
+        const response = await fetch(`/api/support-tickets/purchased-items/${driverId}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.items || [];
+    } catch (error) {
+        console.error('Error fetching purchased items:', error);
         throw error;
     }
 }
@@ -190,4 +205,5 @@ export {
     archiveTicket,
     fetchTicketComments,
     addTicketComment,
+    fetchPurchasedItems,
 };
