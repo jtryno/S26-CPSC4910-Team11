@@ -14,6 +14,7 @@ import {
     archiveTicket,
     fetchTicketComments,
     addTicketComment,
+    fetchPurchasedItems,
 } from '../api/SupportTicketApi';
 
 const STATUS_STYLES = {
@@ -152,6 +153,10 @@ const DriverView = ({ user }) => {
     const [subjectDriverId, setSubjectDriverId] = useState('');
     const [orgDrivers, setOrgDrivers] = useState([]);
 
+    // catalog order complaint purchased item picker
+    const [purchasedItems, setPurchasedItems] = useState([]);
+    const [selectedOrderItemId, setSelectedOrderItemId] = useState('');
+
     // edit state
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [editingTicket, setEditingTicket] = useState(null);
@@ -197,6 +202,8 @@ const DriverView = ({ user }) => {
         setTicketCategory('general');
         setDriverPickerEnabled(false);
         setSubjectDriverId('');
+        setSelectedOrderItemId('');
+        setPurchasedItems([]);
         setSubmitMsg(null);
         setCreateModalOpen(true);
     };
@@ -211,6 +218,10 @@ const DriverView = ({ user }) => {
             setSubmitMsg({ type: 'error', text: 'Please enter a description.' });
             return;
         }
+        if (ticketCategory === 'catalog_order' && !selectedOrderItemId) {
+            setSubmitMsg({ type: 'error', text: 'Please select the item you are complaining about.' });
+            return;
+        }
         setSubmitting(true);
         try {
             const result = await createTicket(
@@ -219,7 +230,8 @@ const DriverView = ({ user }) => {
                 ticketTitle.trim(),
                 ticketDesc.trim(),
                 ticketCategory,
-                driverPickerEnabled && subjectDriverId ? parseInt(subjectDriverId) : null
+                driverPickerEnabled && subjectDriverId ? parseInt(subjectDriverId) : null,
+                ticketCategory === 'catalog_order' && selectedOrderItemId ? parseInt(selectedOrderItemId) : null
             );
             if (result.ticket_id) {
                 setCreateModalOpen(false);
@@ -300,9 +312,11 @@ const DriverView = ({ user }) => {
             key: 'category',
             label: 'Category',
             sortable: true,
-            render: (val) => val === 'security'
-                ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>
-                : <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>,
+            render: (val) => {
+                if (val === 'security') return <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>;
+                if (val === 'catalog_order') return <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Catalog Order</span>;
+                return <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>;
+            },
         },
         {
             key: 'status',
@@ -442,13 +456,50 @@ const DriverView = ({ user }) => {
                         <label style={{ display: 'block', marginBottom: '4px', fontWeight: 600, color: '#1a1a1a' }}>Category</label>
                         <select
                             value={ticketCategory}
-                            onChange={e => setTicketCategory(e.target.value)}
+                            onChange={e => {
+                                const newCat = e.target.value;
+                                setTicketCategory(newCat);
+                                setSelectedOrderItemId('');
+                                if (newCat === 'catalog_order') {
+                                    fetchPurchasedItems(user.user_id)
+                                        .then(items => setPurchasedItems(items || []))
+                                        .catch(() => setPurchasedItems([]));
+                                }
+                            }}
                             style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }}
                         >
                             <option value="general">General</option>
                             <option value="security">Security Issue</option>
+                            <option value="catalog_order">Catalog Order Complaint</option>
                         </select>
                     </div>
+                    {/* catalog order complaint: item picker populated from the driver's purchase history */}
+                    {ticketCategory === 'catalog_order' && (
+                        <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontWeight: 600, color: '#1a1a1a' }}>Which item is this complaint about?</label>
+                            {purchasedItems.length === 0
+                                ? <p style={{ color: '#888', fontSize: '0.9em', margin: '4px 0 0' }}>No purchased items found.</p>
+                                : (
+                                    <select
+                                        value={selectedOrderItemId}
+                                        onChange={e => {
+                                            setSelectedOrderItemId(e.target.value);
+                                            const item = purchasedItems.find(i => String(i.order_item_id) === e.target.value);
+                                            if (item) setTicketTitle(`Complaint: ${item.title} (Order #${item.order_id})`);
+                                        }}
+                                        style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }}
+                                    >
+                                        <option value="">— Select an item —</option>
+                                        {purchasedItems.map(i => (
+                                            <option key={i.order_item_id} value={i.order_item_id}>
+                                                {i.title} (Order #{i.order_id})
+                                            </option>
+                                        ))}
+                                    </select>
+                                )
+                            }
+                        </div>
+                    )}
                     {/* sponsors can optionally link the ticket to one of their orgs drivers */}
                     {user.user_type === 'sponsor' && orgDrivers.length > 0 && (
                         <div>
@@ -626,6 +677,16 @@ const OrgTicketsTab = ({ user }) => {
         setResolveModalOpen(true);
     };
 
+    const handleArchiveOrgTicket = async (ticket) => {
+        if (!window.confirm(`Archive ticket #${ticket.ticket_id}? It will no longer appear in the driver tickets list.`)) return;
+        try {
+            await archiveTicket(ticket.ticket_id, user.user_id, user.user_type);
+            loadTickets();
+        } catch {
+            console.error('Failed to archive ticket.');
+        }
+    };
+
     const handleResolveWithNote = async () => {
         setResolveSaving(true);
         setResolveMsg(null);
@@ -651,9 +712,11 @@ const OrgTicketsTab = ({ user }) => {
             key: 'category',
             label: 'Category',
             sortable: true,
-            render: (val) => val === 'security'
-                ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>
-                : <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>,
+            render: (val) => {
+                if (val === 'security') return <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>;
+                if (val === 'catalog_order') return <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Catalog Order</span>;
+                return <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>;
+            },
         },
         {
             key: 'first_name',
@@ -759,6 +822,12 @@ const OrgTicketsTab = ({ user }) => {
                                                     {reopening[t.ticket_id] ? 'Reopening...' : 'Reopen Ticket'}
                                                 </button>
                                             )}
+                                            <button
+                                                onClick={() => handleArchiveOrgTicket(t)}
+                                                style={{ background: '#fff', color: '#c62828', border: '1px solid #c62828', padding: '6px 14px', borderRadius: '4px', cursor: 'pointer' }}
+                                            >
+                                                Archive
+                                            </button>
                                         </div>
                                         <CommentsSection ticketId={t.ticket_id} userId={user.user_id} />
                                     </div>
@@ -863,8 +932,8 @@ const AdminView = ({ user }) => {
     const [userDetailsLoading, setUserDetailsLoading] = useState({});
     // tracks which tickets are currently being updated so we can disable buttons
     const [statusUpdating, setStatusUpdating] = useState({});
-    // security issues filter, when true only show tickets with category = security
-    const [securityOnly, setSecurityOnly] = useState(false);
+    // category filter: null = all tickets, 'general' | 'security' | 'catalog_order' = that category only
+    const [categoryFilter, setCategoryFilter] = useState(null);
 
     // load all tickets when admin first visits the page
     useEffect(() => {
@@ -921,8 +990,8 @@ const AdminView = ({ user }) => {
         }
     };
 
-    // tickets shown in the table, filtered to security only when that toggle is active
-    const displayedTickets = securityOnly ? tickets.filter(t => t.category === 'security') : tickets;
+    // tickets shown in the table, filtered to the selected category when a filter is active
+    const displayedTickets = categoryFilter ? tickets.filter(t => t.category === categoryFilter) : tickets;
 
     // column definitions for the admin ticket table
     const columns = [
@@ -932,9 +1001,11 @@ const AdminView = ({ user }) => {
             key: 'category',
             label: 'Category',
             sortable: true,
-            render: (val) => val === 'security'
-                ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>
-                : <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>,
+            render: (val) => {
+                if (val === 'security') return <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Security</span>;
+                if (val === 'catalog_order') return <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>Catalog Order</span>;
+                return <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>;
+            },
         },
         {
             key: 'first_name',
@@ -1005,39 +1076,53 @@ const AdminView = ({ user }) => {
                     ? <p style={{ color: '#666' }}>No support tickets have been submitted yet.</p>
                     : (
                         <div>
-                            {/* filter toggle: all tickets vs security issues only */}
+                            {/* filter toggles: all tickets, or filter by category */}
                             <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                                 <button
-                                    onClick={() => setSecurityOnly(false)}
+                                    onClick={() => setCategoryFilter(null)}
                                     style={{
                                         padding: '6px 16px',
                                         borderRadius: '4px',
                                         border: '1px solid #ccc',
-                                        backgroundColor: !securityOnly ? '#1976d2' : '#fff',
-                                        color: !securityOnly ? 'white' : '#333',
+                                        backgroundColor: categoryFilter === null ? '#1976d2' : '#fff',
+                                        color: categoryFilter === null ? 'white' : '#333',
                                         cursor: 'pointer',
-                                        fontWeight: !securityOnly ? 600 : 400,
+                                        fontWeight: categoryFilter === null ? 600 : 400,
                                     }}
                                 >
                                     All Tickets
                                 </button>
                                 <button
-                                    onClick={() => setSecurityOnly(true)}
+                                    onClick={() => setCategoryFilter('security')}
                                     style={{
                                         padding: '6px 16px',
                                         borderRadius: '4px',
                                         border: '1px solid #ccc',
-                                        backgroundColor: securityOnly ? '#880e4f' : '#fff',
-                                        color: securityOnly ? 'white' : '#333',
+                                        backgroundColor: categoryFilter === 'security' ? '#880e4f' : '#fff',
+                                        color: categoryFilter === 'security' ? 'white' : '#333',
                                         cursor: 'pointer',
-                                        fontWeight: securityOnly ? 600 : 400,
+                                        fontWeight: categoryFilter === 'security' ? 600 : 400,
                                     }}
                                 >
                                     Security Issues Only
                                 </button>
+                                <button
+                                    onClick={() => setCategoryFilter('catalog_order')}
+                                    style={{
+                                        padding: '6px 16px',
+                                        borderRadius: '4px',
+                                        border: '1px solid #ccc',
+                                        backgroundColor: categoryFilter === 'catalog_order' ? '#2e7d32' : '#fff',
+                                        color: categoryFilter === 'catalog_order' ? 'white' : '#333',
+                                        cursor: 'pointer',
+                                        fontWeight: categoryFilter === 'catalog_order' ? 600 : 400,
+                                    }}
+                                >
+                                    Catalog Orders Only
+                                </button>
                             </div>
                             {displayedTickets.length === 0 && (
-                                <p style={{ color: '#666' }}>No security issue tickets found.</p>
+                                <p style={{ color: '#666' }}>No tickets found for this filter.</p>
                             )}
                             <SortableTable columns={columns} data={displayedTickets} actions={actions} />
                             {/* expanded detail cards for each ticket the admin has opened */}
