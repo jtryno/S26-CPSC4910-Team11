@@ -2927,6 +2927,183 @@ if (process.env.NODE_ENV !== 'test') {
         }
     })();
 
+// --- Catalog Reviews ---
+const REVIEW_CHAR_LIMIT = 600;
+ 
+// GET /api/catalog/reviews/:itemId returns all active reviews and average rating for one catalog item.
+app.get('/api/catalog/reviews/:itemId', async (req, res) => {
+    const {itemId} = req.params;
+    try {
+        // double join because you need to join on driver user id and reply user id (and left join cause a reply may not have a user id to match to)
+        const [reviews] = await pool.query(
+            `SELECT cr.review_id, cr.item_id, cr.driver_user_id,
+                u.username AS driver_username,
+                cr.rating, cr.review_text, cr.sponsor_reply, cr.reply_at, cr.reply_by_user_id,
+                ru.username AS reply_username,
+                cr.created_at, cr.updated_at
+             FROM catalog_reviews cr
+             JOIN users u ON cr.driver_user_id = u.user_id
+             LEFT JOIN users ru ON cr.reply_by_user_id = ru.user_id
+             WHERE cr.item_id = ?
+             ORDER BY cr.created_at DESC`,
+            [itemId]
+        );
+        
+
+        // averaging all reviews
+        let avgRating = null;
+        if(reviews.length > 0) {
+            const total = reviews.reduce((sum, curr) => sum + curr.rating, 0);
+            
+            avgRating = total / reviews.length;
+        }
+ 
+        res.json({ reviews, avgRating, totalReviews: reviews.length });
+    } catch(error) {
+        console.error('Error fetching catalog reviews:', error);
+        res.status(500).json({error: 'Failed to fetch reviews'});
+    }
+});
+ 
+// POST /api/catalog/reviews/:reviewId/reply lets sponsors and admins respond to driver reviews
+app.post('/api/catalog/reviews/:reviewId/reply', async (req, res) => {
+    const {reviewId} = req.params;
+    const {sponsorUserId, replyText} = req.body;
+ 
+    if(!sponsorUserId || !replyText) {
+        return res.status(400).json({ error: 'sponsorUserId and replyText are required' });
+    }
+ 
+    try {
+        const [[review]] = await pool.query(
+            `SELECT cr.review_id, ci.sponsor_org_id
+             FROM catalog_reviews cr
+             JOIN catalog_items ci ON cr.item_id = ci.item_id
+             WHERE cr.review_id = ?`,
+            [reviewId]
+        );
+        if(!review) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+ 
+        const [[sponsorRow]] = await pool.query(
+            `SELECT user_id FROM users WHERE user_id = ? AND user_type IN ('sponsor', 'admin')`,
+            [sponsorUserId]
+        );
+        if(!sponsorRow) {
+            return res.status(403).json({ error: 'Only sponsors or admins can reply to reviews' });
+        }
+ 
+        await pool.query(
+            `UPDATE catalog_reviews
+             SET sponsor_reply = ?,
+                 reply_at = NOW(),
+                 reply_by_user_id = ?
+             WHERE review_id = ?`,
+            [replyText, sponsorUserId, reviewId]
+        );
+ 
+        const [[updated]] = await pool.query(
+            `SELECT cr.*, u.username AS driver_username, ru.username AS reply_username
+             FROM catalog_reviews cr
+             JOIN users u ON cr.driver_user_id = u.user_id
+             LEFT JOIN users ru ON cr.reply_by_user_id = ru.user_id
+             WHERE cr.review_id = ?`,
+            [reviewId]
+        );
+ 
+        res.json({review: updated});
+    } catch(error) {
+        console.error('Error saving sponsor reply:', error);
+        res.status(500).json({error: 'Failed to save reply'});
+    }
+});
+
+
+// POST /api/catalog/reviews for driver creating or updating a review
+app.post('/api/catalog/reviews', async (req, res) => {
+    const {itemId, driverUserId, rating, reviewText} = req.body;
+ 
+    if(!itemId || !driverUserId || !rating || !reviewText) {
+        return res.status(400).json({ error: 'itemId, driverUserId, rating, and reviewText are required' });
+    }
+    if(rating < 1 || rating > 5) {
+        return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+    }
+    if(reviewText.length() > REVIEW_CHAR_LIMIT) {
+        return res.status(400).json({ error: `Review must be ${REVIEW_CHAR_LIMIT} characters or fewer` });
+    }
+ 
+    try {
+        // make sure item part of that driver's org 
+        const [itemRows] = await pool.query(
+            `SELECT ci.item_id
+             FROM catalog_items ci
+             JOIN driver_user du ON ci.sponsor_org_id = du.sponsor_org_id
+             WHERE ci.item_id = ? AND du.user_id = ? AND ci.is_active = 1`,
+            [itemId, driverUserId]
+        );
+        if(itemRows.length === 0) {
+            return res.status(403).json({ error: 'Item not found in organization catalog' });
+        }
+ 
+        // make new review unless it already exists in table, then it is an update
+        await pool.query(
+            `INSERT INTO catalog_reviews (item_id, driver_user_id, rating, review_text)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                rating = VALUES(rating),
+                review_text = VALUES(review_text),
+                updated_at = NOW()`,
+            [itemId, driverUserId, rating, reviewText]
+        );
+ 
+        const [[saved]] = await pool.query(
+            `SELECT cr.*, u.username AS driver_username
+             FROM catalog_reviews cr
+             JOIN users u ON cr.driver_user_id = u.user_id
+             WHERE cr.item_id = ? AND cr.driver_user_id = ?`,
+            [itemId, driverUserId]
+        );
+ 
+        res.status(201).json({review: saved});
+    } catch (error) {
+        console.error('Error saving review:', error);
+        res.status(500).json({error: 'Failed to save review'});
+    }
+});
+ 
+ 
+// DELETE /api/catalog/reviews/:reviewId for if someone deletes review
+app.delete('/api/catalog/reviews/:reviewId', async (req, res) => {
+    const {reviewId} = req.params;
+    const {driverUserId} = req.body;
+ 
+    if(!driverUserId) {
+        return res.status(400).json({ error: 'driverUserId is required' });
+    }
+ 
+    try {
+        const [[review]] = await pool.query(
+            'SELECT review_id, driver_user_id FROM catalog_reviews WHERE review_id = ?',
+            [reviewId]
+        );
+        if(!review) {
+            return res.status(404).json({error: 'Review not found'});
+        }
+        
+        if(review.driver_user_id !== Number(driverUserId)) {
+            return res.status(403).json({error: 'You can only delete your own review' });
+        }
+ 
+        await pool.query('DELETE FROM catalog_reviews WHERE review_id = ?', [reviewId]);
+        res.json({message: 'Review deleted'});
+    } catch(error) {
+        console.error('Error deleting review:', error);
+        res.status(500).json({error: 'Failed to delete review'});
+    }
+});
+
     app.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
     });
