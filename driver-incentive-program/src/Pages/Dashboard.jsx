@@ -5,6 +5,7 @@ import SortableTable from '../components/SortableTable';
 import SignupModal from '../components/SignupModal';
 import { fetchOrganizations } from '../api/OrganizationApi';
 import { startImpersonation } from '../api/ImpersonationApi';
+import BulkUploadModal from './Organization/OrganizationSummary/BulkUploadModal';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -2005,6 +2006,7 @@ const AdminDashboard = ({ user }) => {
 
     const [signUpModalOpen, setSignUpModalOpen] = useState(false);
     const [organizations, setOrganizations] = useState([]);
+    const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 
     const loadOrganizations = async () => {
         const orgs = await fetchOrganizations();
@@ -2078,27 +2080,7 @@ const AdminDashboard = ({ user }) => {
         <>
             <h1>Admin Dashboard</h1>
             <p style={{ color: '#666', marginBottom: '24px' }}>Search for any user by email to view and edit their information.</p>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '24px' }}>
-                <button
-                    style={{width: '200px'}}
-                    onClick={() => setSignUpModalOpen(true)}
-                >
-                    Create New User
-                </button>
-                <SignupModal
-                    isOpen={signUpModalOpen}
-                    onClose={() => setSignUpModalOpen(false)}
-                    possibleRoles={[
-                        { label: 'Driver', value: 'driver' },
-                        { label: 'Sponsor', value: 'sponsor' },
-                        { label: 'Admin', value: 'admin' },
-                    ]}
-                    orgs={organizations.map(org => ({
-                        label: org.name,
-                        value: org.sponsor_org_id,
-                    }))}
-                    createdByUserId={user?.user_id}
-                />
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '16px' }}>
                 <input
                     type="email"
                     placeholder="Enter user email..."
@@ -2128,6 +2110,42 @@ const AdminDashboard = ({ user }) => {
                 >
                     {loading ? 'Searching...' : 'Search'}
                 </button>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '24px' }}>
+                <button
+                    style={{width: '200px'}}
+                    onClick={() => setSignUpModalOpen(true)}
+                >
+                    Create New User
+                </button>
+                <button
+                    style={{width: '200px'}}
+                    onClick={() => setBulkUploadOpen(true)}
+                >
+                    Bulk Upload Users
+                </button>
+                <BulkUploadModal
+                    isOpen={bulkUploadOpen}
+                    onClose={() => setBulkUploadOpen(false)}
+                    orgId={null}
+                    requestingUserId={user?.user_id}
+                    onImported={null}
+                    userType="admin"
+                />
+                <SignupModal
+                    isOpen={signUpModalOpen}
+                    onClose={() => setSignUpModalOpen(false)}
+                    possibleRoles={[
+                        { label: 'Driver', value: 'driver' },
+                        { label: 'Sponsor', value: 'sponsor' },
+                        { label: 'Admin', value: 'admin' },
+                    ]}
+                    orgs={organizations.map(org => ({
+                        label: org.name,
+                        value: org.sponsor_org_id,
+                    }))}
+                    createdByUserId={user?.user_id}
+                />
             </div>
 
             {error && <div style={{ color: '#c62828', marginBottom: '16px' }}>{error}</div>}

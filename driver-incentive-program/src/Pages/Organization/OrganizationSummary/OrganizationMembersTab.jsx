@@ -9,6 +9,7 @@ import Modal from '../../../components/Modal';
 import InputField from '../../../components/InputField';
 import SponsorPurchaseModal from './SponsorPurchaseModal';
 import DriverCsvImportModal from './DriverCSVImportModal';
+import BulkUploadModal from './BulkUploadModal';
 
 const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgId}) => {
     const navigate = useNavigate();
@@ -18,6 +19,7 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
     const [selectedMember, setSelectedMember] = useState(null);
     const [dropReason, setDropReason] = useState('');
     const [purchaseDriver, setPurchaseDriver] = useState(null);
+    const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 
     function handleDropClose() {
         setRemoveOpen(false);
@@ -45,6 +47,14 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                     >
                         Import Drivers/Sponsors CSV
                     </button>
+                    {userData?.user_type === 'sponsor' && (
+                        <button
+                            style={{ width: '200px'}}
+                            onClick={() => setBulkUploadOpen(true)}
+                        >
+                            Bulk Upload Users
+                        </button>
+                    )}
                 </div>
             }
             <SignupModal
@@ -64,6 +74,14 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                 orgId={orgId}
                 requestingUserId={userData?.user_id}
                 onImported={fetchOrg}
+            />
+            <BulkUploadModal
+                isOpen={bulkUploadOpen}
+                onClose={() => setBulkUploadOpen(false)}
+                orgId={orgId}
+                requestingUserId={userData?.user_id}
+                onImported={fetchOrg}
+                userType={userData?.user_type}
             />
             <SortableTable
                 columns={[

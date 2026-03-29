@@ -127,4 +127,23 @@ async function importOrganizationUsersFromCsv(orgId, requestingUserId, userRole,
     }
 }
 
-export { removeFromOrganization, updateField, signUpUser, dropDriver, fetchUserData, importOrganizationUsersFromCsv };
+async function importUsersFromPipeFile(orgId, requestingUserId, fileText) {
+    try {
+        const url = orgId
+            ? `/api/organization/${orgId}/users/bulk-import`
+            : '/api/admin/users/bulk-import';
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestingUserId, fileText }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to import users');
+        return data;
+    } catch (error) {
+        console.error('Error in bulk upload:', error);
+        throw error;
+    }
+}
+
+export { removeFromOrganization, updateField, signUpUser, dropDriver, fetchUserData, importOrganizationUsersFromCsv, importUsersFromPipeFile };

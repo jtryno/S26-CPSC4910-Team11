@@ -1313,6 +1313,493 @@ const importOrganizationUsersFromCsv = async (req, res) => {
 app.post('/api/organization/:sponsor_org_id/users/import', importOrganizationUsersFromCsv);
 app.post('/api/organization/:sponsor_org_id/drivers/import', importOrganizationUsersFromCsv);
 
+// --- Pipe-delimited Bulk Upload ---
+
+// Parses pipe-delimited file text into structured line objects.
+function parsePipeDelimitedLines(fileText) {
+    const rawLines = String(fileText).replace(/^\uFEFF/, '').split(/\r?\n/);
+    const parsed = [];
+
+    for (let i = 0; i < rawLines.length; i++) {
+        const trimmed = rawLines[i].trim();
+        if (!trimmed) continue;
+
+        const fields = trimmed.split('|');
+        parsed.push({
+            lineNumber: i + 1,
+            type: (fields[0] || '').trim().toUpperCase(),
+            orgName: (fields[1] || '').trim(),
+            firstName: (fields[2] || '').trim(),
+            lastName: (fields[3] || '').trim(),
+            email: (fields[4] || '').trim().toLowerCase(),
+            points: (fields[5] || '').trim(),
+            reason: (fields[6] || '').trim(),
+        });
+    }
+
+    return parsed;
+}
+
+// Validates a single parsed pipe-delimited line and returns errors/warnings.
+function validateBulkLine(line, requesterType) {
+    const warnings = [];
+
+    if (!['O', 'D', 'S'].includes(line.type)) {
+        return { valid: false, error: `Invalid type "${line.type}". Must be O, D, or S.` };
+    }
+
+    if (line.type === 'O') {
+        if (requesterType === 'sponsor') {
+            return { valid: false, error: 'Sponsors cannot use the "O" (Organization) type.' };
+        }
+        if (!line.orgName) {
+            return { valid: false, error: 'Organization name is required for "O" type lines.' };
+        }
+        return { valid: true, warnings };
+    }
+
+    // D or S type
+    if (!line.firstName || !line.lastName || !line.email) {
+        return { valid: false, error: 'First name, last name, and email are required for D/S lines.' };
+    }
+
+    if (!isLikelyEmail(line.email)) {
+        return { valid: false, error: 'Email address is not valid.' };
+    }
+
+    if (requesterType === 'sponsor' && line.orgName) {
+        warnings.push('Organization name ignored for sponsor upload.');
+    }
+
+    if (line.type === 'S' && line.points) {
+        warnings.push('Points cannot be assigned to sponsor users; ignoring points.');
+    }
+
+    if (line.points) {
+        const pointsNum = Number(line.points);
+        if (!Number.isInteger(pointsNum) || pointsNum <= 0) {
+            return { valid: false, error: 'Points must be a positive integer.' };
+        }
+        if (!line.reason) {
+            return { valid: false, error: 'Reason is required when points are provided.' };
+        }
+    }
+
+    return { valid: true, warnings };
+}
+
+// Pass 1: Process all O (Organization) lines - create or resolve orgs.
+async function processBulkOrgLines(connection, oLines, results) {
+    const orgMap = new Map(); // orgName (lowercase) → { sponsor_org_id, name }
+    let orgsCreated = 0;
+
+    for (const line of oLines) {
+        const nameLower = line.orgName.toLowerCase();
+
+        // Check if already resolved in this batch
+        if (orgMap.has(nameLower)) {
+            results.push({
+                lineNumber: line.lineNumber,
+                status: 'imported',
+                type: 'O',
+                orgName: line.orgName,
+                message: 'Organization already resolved in this file.',
+                warnings: [],
+            });
+            continue;
+        }
+
+        try {
+            // Check DB for existing org
+            const [existingRows] = await connection.query(
+                'SELECT sponsor_org_id, name FROM sponsor_organization WHERE LOWER(name) = ?',
+                [nameLower]
+            );
+
+            if (existingRows.length > 0) {
+                orgMap.set(nameLower, existingRows[0]);
+                results.push({
+                    lineNumber: line.lineNumber,
+                    status: 'imported',
+                    type: 'O',
+                    orgName: existingRows[0].name,
+                    message: 'Organization already exists.',
+                    warnings: [],
+                });
+            } else {
+                const [insertResult] = await connection.query(
+                    'INSERT INTO sponsor_organization (name, point_value) VALUES (?, 1)',
+                    [line.orgName]
+                );
+                const newOrg = { sponsor_org_id: insertResult.insertId, name: line.orgName };
+                orgMap.set(nameLower, newOrg);
+                orgsCreated += 1;
+                results.push({
+                    lineNumber: line.lineNumber,
+                    status: 'imported',
+                    type: 'O',
+                    orgName: line.orgName,
+                    message: 'Organization created.',
+                    warnings: [],
+                });
+            }
+        } catch (err) {
+            results.push({
+                lineNumber: line.lineNumber,
+                status: 'failed',
+                type: 'O',
+                orgName: line.orgName,
+                error: err.message || 'Failed to process organization line.',
+                warnings: [],
+            });
+        }
+    }
+
+    return { orgMap, orgsCreated };
+}
+
+// Pass 2: Process a single D or S line inside its own transaction.
+async function processBulkUserLine({
+    connection,
+    line,
+    orgMap,
+    callerOrgId,
+    requesterType,
+    requestingUserId,
+    reservedEmails,
+    reservedUsernames,
+    warnings,
+}) {
+    await connection.beginTransaction();
+
+    try {
+        // Resolve target organization
+        let targetOrgId;
+        let targetOrgName;
+
+        if (requesterType === 'sponsor') {
+            targetOrgId = callerOrgId;
+            // Org name is ignored for sponsors (warning already added in validation)
+            const [orgRows] = await connection.query(
+                'SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?',
+                [callerOrgId]
+            );
+            targetOrgName = orgRows.length > 0 ? orgRows[0].name : '';
+        } else {
+            // Admin: resolve org by name
+            if (!line.orgName) {
+                throw createHttpError(400, 'Organization name is required for admin bulk upload.');
+            }
+            const nameLower = line.orgName.toLowerCase();
+            const fromMap = orgMap.get(nameLower);
+            if (fromMap) {
+                targetOrgId = fromMap.sponsor_org_id;
+                targetOrgName = fromMap.name;
+            } else {
+                // Check DB
+                const [orgRows] = await connection.query(
+                    'SELECT sponsor_org_id, name FROM sponsor_organization WHERE LOWER(name) = ?',
+                    [nameLower]
+                );
+                if (orgRows.length === 0) {
+                    throw createHttpError(400, `Organization "${line.orgName}" not found. Create it with an "O" line first.`);
+                }
+                targetOrgId = orgRows[0].sponsor_org_id;
+                targetOrgName = orgRows[0].name;
+            }
+        }
+
+        // Check for duplicate email in this batch
+        if (reservedEmails.has(line.email)) {
+            throw createHttpError(400, 'This email appears more than once in the file.');
+        }
+
+        // Check if user already exists
+        const [existingUsers] = await connection.query(
+            'SELECT user_id, user_type FROM users WHERE email = ? LIMIT 1',
+            [line.email]
+        );
+
+        let userId;
+        let username = null;
+        let onboardingPath = null;
+        let isNewUser = false;
+        let pointsAdded = null;
+
+        if (existingUsers.length > 0) {
+            // User already exists
+            userId = existingUsers[0].user_id;
+            const existingType = existingUsers[0].user_type;
+
+            if (line.type === 'S') {
+                // Sponsor already exists so skip creation
+                await connection.commit();
+                return {
+                    lineNumber: line.lineNumber,
+                    status: 'imported',
+                    type: 'S',
+                    orgName: targetOrgName,
+                    firstName: line.firstName,
+                    lastName: line.lastName,
+                    email: line.email,
+                    username: null,
+                    pointsAdded: null,
+                    onboardingPath: null,
+                    message: 'Sponsor user already exists.',
+                    warnings,
+                };
+            }
+
+            // D type: existing user
+            if (existingType === 'driver') {
+                // Check if already in this org
+                const [driverRows] = await connection.query(
+                    'SELECT user_id FROM driver_user WHERE user_id = ? AND sponsor_org_id = ? AND driver_status = ?',
+                    [userId, targetOrgId, 'active']
+                );
+
+                if (driverRows.length === 0) {
+                    // Not in this org yet so add membership (auto-accept)
+                    await connection.query(
+                        'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, NOW())',
+                        [userId, targetOrgId, 'active']
+                    );
+                }
+
+                // Add points if provided
+                if (line.points && line.type !== 'S') {
+                    const pointsNum = Number(line.points);
+                    await connection.query(
+                        'INSERT INTO point_transactions (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+                        [userId, targetOrgId, pointsNum, line.reason, 'bulk_upload', requestingUserId]
+                    );
+                    pointsAdded = pointsNum;
+                }
+
+                await connection.commit();
+                return {
+                    lineNumber: line.lineNumber,
+                    status: 'imported',
+                    type: 'D',
+                    orgName: targetOrgName,
+                    firstName: line.firstName,
+                    lastName: line.lastName,
+                    email: line.email,
+                    username: null,
+                    pointsAdded,
+                    onboardingPath: null,
+                    message: 'Existing driver updated.',
+                    warnings,
+                };
+            }
+
+            // Existing user is not a driver so error
+            throw createHttpError(400, `User with this email already exists as "${existingType}" and cannot be added as a driver.`);
+        }
+
+        // New user: create them
+        isNewUser = true;
+        const userType = line.type === 'S' ? 'sponsor' : 'driver';
+        const tempPassword = generateTemporaryPassword();
+        const passwordHash = hashPassword(tempPassword);
+        const usernameSeed = line.email.split('@')[0] || `${line.firstName}_${line.lastName}`;
+        username = await findAvailableUsername(connection, usernameSeed, reservedUsernames);
+
+        const [userInsert] = await connection.query(
+            `INSERT INTO users (first_name, last_name, email, username, password_hash, user_type) VALUES (?, ?, ?, ?, ?, ?)`,
+            [line.firstName, line.lastName, line.email, username, passwordHash, userType]
+        );
+        userId = userInsert.insertId;
+
+        // Insert membership
+        await insertOrganizationMembership(connection, userId, targetOrgId, userType, requestingUserId);
+
+        // Create onboarding token
+        const { token } = await createPasswordResetToken(userId, connection);
+        onboardingPath = createOnboardingPath(token);
+
+        // Add points for drivers if provided (and not sponsor type)
+        if (line.points && line.type === 'D') {
+            const pointsNum = Number(line.points);
+            await connection.query(
+                'INSERT INTO point_transactions (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+                [userId, targetOrgId, pointsNum, line.reason, 'bulk_upload', requestingUserId]
+            );
+            pointsAdded = pointsNum;
+        }
+
+        await connection.commit();
+
+        return {
+            lineNumber: line.lineNumber,
+            status: 'imported',
+            type: line.type,
+            orgName: targetOrgName,
+            firstName: line.firstName,
+            lastName: line.lastName,
+            email: line.email,
+            username,
+            pointsAdded,
+            onboardingPath,
+            message: isNewUser ? 'User created.' : 'User updated.',
+            warnings,
+        };
+    } catch (err) {
+        try { await connection.rollback(); } catch (rbErr) {
+            console.error('Failed rolling back bulk upload row:', rbErr);
+        }
+        throw err;
+    }
+}
+
+// Main handler for pipe-delimited bulk upload.
+const importUsersFromPipeFile = async (req, res) => {
+    const { sponsor_org_id } = req.params;
+    const { requestingUserId, fileText } = req.body;
+
+    if (!requestingUserId) {
+        return res.status(400).json({ error: 'requestingUserId is required' });
+    }
+    if (!fileText || !String(fileText).trim()) {
+        return res.status(400).json({ error: 'fileText is required' });
+    }
+
+    try {
+        // Determine requester type
+        const [requesterRows] = await pool.query(
+            'SELECT user_type FROM users WHERE user_id = ?',
+            [requestingUserId]
+        );
+        if (requesterRows.length === 0) {
+            return res.status(404).json({ error: 'Requesting user not found' });
+        }
+        const requesterType = requesterRows[0].user_type;
+
+        if (!['admin', 'sponsor'].includes(requesterType)) {
+            return res.status(403).json({ error: 'Only sponsors and admins can bulk upload users' });
+        }
+
+        // Sponsors must target their own org; admins specify orgs in the file
+        if (requesterType === 'sponsor') {
+            await authorizeOrganizationImport(requestingUserId, sponsor_org_id);
+        }
+
+        // Parse
+        const lines = parsePipeDelimitedLines(fileText);
+        if (lines.length === 0) {
+            return res.status(400).json({ error: 'File contains no data lines.' });
+        }
+
+        const results = [];
+        let importedCount = 0;
+        let failedCount = 0;
+        let skippedCount = 0;
+
+        // Validate all lines first
+        const validatedLines = [];
+        for (const line of lines) {
+            const validation = validateBulkLine(line, requesterType);
+            if (!validation.valid) {
+                failedCount += 1;
+                results.push({
+                    lineNumber: line.lineNumber,
+                    status: 'failed',
+                    type: line.type || '?',
+                    orgName: line.orgName,
+                    firstName: line.firstName,
+                    lastName: line.lastName,
+                    email: line.email,
+                    error: validation.error,
+                    warnings: [],
+                });
+            } else {
+                validatedLines.push({ line, warnings: validation.warnings });
+            }
+        }
+
+        // Separate O lines from D/S lines
+        const oEntries = validatedLines.filter(e => e.line.type === 'O');
+        const userEntries = validatedLines.filter(e => e.line.type !== 'O');
+
+        const connection = await pool.getConnection();
+
+        try {
+            // Pass 1: Process organizations
+            const { orgMap } = await processBulkOrgLines(
+                connection,
+                oEntries.map(e => e.line),
+                results
+            );
+            // Count O results (only those added by processBulkOrgLines, not validation failures)
+            const validationFailCount = failedCount;
+            for (let i = validationFailCount; i < results.length; i++) {
+                if (results[i].type === 'O' && results[i].status === 'imported') importedCount += 1;
+                else if (results[i].type === 'O' && results[i].status === 'failed') failedCount += 1;
+            }
+
+            // Pass 2: Process D/S lines
+            const reservedEmails = new Set();
+            const reservedUsernames = new Set();
+
+            for (const entry of userEntries) {
+                try {
+                    const result = await processBulkUserLine({
+                        connection,
+                        line: entry.line,
+                        orgMap,
+                        callerOrgId: sponsor_org_id,
+                        requesterType,
+                        requestingUserId,
+                        reservedEmails,
+                        reservedUsernames,
+                        warnings: entry.warnings,
+                    });
+
+                    if (result.email) reservedEmails.add(result.email);
+                    if (result.username) reservedUsernames.add(result.username.toLowerCase());
+                    importedCount += 1;
+                    results.push(result);
+                } catch (rowErr) {
+                    failedCount += 1;
+                    results.push({
+                        lineNumber: entry.line.lineNumber,
+                        status: 'failed',
+                        type: entry.line.type,
+                        orgName: entry.line.orgName,
+                        firstName: entry.line.firstName,
+                        lastName: entry.line.lastName,
+                        email: entry.line.email,
+                        error: rowErr.message || 'Failed to process this line.',
+                        warnings: entry.warnings,
+                    });
+                }
+            }
+        } finally {
+            connection.release();
+        }
+
+        // Sort results by line number
+        results.sort((a, b) => a.lineNumber - b.lineNumber);
+
+        res.json({
+            message: `Processed ${importedCount} line(s) successfully.`,
+            importedCount,
+            failedCount,
+            skippedCount,
+            results,
+        });
+    } catch (error) {
+        if (error.status) {
+            return res.status(error.status).json({ error: error.message });
+        }
+        console.error('Error in bulk upload:', error);
+        res.status(500).json({ error: 'Failed to process bulk upload.' });
+    }
+};
+
+app.post('/api/organization/:sponsor_org_id/users/bulk-import', importUsersFromPipeFile);
+app.post('/api/admin/users/bulk-import', importUsersFromPipeFile);
+
 // GET /api/organization/:sponsor_org_id/monthly-redeemed-points — total points redeemed via catalog orders this month
 app.get('/api/organization/:sponsor_org_id/monthly-redeemed-points', async (req, res) => {
     const { sponsor_org_id } = req.params;
