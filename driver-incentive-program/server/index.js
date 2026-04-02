@@ -3867,7 +3867,7 @@ app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
 app.get('/api/support-tickets', async (_req, res) => {
     try {
         const [tickets] = await pool.query(
-            `SELECT st.*, u.first_name, u.last_name, u.email,
+            `SELECT st.*, u.first_name, u.last_name, u.email, u.user_type,
                     so.name AS org_name,
                     su_subj.first_name AS subject_first_name,
                     su_subj.last_name AS subject_last_name
