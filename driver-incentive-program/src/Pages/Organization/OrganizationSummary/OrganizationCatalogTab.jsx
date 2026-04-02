@@ -18,6 +18,13 @@ const OrganizationCatalogTab = ({ orgId }) => {
     // Featured toggling state (#6249)
     const [togglingFeatured, setTogglingFeatured] = useState(new Set());
 
+    // Edit item customization state
+    const [editModalOpen, setEditModalOpen] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [editForm, setEditForm] = useState({});
+    const [editSaving, setEditSaving] = useState(false);
+    const [editMsg, setEditMsg] = useState(null);
+
     const fetchCatalog = async () => {
         setLoading(true);
         try {
@@ -114,6 +121,45 @@ const OrganizationCatalogTab = ({ orgId }) => {
             setMessage({ type: 'error', text: 'Network error.' });
         } finally {
             setTogglingFeatured(prev => { const next = new Set(prev); next.delete(item.item_id); return next; });
+        }
+    };
+
+    const openEditModal = (item) => {
+        setEditItem(item);
+        setEditForm({
+            custom_title: item.custom_title || '',
+            custom_description: item.custom_description || '',
+            custom_image_url: item.custom_image_url || '',
+            custom_points_price: item.custom_points_price || '',
+            hide_price: !!item.hide_price,
+            hide_web_url: !!item.hide_web_url,
+            misc_info: item.misc_info || '',
+            estimated_delivery_days: item.estimated_delivery_days || '',
+        });
+        setEditMsg(null);
+        setEditModalOpen(true);
+    };
+
+    const handleSaveEdit = async () => {
+        setEditSaving(true);
+        setEditMsg(null);
+        try {
+            const res = await fetch(`/api/catalog/items/${editItem.item_id}/customize`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(editForm),
+            });
+            if (res.ok) {
+                setEditMsg({ type: 'success', text: 'Item updated.' });
+                await fetchCatalog();
+            } else {
+                const json = await res.json();
+                setEditMsg({ type: 'error', text: json.error || 'Failed to update item.' });
+            }
+        } catch {
+            setEditMsg({ type: 'error', text: 'Network error.' });
+        } finally {
+            setEditSaving(false);
         }
     };
 
@@ -290,6 +336,10 @@ const OrganizationCatalogTab = ({ orgId }) => {
                             },
                         },
                         {
+                            label: 'Edit',
+                            onClick: openEditModal,
+                        },
+                        {
                             label: 'Remove',
                             onClick: handleRemove,
                         },
@@ -386,6 +436,75 @@ const OrganizationCatalogTab = ({ orgId }) => {
 
             {!searching && searchResults.length === 0 && searchQuery && (
                 <p style={{ color: '#888' }}>No results. Try a different search term.</p>
+            )}
+
+            {/* ── Edit Item Modal ── */}
+            {editModalOpen && editItem && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ background: '#fff', borderRadius: '8px', padding: '32px', width: '520px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 4px 24px rgba(0,0,0,0.18)' }}>
+                        <h2 style={{ marginTop: 0 }}>Edit Item</h2>
+                        <p style={{ color: '#555', fontSize: '13px', margin: '0 0 20px' }}>
+                            Override eBay defaults. Leave blank to use the original value.
+                        </p>
+                        <div style={{ display: 'grid', gap: '14px' }}>
+                            {[
+                                { field: 'custom_title', label: 'Custom Name', placeholder: editItem.title },
+                                { field: 'custom_image_url', label: 'Custom Image URL', placeholder: editItem.image_url || 'https://...' },
+                                { field: 'custom_points_price', label: 'Custom Points Price', placeholder: String(editItem.points_price), type: 'number' },
+                                { field: 'estimated_delivery_days', label: 'Estimated Delivery (days)', placeholder: 'e.g. 7', type: 'number' },
+                            ].map(({ field, label, placeholder, type }) => (
+                                <div key={field}>
+                                    <label style={{ display: 'block', fontSize: '13px', color: '#444', marginBottom: '4px' }}>{label}</label>
+                                    <input
+                                        type={type || 'text'}
+                                        value={editForm[field]}
+                                        onChange={(e) => setEditForm(f => ({ ...f, [field]: e.target.value }))}
+                                        placeholder={placeholder}
+                                        style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '14px', boxSizing: 'border-box' }}
+                                    />
+                                </div>
+                            ))}
+                            {[
+                                { field: 'custom_description', label: 'Custom Description', placeholder: editItem.description || '' },
+                                { field: 'misc_info', label: 'Additional Info (misc)', placeholder: 'Any extra details for drivers...' },
+                            ].map(({ field, label, placeholder }) => (
+                                <div key={field}>
+                                    <label style={{ display: 'block', fontSize: '13px', color: '#444', marginBottom: '4px' }}>{label}</label>
+                                    <textarea
+                                        rows={3}
+                                        value={editForm[field]}
+                                        onChange={(e) => setEditForm(f => ({ ...f, [field]: e.target.value }))}
+                                        placeholder={placeholder}
+                                        style={{ width: '100%', padding: '7px 10px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '14px', boxSizing: 'border-box', resize: 'vertical' }}
+                                    />
+                                </div>
+                            ))}
+                            <div style={{ display: 'flex', gap: '24px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', cursor: 'pointer' }}>
+                                    <input type="checkbox" checked={editForm.hide_price} onChange={(e) => setEditForm(f => ({ ...f, hide_price: e.target.checked }))} />
+                                    Hide price from drivers
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', cursor: 'pointer' }}>
+                                    <input type="checkbox" checked={editForm.hide_web_url} onChange={(e) => setEditForm(f => ({ ...f, hide_web_url: e.target.checked }))} />
+                                    Hide eBay link from drivers
+                                </label>
+                            </div>
+                        </div>
+                        {editMsg && (
+                            <div style={{ marginTop: '14px', padding: '8px 12px', borderRadius: '4px', background: editMsg.type === 'success' ? '#e8f5e9' : '#ffebee', color: editMsg.type === 'success' ? '#2e7d32' : '#c62828', fontSize: '13px' }}>
+                                {editMsg.text}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                            <button onClick={() => { setEditModalOpen(false); setEditItem(null); }} disabled={editSaving} style={{ padding: '8px 20px', borderRadius: '4px', border: '1px solid #ccc', background: '#f5f5f5', cursor: 'pointer' }}>
+                                Cancel
+                            </button>
+                            <button onClick={handleSaveEdit} disabled={editSaving} style={{ padding: '8px 20px', borderRadius: '4px', border: 'none', background: editSaving ? '#e0e0e0' : '#1976d2', color: editSaving ? '#999' : '#fff', cursor: editSaving ? 'not-allowed' : 'pointer', fontWeight: '600' }}>
+                                {editSaving ? 'Saving...' : 'Save Changes'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

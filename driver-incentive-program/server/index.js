@@ -3331,6 +3331,45 @@ app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
     }
 });
 
+// PUT /api/catalog/items/:itemId/customize — sponsor customizes a catalog item
+app.put('/api/catalog/items/:itemId/customize', async (req, res) => {
+    const { itemId } = req.params;
+    const {
+        custom_title, custom_description, custom_image_url, custom_points_price,
+        hide_price, hide_web_url, misc_info, estimated_delivery_days,
+    } = req.body;
+    try {
+        await pool.query(
+            `UPDATE catalog_items SET
+                custom_title = ?,
+                custom_description = ?,
+                custom_image_url = ?,
+                custom_points_price = ?,
+                hide_price = ?,
+                hide_web_url = ?,
+                misc_info = ?,
+                estimated_delivery_days = ?,
+                updated_at = NOW()
+             WHERE item_id = ?`,
+            [
+                custom_title || null,
+                custom_description || null,
+                custom_image_url || null,
+                custom_points_price ? parseInt(custom_points_price) : null,
+                hide_price ? 1 : 0,
+                hide_web_url ? 1 : 0,
+                misc_info || null,
+                estimated_delivery_days ? parseInt(estimated_delivery_days) : null,
+                itemId,
+            ]
+        );
+        res.json({ message: 'Item updated' });
+    } catch (error) {
+        console.error('Error customizing catalog item:', error);
+        res.status(500).json({ error: 'Failed to update item' });
+    }
+});
+
 // ─── Recently Viewed Routes ───────────────────────────────────────────────────
 
 // POST /api/catalog/viewed — record that a driver viewed an item
@@ -4334,6 +4373,33 @@ if (process.env.NODE_ENV !== 'test') {
             )`);
         } catch (e) {
             console.warn('recently_viewed migration failed:', e.message);
+        }
+
+        // Add catalog item customization columns
+        try {
+            const catalogCols = [
+                { name: 'custom_title',            type: 'VARCHAR(500) NULL' },
+                { name: 'custom_description',      type: 'TEXT NULL' },
+                { name: 'custom_image_url',        type: 'VARCHAR(1000) NULL' },
+                { name: 'custom_points_price',     type: 'INT NULL' },
+                { name: 'hide_price',              type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+                { name: 'hide_web_url',            type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+                { name: 'misc_info',               type: 'TEXT NULL' },
+                { name: 'estimated_delivery_days', type: 'INT NULL' },
+            ];
+            for (const col of catalogCols) {
+                const [rows] = await pool.query(
+                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'catalog_items' AND COLUMN_NAME = ?`,
+                    [col.name]
+                );
+                if (rows.length === 0) {
+                    await pool.query(`ALTER TABLE catalog_items ADD COLUMN ${col.name} ${col.type}`);
+                    console.log(`Added column catalog_items.${col.name}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Catalog customization columns migration failed:', e.message);
         }
 
         // Create driver_favorites table
