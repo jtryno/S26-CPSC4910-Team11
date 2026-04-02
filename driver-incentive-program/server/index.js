@@ -910,17 +910,22 @@ app.get('/api/organization/:orgId/drivers', async (req, res) => {
     const { orgId } = req.params;
     const { dateRange, driverId } = req.query;
     try {
-        let query = 'Select driver_user.*, users.username FROM driver_user JOIN users ON driver_user.user_id = users.user_id WHERE driver_user.sponsor_org_id = ?'
-        const params = [orgId]
+        let query = 'Select driver_user.*, users.username FROM driver_user JOIN users ON driver_user.user_id = users.user_id'
+        const params = []
         const conditions = [];
+
+        if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
+            conditions.push("driver_user.sponsor_org_id = ?");
+            params.push(orgId);
+        }
+
+        if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
+                conditions.push("driver_user.user_id = ?");
+                params.push(driverId);
+        }
 
         if (dateRange) {
             const { fromDate, toDate } = JSON.parse(dateRange);
-
-            if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
-                conditions.push("driver_user.user_id = ?");
-                params.push(driverId);
-            }
 
             if (fromDate && toDate) {
                 conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
@@ -934,14 +939,14 @@ app.get('/api/organization/:orgId/drivers', async (req, res) => {
                 conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(toDate, toDate);
             }
+        }
 
             if (conditions.length > 0) {
-                query += " AND " + conditions.join(' AND ');
+                query += " WHERE " + conditions.join(' AND ');
             }
 
             const [drivers] = await pool.query(query, params);
             res.json({ drivers })
-        }
     } catch (error) {
         console.log("failed");
         console.error('Error fetching org drivers:', error);
@@ -4822,6 +4827,66 @@ app.get('/api/user/:userId/download-data', async (req, res) => {
     } catch (error) {
         console.error('Error downloading personal data:', error);
         res.status(500).json({ error: 'Failed to download personal data' });
+    }
+});
+
+app.get('/api/sales', async(req, res) => {
+    const { orgId, driverId, dateRange } = req.query;
+    try {
+        let query = 'SELECT orders.*, order_items.price_usd_at_purchase FROM orders JOIN order_items ON orders.order_id = order_items.order_id';
+        const params = []
+        const conditions = [];
+
+        if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
+            conditions.push("sponsor_org_id = ?");
+            params.push(orgId);
+        }
+
+        if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
+                conditions.push("driver_user_id = ?");
+                params.push(driverId);
+            }
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (fromDate && toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+        }
+
+        if (conditions.length > 0) {
+            query += " WHERE " + conditions.join(' AND ');
+        }
+        
+        const [sales] = await pool.query(query, params);
+        res.json({ sales });
+    } catch (error) {
+        console.error('Error fetching sales data:', error);
+        res.status(500).json({ error: 'Failed to fetch sales data' });
+    }
+});
+
+app.get('/api/sales/:orderId/items', async(req, res) => {
+    const { orderId } = req.params;
+    try {
+        const [items] = await pool.query(
+            'SELECT * FROM order_items WHERE order_id = ?',
+            [orderId]
+        );
+        res.json({ items });
+    } catch (error) {
+        console.error('Error fetching order items:', error);
+        res.status(500).json({ error: 'Failed to fetch order items' });
     }
 });
 

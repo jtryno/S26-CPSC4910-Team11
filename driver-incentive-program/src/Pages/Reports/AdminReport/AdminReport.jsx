@@ -1,6 +1,8 @@
 import React from 'react';
 import TabGroup from '../../../components/TabGroup';
 import AuditLogsTab from '../AuditLogsTab';
+import SalesByDriver from './SalesByDriver';
+import SalesBySponsor from './SalesBySponsor';
 
 const AdminReport = () => {
     const [userData, setUserData] = React.useState(() => {
@@ -12,8 +14,8 @@ const AdminReport = () => {
         <div>
             <TabGroup
                 tabs={[
-                    { label: "Sales by Sponsor", content: <div>content goes here</div>},
-                    { label: "Sales by Driver", content: <div>content goes here</div>},
+                    { label: "Sales by Sponsor", content: <SalesBySponsor/> },
+                    { label: "Sales by Driver", content: <SalesByDriver/> },
                     { label: "Invoice", content: <div>content goes here</div>},
                     { label: "Audit Logs", content: <AuditLogsTab/> }
                 ]}
