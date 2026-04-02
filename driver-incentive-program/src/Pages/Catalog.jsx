@@ -210,21 +210,6 @@ const Catalog = () => {
     const cartTotalQty = cartItems.reduce((sum, ci) => sum + ci.quantity, 0);
     const canCheckout = cartItems.length > 0 && cartTotal <= balance;
 
-    const currentPriceForCartItem = (ci) => {
-        const catalogItem = catalogItems.find(item => item.item_id === ci.item_id);
-        if (catalogItem) {
-            return Number(catalogItem.points_price);
-        }
-        return null;
-    };
-
-    const hasPriceIncreased = (ci) => {
-        const current = currentPriceForCartItem(ci);
-        return current !== null && current > ci.points_price_at_add;
-    };
-
-    const anyPriceIncreased = cartItems.some(hasPriceIncreased);
-    
     const handleCheckout = async () => {
         if (!canCheckout) return false;
         setCheckingOut(true);
@@ -768,11 +753,6 @@ const Catalog = () => {
                                             <div style={{ fontSize: '13px', fontWeight: '600' }}>{ci.title}</div>
                                             <div style={{ fontSize: '12px', color: '#666' }}>
                                                 Qty {ci.quantity} · {(ci.points_price_at_add * ci.quantity).toLocaleString()} pts
-                                                {hasPriceIncreased(ci) && (
-                                                    <div style={{ fontSize: '11px', color: '#e65100', marginTop: '2px', fontWeight: '600' }}>
-                                                        Price increased to {currentPriceForCartItem(ci).toLocaleString()} pts
-                                                    </div>
-                                                )}
                                             </div>
                                         </div>
                                         <button
@@ -797,11 +777,6 @@ const Catalog = () => {
                         )}
 
                         <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '12px', marginBottom: '12px' }}>
-                            {anyPriceIncreased && (
-                                <div style={{marginBottom: '10px', padding: '8px 10px', borderRadius: '4px', background: '#fff3e0', border: '1px solid #e65100', color: '#e65100', fontSize: '13px', fontWeight: '600'}}>
-                                    One or more items have increased in price since being added. Your order will be placed at the original cart prices.
-                                </div>
-                            )}
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: '600' }}>
                                 <span>Total</span>
                                 <span style={{ color: cartTotal > balance ? '#c62828' : '#1a1a1a' }}>
@@ -1093,11 +1068,6 @@ const Catalog = () => {
                         </ul>
 
                         <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '12px', marginBottom: '16px' }}>
-                            {anyPriceIncreased && (
-                                <div style={{ marginBottom: '10px', padding: '8px 10px', borderRadius: '4px', background: '#fff3e0', border: '1px solid #ffcc80', color: '#e65100', fontSize: '13px', fontWeight: '600' }}>
-                                    One or more items have increased in price since being added. Your order will be placed at the original cart prices.
-                                </div>
-                            )}
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: '600' }}>
                                 <span>Total</span>
                                 <span style={{ color: '#1565c0' }}>{cartTotal.toLocaleString()} pts</span>

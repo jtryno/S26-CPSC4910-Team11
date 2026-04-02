@@ -8,8 +8,7 @@ const notificationTypes = {
     password_changed: {label: 'Password Changed', color: '#e65100'},
     application_status: {label: 'Application', color: '#6a1b9a'},
     ticket_updated: {label: 'Support Ticket', color: '#0a94fd'},
-    catalog_item_removed: {label: 'Catalog Update', color: '#ff0095'},
-    price_drop: {label: 'Price Drop', color: '#00f445'},  
+    catalog_item_removed: {label: 'Catalog Update', color: '#ff0095'},  
 };
 
 function formatDate(dateStr) {
