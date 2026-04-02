@@ -4415,7 +4415,7 @@ if (process.env.NODE_ENV !== 'test') {
             console.warn('driver_favorites migration failed:', e.message);
         }
     })();
-
+}
 // --- Catalog Reviews ---
 const REVIEW_CHAR_LIMIT = 600;
  
