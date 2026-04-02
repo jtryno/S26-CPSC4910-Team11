@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import Modal from '../components/Modal';
 import SortableTable from '../components/SortableTable';
 import TabGroup from '../components/TabGroup';
+import DropdownField from '../components/DropdownField';
+import DatePicker from '../components/DatePicker';
+import { fetchOrganizations } from '../api/OrganizationApi';
 import {
     createTicket,
     fetchTicketsForUser,
@@ -934,12 +937,22 @@ const AdminView = ({ user }) => {
     const [statusUpdating, setStatusUpdating] = useState({});
     // category filter: null = all tickets, 'general' | 'security' | 'catalog_order' = that category only
     const [categoryFilter, setCategoryFilter] = useState(null);
+    // sponsor/driver/date filters: null = show all
+    const [selectedSponsor, setSelectedSponsor] = useState(null);
+    const [selectedDriver, setSelectedDriver] = useState(null);
+    const [fromDate, setFromDate] = useState('');
+    const [toDate, setToDate] = useState('');
+    const [dateRange, setDateRange] = useState(false);
+    const [organizations, setOrganizations] = useState([]);
 
-    // load all tickets when admin first visits the page
+    // load all tickets and organizations when admin first visits the page
     useEffect(() => {
         fetchAllTickets()
             .then(data => { setTickets(data || []); setLoading(false); })
             .catch(err => { setError(err.message); setLoading(false); });
+        fetchOrganizations()
+            .then(data => setOrganizations(data || []))
+            .catch(err => console.error('Failed to load organizations:', err));
     }, []);
 
     // toggles the expanded detail card for a ticket row
@@ -990,8 +1003,44 @@ const AdminView = ({ user }) => {
         }
     };
 
-    // tickets shown in the table, filtered to the selected category when a filter is active
-    const displayedTickets = categoryFilter ? tickets.filter(t => t.category === categoryFilter) : tickets;
+    // list from loaded tickets
+    // includes drivers who submitted tickets and drivers who are the subject of a ticket from sponsors
+    const allDrivers = (() => {
+        const map = new Map();
+        tickets.forEach(t => {
+            if (t.user_type === 'driver') {
+                map.set(t.user_id, { user_id: t.user_id, first_name: t.first_name, last_name: t.last_name });
+            }
+            if (t.subject_driver_id) {
+                map.set(t.subject_driver_id, { user_id: t.subject_driver_id, first_name: t.subject_first_name, last_name: t.subject_last_name });
+            }
+        });
+        return Array.from(map.values()).sort((a, b) => a.last_name.localeCompare(b.last_name));
+    })();
+
+    // always calls onChange with string
+    const sponsorId = (() => { const n = parseInt(selectedSponsor, 10); return isNaN(n) ? null : n; })();
+    const driverId = (() => { const n = parseInt(selectedDriver, 10); return isNaN(n) ? null : n; })();
+
+    // apply all active filters category, sponsor, driver, and date range
+    const displayedTickets = tickets.filter(t => {
+        if (categoryFilter && t.category !== categoryFilter) return false;
+        if (sponsorId !== null && t.sponsor_org_id !== sponsorId) return false;
+        if (driverId !== null) {
+            const isSubmitter = t.user_type === 'driver' && t.user_id === driverId;
+            const isSubject = t.subject_driver_id === driverId;
+            if (!isSubmitter && !isSubject) return false;
+        }
+        if (fromDate) {
+            if (new Date(t.created_at) < new Date(fromDate)) return false;
+        }
+        if (toDate) {
+            const end = new Date(toDate);
+            end.setHours(23, 59, 59, 999);
+            if (new Date(t.created_at) > end) return false;
+        }
+        return true;
+    });
 
     // column definitions for the admin ticket table
     const columns = [
@@ -1076,6 +1125,57 @@ const AdminView = ({ user }) => {
                     ? <p style={{ color: '#666' }}>No support tickets have been submitted yet.</p>
                     : (
                         <div>
+                            {/* sponsor, driver, and date filters */}
+                            <h3 style={{ margin: '0 0 10px', color: '#1a1a1a' }}>Filters</h3>
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1fr 1fr',
+                                gap: '20px',
+                                padding: '15px',
+                                border: '1px solid #ddd',
+                                borderRadius: '8px',
+                                background: '#f9f9f9',
+                                marginBottom: '14px',
+                            }}>
+                                <DropdownField
+                                    label="Sponsor"
+                                    options={[
+                                        { label: 'All', value: null },
+                                        ...organizations.map(org => ({ label: org.name, value: org.sponsor_org_id })),
+                                    ]}
+                                    value={selectedSponsor}
+                                    onChange={setSelectedSponsor}
+                                />
+                                <DropdownField
+                                    label="Driver"
+                                    options={[
+                                        { label: 'All', value: null },
+                                        ...allDrivers.map(d => ({ label: `${d.first_name} ${d.last_name}`, value: d.user_id })),
+                                    ]}
+                                    value={selectedDriver}
+                                    onChange={setSelectedDriver}
+                                />
+                                <div style={{ gridColumn: '1 / span 2' }}>
+                                    <button
+                                        style={{ width: '75px', height: '20px', marginRight: '10px', justifyContent: 'center', alignItems: 'center', display: 'flex', fontSize: '12px' }}
+                                        onClick={() => { setDateRange(!dateRange); setToDate(''); }}
+                                    >
+                                        {!dateRange ? 'Single' : 'Range'}
+                                    </button>
+                                    <DatePicker
+                                        label={dateRange ? 'From' : 'Date'}
+                                        value={fromDate}
+                                        onChange={setFromDate}
+                                    />
+                                    {dateRange && (
+                                        <DatePicker
+                                            label="To"
+                                            value={toDate}
+                                            onChange={setToDate}
+                                        />
+                                    )}
+                                </div>
+                            </div>
                             {/* filter toggles: all tickets, or filter by category */}
                             <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                                 <button

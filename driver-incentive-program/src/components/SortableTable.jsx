@@ -8,30 +8,28 @@ const SortableTable = ({ columns, data, actions, rowsPerPage = 10 }) => {
     if (!sortConfig.key) return data || [];
 
     return [...data].sort((a, b) => {
-      const sortKey = columns.find(c => c.key === sortConfig.key)?.sortKey || sortConfig.key;
-      const aValue = a[sortKey];
-      const bValue = b[sortKey];
+  const sortKey = columns.find(c => c.key === sortConfig.key)?.sortKey || sortConfig.key;
+  const aValue = a[sortKey];
+  const bValue = b[sortKey];
 
-      if (aValue == null && bValue == null) return 0;
-      if (aValue == null) return 1;
-      if (bValue == null) return -1;
+  if (aValue == null && bValue == null) return 0;
+  if (aValue == null) return 1;
+  if (bValue == null) return -1;
 
-      if (typeof aValue !== typeof bValue) {
-        return sortConfig.direction === 'asc'
-          ? String(aValue).localeCompare(String(bValue))
-          : String(bValue).localeCompare(String(aValue));
-      }
+  const aNum = Number(aValue);
+  const bNum = Number(bValue);
+  const bothNumeric = !Number.isNaN(aNum) && !Number.isNaN(bNum);
 
-      if (typeof aValue === 'string') {
-        return sortConfig.direction === 'asc'
-          ? aValue.localeCompare(bValue)
-          : bValue.localeCompare(aValue);
-      }
+  if (bothNumeric) {
+    return sortConfig.direction === 'asc'
+      ? aNum - bNum
+      : bNum - aNum;
+  }
 
-      if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
+  return sortConfig.direction === 'asc'
+    ? String(aValue).localeCompare(String(bValue))
+    : String(bValue).localeCompare(String(aValue));
+});
   }, [data, sortConfig, columns]);
 
   const totalPages = Math.ceil(sortedData.length / rowsPerPage);
@@ -80,7 +78,7 @@ const SortableTable = ({ columns, data, actions, rowsPerPage = 10 }) => {
             <tr key={index} style={{ borderBottom: '1px solid #e0e0e0' }}>
               {columns.map((column) => (
                 <td key={column.key} style={{ padding: '4px' }}>
-                  {column.render ? column.render(row[column.key], row) : row[column.key]}
+                  {column.render ? column.render(row[column.key], row) : `${column.prefix || ''}${row[column.key]}`}
                 </td>
               ))}
               {actions &&

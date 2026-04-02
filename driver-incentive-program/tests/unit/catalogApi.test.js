@@ -276,3 +276,112 @@ describe('PUT /api/catalog/items/:itemId/sale-price', () => {
         expect(res.body).toHaveProperty('error', 'Failed to update sale price');
     });
 });
+
+// ─── PUT /api/catalog/items/:itemId/customize ─────────────────────────────────
+
+describe('PUT /api/catalog/items/:itemId/customize', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    const validBody = {
+        custom_title: 'My Custom Name',
+        custom_description: 'Sponsor-written description',
+        custom_image_url: 'https://example.com/img.jpg',
+        custom_points_price: 500,
+        hide_price: false,
+        hide_web_url: false,
+        misc_info: 'Ships from warehouse',
+        estimated_delivery_days: 7,
+    };
+
+    it('returns 200 with success message on valid update', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        const res = await request(app)
+            .put('/api/catalog/items/1/customize')
+            .send(validBody);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty('message', 'Item updated');
+    });
+
+    it('stores custom_title in the UPDATE params', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/1/customize').send(validBody);
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params).toContain('My Custom Name');
+    });
+
+    it('stores custom_points_price as an integer', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/1/customize').send({ ...validBody, custom_points_price: '750' });
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params).toContain(750);
+    });
+
+    it('stores null for custom_title when omitted', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/1/customize').send({ hide_price: false, hide_web_url: false });
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params[0]).toBeNull(); // custom_title
+    });
+
+    it('stores 1 for hide_price when true', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/1/customize').send({ ...validBody, hide_price: true });
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params[4]).toBe(1); // hide_price is index 4
+    });
+
+    it('stores 0 for hide_price when false', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/1/customize').send({ ...validBody, hide_price: false });
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params[4]).toBe(0);
+    });
+
+    it('stores 1 for hide_web_url when true', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/1/customize').send({ ...validBody, hide_web_url: true });
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params[5]).toBe(1); // hide_web_url is index 5
+    });
+
+    it('stores estimated_delivery_days as an integer', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/1/customize').send({ ...validBody, estimated_delivery_days: '14' });
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params[7]).toBe(14); // estimated_delivery_days is index 7
+    });
+
+    it('passes the correct item_id as the last param', async () => {
+        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+        await request(app).put('/api/catalog/items/42/customize').send(validBody);
+
+        const params = pool.query.mock.calls[0][1];
+        expect(params[params.length - 1]).toBe('42');
+    });
+
+    it('returns 500 on database error', async () => {
+        pool.query.mockRejectedValueOnce(new Error('DB error'));
+
+        const res = await request(app).put('/api/catalog/items/1/customize').send(validBody);
+
+        expect(res.status).toBe(500);
+        expect(res.body).toHaveProperty('error', 'Failed to update item');
+    });
+});

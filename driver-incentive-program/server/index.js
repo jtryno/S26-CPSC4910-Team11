@@ -910,17 +910,22 @@ app.get('/api/organization/:orgId/drivers', async (req, res) => {
     const { orgId } = req.params;
     const { dateRange, driverId } = req.query;
     try {
-        let query = 'Select driver_user.*, users.username FROM driver_user JOIN users ON driver_user.user_id = users.user_id WHERE driver_user.sponsor_org_id = ?'
-        const params = [orgId]
+        let query = 'Select driver_user.*, users.username FROM driver_user JOIN users ON driver_user.user_id = users.user_id'
+        const params = []
         const conditions = [];
+
+        if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
+            conditions.push("driver_user.sponsor_org_id = ?");
+            params.push(orgId);
+        }
+
+        if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
+                conditions.push("driver_user.user_id = ?");
+                params.push(driverId);
+        }
 
         if (dateRange) {
             const { fromDate, toDate } = JSON.parse(dateRange);
-
-            if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
-                conditions.push("driver_user.user_id = ?");
-                params.push(driverId);
-            }
 
             if (fromDate && toDate) {
                 conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
@@ -934,14 +939,14 @@ app.get('/api/organization/:orgId/drivers', async (req, res) => {
                 conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(toDate, toDate);
             }
+        }
 
             if (conditions.length > 0) {
-                query += " AND " + conditions.join(' AND ');
+                query += " WHERE " + conditions.join(' AND ');
             }
 
             const [drivers] = await pool.query(query, params);
             res.json({ drivers })
-        }
     } catch (error) {
         console.log("failed");
         console.error('Error fetching org drivers:', error);
@@ -3362,6 +3367,45 @@ app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
     }
 });
 
+// PUT /api/catalog/items/:itemId/customize — sponsor customizes a catalog item
+app.put('/api/catalog/items/:itemId/customize', async (req, res) => {
+    const { itemId } = req.params;
+    const {
+        custom_title, custom_description, custom_image_url, custom_points_price,
+        hide_price, hide_web_url, misc_info, estimated_delivery_days,
+    } = req.body;
+    try {
+        await pool.query(
+            `UPDATE catalog_items SET
+                custom_title = ?,
+                custom_description = ?,
+                custom_image_url = ?,
+                custom_points_price = ?,
+                hide_price = ?,
+                hide_web_url = ?,
+                misc_info = ?,
+                estimated_delivery_days = ?,
+                updated_at = NOW()
+             WHERE item_id = ?`,
+            [
+                custom_title || null,
+                custom_description || null,
+                custom_image_url || null,
+                custom_points_price ? parseInt(custom_points_price) : null,
+                hide_price ? 1 : 0,
+                hide_web_url ? 1 : 0,
+                misc_info || null,
+                estimated_delivery_days ? parseInt(estimated_delivery_days) : null,
+                itemId,
+            ]
+        );
+        res.json({ message: 'Item updated' });
+    } catch (error) {
+        console.error('Error customizing catalog item:', error);
+        res.status(500).json({ error: 'Failed to update item' });
+    }
+});
+
 // ─── Recently Viewed Routes ───────────────────────────────────────────────────
 
 // POST /api/catalog/viewed — record that a driver viewed an item
@@ -3918,7 +3962,7 @@ app.put('/api/support-tickets/:ticketId/status', async (req, res) => {
 app.get('/api/support-tickets', async (_req, res) => {
     try {
         const [tickets] = await pool.query(
-            `SELECT st.*, u.first_name, u.last_name, u.email,
+            `SELECT st.*, u.first_name, u.last_name, u.email, u.user_type,
                     so.name AS org_name,
                     su_subj.first_name AS subject_first_name,
                     su_subj.last_name AS subject_last_name
@@ -4342,6 +4386,87 @@ app.get('/api/sponsor/transaction-comments/:sponsorOrgId', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch transaction comments' });
     }
 });
+
+if (process.env.NODE_ENV !== 'test') {
+    // Run migration to add delivery columns if they don't exist
+    (async () => {
+        try {
+            const deliveryCols = [
+                { name: 'delivery_name', type: 'VARCHAR(200) NULL' },
+                { name: 'delivery_address', type: 'VARCHAR(500) NULL' },
+                { name: 'delivery_city', type: 'VARCHAR(100) NULL' },
+                { name: 'delivery_state', type: 'VARCHAR(50) NULL' },
+                { name: 'delivery_zip', type: 'VARCHAR(20) NULL' },
+            ];
+            for (const col of deliveryCols) {
+                const [rows] = await pool.query(
+                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?`,
+                    [col.name]
+                );
+                if (rows.length === 0) {
+                    await pool.query(`ALTER TABLE orders ADD COLUMN ${col.name} ${col.type}`);
+                    console.log(`Added column orders.${col.name}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Delivery columns migration failed:', e.message);
+        }
+
+        // Create recently_viewed table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS recently_viewed (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_rv (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('recently_viewed migration failed:', e.message);
+        }
+
+        // Add catalog item customization columns
+        try {
+            const catalogCols = [
+                { name: 'custom_title',            type: 'VARCHAR(500) NULL' },
+                { name: 'custom_description',      type: 'TEXT NULL' },
+                { name: 'custom_image_url',        type: 'VARCHAR(1000) NULL' },
+                { name: 'custom_points_price',     type: 'INT NULL' },
+                { name: 'hide_price',              type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+                { name: 'hide_web_url',            type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+                { name: 'misc_info',               type: 'TEXT NULL' },
+                { name: 'estimated_delivery_days', type: 'INT NULL' },
+            ];
+            for (const col of catalogCols) {
+                const [rows] = await pool.query(
+                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'catalog_items' AND COLUMN_NAME = ?`,
+                    [col.name]
+                );
+                if (rows.length === 0) {
+                    await pool.query(`ALTER TABLE catalog_items ADD COLUMN ${col.name} ${col.type}`);
+                    console.log(`Added column catalog_items.${col.name}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Catalog customization columns migration failed:', e.message);
+        }
+
+        // Create driver_favorites table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS driver_favorites (
+                favorite_id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_fav (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('driver_favorites migration failed:', e.message);
+        }
+    })();
+
 // --- Catalog Reviews ---
 const REVIEW_CHAR_LIMIT = 600;
  
@@ -4872,6 +4997,66 @@ app.get('/api/user/:userId/download-data', async (req, res) => {
     } catch (error) {
         console.error('Error downloading personal data:', error);
         res.status(500).json({ error: 'Failed to download personal data' });
+    }
+});
+
+app.get('/api/sales', async(req, res) => {
+    const { orgId, driverId, dateRange } = req.query;
+    try {
+        let query = 'SELECT orders.*, order_items.price_usd_at_purchase FROM orders JOIN order_items ON orders.order_id = order_items.order_id';
+        const params = []
+        const conditions = [];
+
+        if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
+            conditions.push("sponsor_org_id = ?");
+            params.push(orgId);
+        }
+
+        if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
+                conditions.push("driver_user_id = ?");
+                params.push(driverId);
+            }
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (fromDate && toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+        }
+
+        if (conditions.length > 0) {
+            query += " WHERE " + conditions.join(' AND ');
+        }
+        
+        const [sales] = await pool.query(query, params);
+        res.json({ sales });
+    } catch (error) {
+        console.error('Error fetching sales data:', error);
+        res.status(500).json({ error: 'Failed to fetch sales data' });
+    }
+});
+
+app.get('/api/sales/:orderId/items', async(req, res) => {
+    const { orderId } = req.params;
+    try {
+        const [items] = await pool.query(
+            'SELECT * FROM order_items WHERE order_id = ?',
+            [orderId]
+        );
+        res.json({ items });
+    } catch (error) {
+        console.error('Error fetching order items:', error);
+        res.status(500).json({ error: 'Failed to fetch order items' });
     }
 });
 

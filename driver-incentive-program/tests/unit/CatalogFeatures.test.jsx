@@ -32,8 +32,13 @@ const makeCartItem = (overrides = {}) => ({
     ...overrides,
 });
 
+/** Empty reviews response used by ReviewsSection for each rendered item. */
+const emptyReviews = { ok: true, json: async () => ({ reviews: [], averageRating: null }) };
+
 /**
  * Standard 6-call init mock, no cart items.
+ * Also mocks a reviews fetch for each catalog item (ReviewsSection fires
+ * GET /api/catalog/reviews/:itemId on mount for every rendered product card).
  */
 const mockInit = (catalogItems = []) => {
     fetch
@@ -43,6 +48,8 @@ const mockInit = (catalogItems = []) => {
         .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 5000 }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) });
+    // One reviews fetch per item card rendered
+    catalogItems.forEach(() => fetch.mockResolvedValueOnce(emptyReviews));
 };
 
 /**
@@ -56,6 +63,7 @@ const mockInitWithRestoredCart = (cartItems = []) => {
         .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 5000 }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) });
+    fetch.mockResolvedValueOnce(emptyReviews); // one item in catalog
 };
 
 beforeEach(() => {
@@ -330,9 +338,15 @@ describe('Multi-category filter (#6282)', () => {
         ]);
         render(<Catalog />);
 
-        await waitFor(() => expect(screen.getByText('Electronics')).toBeInTheDocument());
+        // Wait for items to render
+        await waitFor(() => expect(screen.getAllByText('Electronics').length).toBeGreaterThan(0));
 
-        expect(screen.getAllByText('Electronics')).toHaveLength(1);
+        // The category chips are <label> elements inside the filter bar.
+        // There should be exactly one "Electronics" chip even though two items share that category.
+        const filterLabel = screen.getByText('Categories:');
+        const filterBar = filterLabel.closest('div');
+        const chips = filterBar.querySelectorAll('label');
+        expect(chips).toHaveLength(1);
     });
 
     it('does not show category filter bar when no items have a category', async () => {
@@ -342,5 +356,176 @@ describe('Multi-category filter (#6282)', () => {
         await waitFor(() => expect(screen.getByText('Test Reward Item')).toBeInTheDocument());
 
         expect(screen.queryByText('Categories:')).not.toBeInTheDocument();
+    });
+});
+
+// ─── Catalog item customization fields ───────────────────────────────────────
+
+describe('Catalog — sponsor customization fields', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.setItem('user', JSON.stringify(mockUser));
+    });
+    afterEach(() => localStorage.clear());
+
+    it('displays custom_title instead of eBay title when set', async () => {
+        mockInit([makeCatalogItem({ title: 'eBay Title', custom_title: 'My Custom Name' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getAllByText('My Custom Name').length).toBeGreaterThan(0));
+        expect(screen.queryByText('eBay Title')).not.toBeInTheDocument();
+    });
+
+    it('falls back to eBay title when custom_title is null', async () => {
+        mockInit([makeCatalogItem({ title: 'eBay Title', custom_title: null })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText('eBay Title')).toBeInTheDocument());
+    });
+
+    it('displays custom_description when set', async () => {
+        mockInit([makeCatalogItem({ description: 'eBay desc', custom_description: 'Sponsor desc' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText('Sponsor desc')).toBeInTheDocument());
+        expect(screen.queryByText('eBay desc')).not.toBeInTheDocument();
+    });
+
+    it('hides USD price when hide_price is truthy', async () => {
+        mockInit([makeCatalogItem({ hide_price: 1, last_price_value: '99.99' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText('Test Reward Item')).toBeInTheDocument());
+        expect(screen.queryByText(/\$99\.99/)).not.toBeInTheDocument();
+    });
+
+    it('shows USD price when hide_price is falsy', async () => {
+        mockInit([makeCatalogItem({ hide_price: 0, last_price_value: '25.00' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/\$25\.00/)).toBeInTheDocument());
+    });
+
+    it('hides eBay link when hide_web_url is truthy', async () => {
+        mockInit([makeCatalogItem({ hide_web_url: 1, item_web_url: 'https://www.ebay.com/itm/1' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText('Test Reward Item')).toBeInTheDocument());
+        expect(screen.queryByText(/View on eBay/i)).not.toBeInTheDocument();
+    });
+
+    it('shows misc_info on the product card when set', async () => {
+        mockInit([makeCatalogItem({ misc_info: 'Handcrafted in USA' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText('Handcrafted in USA')).toBeInTheDocument());
+    });
+
+    it('shows estimated delivery days on the product card when set', async () => {
+        mockInit([makeCatalogItem({ estimated_delivery_days: 5 })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/Est\. delivery: 5 days/i)).toBeInTheDocument());
+    });
+
+    it('does not show estimated delivery when not set', async () => {
+        mockInit([makeCatalogItem({ estimated_delivery_days: null })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText('Test Reward Item')).toBeInTheDocument());
+        expect(screen.queryByText(/Est\. delivery/i)).not.toBeInTheDocument();
+    });
+});
+
+// ─── Product Detail Modal (#779, #930) ───────────────────────────────────────
+
+describe('Catalog — product detail modal', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.setItem('user', JSON.stringify(mockUser));
+    });
+    afterEach(() => localStorage.clear());
+
+    it('shows a "View Details" button on each product card', async () => {
+        mockInit([makeCatalogItem()]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/View Details/i)).toBeInTheDocument());
+    });
+
+    it('opens the detail modal when "View Details" is clicked', async () => {
+        mockInit([makeCatalogItem({ title: 'Fancy Widget' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/View Details/i)).toBeInTheDocument());
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // recordView
+        screen.getByText(/View Details/i).click();
+
+        await waitFor(() => expect(screen.getAllByText('Fancy Widget').length).toBeGreaterThan(0));
+    });
+
+    it('shows estimated delivery in the detail modal', async () => {
+        mockInit([makeCatalogItem({ estimated_delivery_days: 7 })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/View Details/i)).toBeInTheDocument());
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // recordView
+        screen.getByText(/View Details/i).click();
+
+        await waitFor(() => expect(screen.getByText(/7 business days/i)).toBeInTheDocument());
+    });
+
+    it('shows misc_info in the detail modal', async () => {
+        mockInit([makeCatalogItem({ misc_info: 'Limited stock' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/View Details/i)).toBeInTheDocument());
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // recordView
+        screen.getByText(/View Details/i).click();
+
+        await waitFor(() => expect(screen.getAllByText('Limited stock').length).toBeGreaterThan(0));
+    });
+
+    it('closes the detail modal when × is clicked', async () => {
+        mockInit([makeCatalogItem({ estimated_delivery_days: 5 })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/View Details/i)).toBeInTheDocument());
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // recordView
+        screen.getByText(/View Details/i).click();
+
+        await waitFor(() => expect(screen.getByText(/5 business days/i)).toBeInTheDocument());
+        // The × button in the detail modal has a unique style — use getAllByRole and filter
+        const closeButtons = screen.getAllByRole('button', { name: '×' });
+        closeButtons[closeButtons.length - 1].click();
+
+        await waitFor(() => expect(screen.queryByText(/5 business days/i)).not.toBeInTheDocument());
+    });
+
+    it('shows similar items in the detail modal when same category exists', async () => {
+        mockInit([
+            makeCatalogItem({ item_id: 1, title: 'Widget A', category: 'Electronics' }),
+            makeCatalogItem({ item_id: 2, title: 'Widget B', category: 'Electronics' }),
+        ]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getAllByText(/View Details/i).length).toBeGreaterThan(0));
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // recordView
+        screen.getAllByText(/View Details/i)[0].click();
+
+        await waitFor(() => expect(screen.getByText('Similar Items')).toBeInTheDocument());
+        expect(screen.getAllByText('Widget B').length).toBeGreaterThan(0);
+    });
+
+    it('does not show "Similar Items" section when no items share the same category', async () => {
+        mockInit([makeCatalogItem({ item_id: 1, category: 'Electronics' })]);
+        render(<Catalog />);
+
+        await waitFor(() => expect(screen.getByText(/View Details/i)).toBeInTheDocument());
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // recordView
+        screen.getByText(/View Details/i).click();
+
+        await waitFor(() => expect(screen.getAllByText('Test Reward Item').length).toBeGreaterThan(0));
+        expect(screen.queryByText('Similar Items')).not.toBeInTheDocument();
     });
 });

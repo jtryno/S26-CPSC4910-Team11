@@ -28,6 +28,7 @@ const Catalog = () => {
     const [checkingOut, setCheckingOut] = useState(false);
     const [addingIds, setAddingIds] = useState(new Set());
     const [reviewOpen, setReviewOpen] = useState(false);
+    const [detailItem, setDetailItem] = useState(null);
     const [orderSummary, setOrderSummary] = useState(null);
 
     // Favorites (#768)
@@ -511,8 +512,12 @@ const Catalog = () => {
                         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
                             {displayedItems.map((item) => {
                                 const onSale = isOnSale(item);
+                                const displayTitle = item.custom_title || item.title;
+                                const displayDescription = item.custom_description || item.description;
+                                const displayImage = item.custom_image_url || item.image_url;
+                                const displayPoints = item.custom_points_price || item.points_price;
                                 const salePts = onSale
-                                    ? Math.ceil(parseFloat(item.sale_price) / parseFloat(item.last_price_value) * parseFloat(item.points_price))
+                                    ? Math.ceil(parseFloat(item.sale_price) / parseFloat(item.last_price_value) * parseFloat(displayPoints))
                                     : null;
 
                                 return (
@@ -592,34 +597,43 @@ const Catalog = () => {
                                         </span>
 
                                         <img
-                                            src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/150?text=No+Image'}
-                                            alt={item.title}
+                                            src={displayImage ? `/api/proxy-image?url=${encodeURIComponent(displayImage)}` : 'https://via.placeholder.com/150?text=No+Image'}
+                                            alt={displayTitle}
                                             style={{ width: '100%', height: '150px', objectFit: 'contain' }}
                                             onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/150?text=No+Image'; }}
                                         />
-                                        <div style={{ fontWeight: '600', fontSize: '14px', paddingRight: '24px' }}>{item.title}</div>
-                                        <div style={{ fontSize: '13px', color: '#666' }}>{item.description}</div>
+                                        <div style={{ fontWeight: '600', fontSize: '14px', paddingRight: '24px' }}>{displayTitle}</div>
+                                        <div style={{ fontSize: '13px', color: '#666' }}>{displayDescription}</div>
 
-                                        {/* Price — strikethrough original if on sale (#6224) */}
-                                        <div style={{ fontSize: '14px', color: '#1a1a1a' }}>
-                                            {onSale ? (
-                                                <>
-                                                    <span style={{ textDecoration: 'line-through', color: '#999', marginRight: '6px' }}>
-                                                        ${parseFloat(item.last_price_value).toFixed(2)}
-                                                    </span>
-                                                    <span style={{ color: '#e65100', fontWeight: '700' }}>
-                                                        ${parseFloat(item.sale_price).toFixed(2)}
-                                                    </span>
-                                                    &nbsp;/&nbsp;
-                                                    <strong style={{ color: '#e65100' }}>{Number(salePts).toLocaleString()} pts</strong>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    ${parseFloat(item.last_price_value).toFixed(2)}&nbsp;/&nbsp;
-                                                    <strong style={{ color: '#1565c0' }}>{Number(item.points_price).toLocaleString()} pts</strong>
-                                                </>
-                                            )}
-                                        </div>
+                                        {/* Price — strikethrough original if on sale; hidden if sponsor set hide_price */}
+                                        {!item.hide_price && (
+                                            <div style={{ fontSize: '14px', color: '#1a1a1a' }}>
+                                                {onSale ? (
+                                                    <>
+                                                        <span style={{ textDecoration: 'line-through', color: '#999', marginRight: '6px' }}>
+                                                            ${parseFloat(item.last_price_value).toFixed(2)}
+                                                        </span>
+                                                        <span style={{ color: '#e65100', fontWeight: '700' }}>
+                                                            ${parseFloat(item.sale_price).toFixed(2)}
+                                                        </span>
+                                                        &nbsp;/&nbsp;
+                                                        <strong style={{ color: '#e65100' }}>{Number(salePts).toLocaleString()} pts</strong>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        ${parseFloat(item.last_price_value).toFixed(2)}&nbsp;/&nbsp;
+                                                        <strong style={{ color: '#1565c0' }}>{Number(displayPoints).toLocaleString()} pts</strong>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                        {item.hide_price && (
+                                            <div style={{ fontSize: '14px' }}>
+                                                <strong style={{ color: onSale ? '#e65100' : '#1565c0' }}>
+                                                    {Number(onSale ? salePts : displayPoints).toLocaleString()} pts
+                                                </strong>
+                                            </div>
+                                        )}
 
                                         {/* Driver purchase count (#6222) */}
                                         {item.driver_purchase_count > 0 && (
@@ -627,13 +641,33 @@ const Catalog = () => {
                                                 {item.driver_purchase_count} driver{item.driver_purchase_count !== 1 ? 's' : ''} bought this
                                             </div>
                                         )}
-                                        
+
+                                        {/* Misc info */}
+                                        {item.misc_info && (
+                                            <div style={{ fontSize: '12px', color: '#555', fontStyle: 'italic' }}>{item.misc_info}</div>
+                                        )}
+
+                                        {/* Estimated delivery */}
+                                        {item.estimated_delivery_days && (
+                                            <div style={{ fontSize: '12px', color: '#2e7d32' }}>
+                                                Est. delivery: {item.estimated_delivery_days} days
+                                            </div>
+                                        )}
+
                                         <ReviewsSection
                                             itemId={item.item_id}
                                             currentUser={user}
                                         />
 
-                                        {item.item_web_url && (
+                                        {/* Details button (#779) */}
+                                        <button
+                                            onClick={() => { setDetailItem(item); recordView(item.item_id); }}
+                                            style={{ fontSize: '12px', color: '#1976d2', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+                                        >
+                                            View Details →
+                                        </button>
+
+                                        {!item.hide_web_url && item.item_web_url && (
                                             <a
                                                 href={item.item_web_url}
                                                 target="_blank"
@@ -904,6 +938,114 @@ const Catalog = () => {
                     </div>
                 </div>
             )}
+
+            {/* ── Product Detail Modal (#779, #930) ── */}
+            {detailItem && (() => {
+                const item = detailItem;
+                const onSale = isOnSale(item);
+                const displayTitle = item.custom_title || item.title;
+                const displayDescription = item.custom_description || item.description;
+                const displayImage = item.custom_image_url || item.image_url;
+                const displayPoints = item.custom_points_price || item.points_price;
+                const salePts = onSale
+                    ? Math.ceil(parseFloat(item.sale_price) / parseFloat(item.last_price_value) * parseFloat(displayPoints))
+                    : null;
+                const similarItems = catalogItems.filter(
+                    c => c.item_id !== item.item_id && c.category && c.category === item.category
+                ).slice(0, 4);
+
+                return (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                        <div style={{ background: '#fff', borderRadius: '8px', padding: '32px', width: '540px', maxWidth: '95vw', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                                <h2 style={{ margin: 0, fontSize: '18px', flex: 1, paddingRight: '16px' }}>{displayTitle}</h2>
+                                <button onClick={() => setDetailItem(null)} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#888', lineHeight: 1 }}>×</button>
+                            </div>
+
+                            <img
+                                src={displayImage ? `/api/proxy-image?url=${encodeURIComponent(displayImage)}` : 'https://via.placeholder.com/200?text=No+Image'}
+                                alt={displayTitle}
+                                style={{ width: '100%', maxHeight: '220px', objectFit: 'contain', marginBottom: '16px' }}
+                                onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/200?text=No+Image'; }}
+                            />
+
+                            {displayDescription && (
+                                <p style={{ fontSize: '14px', color: '#444', marginBottom: '12px' }}>{displayDescription}</p>
+                            )}
+
+                            {!item.hide_price && (
+                                <div style={{ fontSize: '16px', marginBottom: '8px' }}>
+                                    {onSale ? (
+                                        <>
+                                            <span style={{ textDecoration: 'line-through', color: '#999', marginRight: '6px' }}>${parseFloat(item.last_price_value).toFixed(2)}</span>
+                                            <span style={{ color: '#e65100', fontWeight: '700' }}>${parseFloat(item.sale_price).toFixed(2)}</span>
+                                            &nbsp;/&nbsp;<strong style={{ color: '#e65100' }}>{Number(salePts).toLocaleString()} pts</strong>
+                                        </>
+                                    ) : (
+                                        <><strong style={{ color: '#1565c0' }}>{Number(displayPoints).toLocaleString()} pts</strong>&nbsp;/ ${parseFloat(item.last_price_value).toFixed(2)}</>
+                                    )}
+                                </div>
+                            )}
+                            {item.hide_price && (
+                                <div style={{ fontSize: '16px', marginBottom: '8px' }}>
+                                    <strong style={{ color: onSale ? '#e65100' : '#1565c0' }}>{Number(onSale ? salePts : displayPoints).toLocaleString()} pts</strong>
+                                </div>
+                            )}
+
+                            {item.estimated_delivery_days && (
+                                <div style={{ fontSize: '13px', color: '#2e7d32', marginBottom: '8px' }}>
+                                    Estimated delivery: {item.estimated_delivery_days} business days
+                                </div>
+                            )}
+
+                            {item.misc_info && (
+                                <div style={{ fontSize: '13px', color: '#555', background: '#f9f9f9', padding: '10px 12px', borderRadius: '4px', marginBottom: '12px' }}>
+                                    {item.misc_info}
+                                </div>
+                            )}
+
+                            {!item.hide_web_url && item.item_web_url && (
+                                <a href={item.item_web_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '13px', color: '#1976d2', display: 'block', marginBottom: '16px' }}>
+                                    View on eBay ↗
+                                </a>
+                            )}
+
+                            <button
+                                onClick={() => { handleAddToCart(item); setDetailItem(null); }}
+                                disabled={!cartId || addingIds.has(item.item_id) || item.availability_status === 'out_of_stock'}
+                                style={{ width: '100%', padding: '10px', borderRadius: '4px', border: 'none', fontWeight: '600', fontSize: '14px', marginBottom: '24px', background: item.availability_status === 'out_of_stock' ? '#e0e0e0' : '#1976d2', color: item.availability_status === 'out_of_stock' ? '#999' : '#fff', cursor: item.availability_status === 'out_of_stock' ? 'not-allowed' : 'pointer' }}
+                            >
+                                {item.availability_status === 'out_of_stock' ? 'Out of Stock' : 'Add to Cart'}
+                            </button>
+
+                            {/* Similar products (#779) */}
+                            {similarItems.length > 0 && (
+                                <>
+                                    <h3 style={{ fontSize: '15px', margin: '0 0 12px' }}>Similar Items</h3>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '10px' }}>
+                                        {similarItems.map(si => (
+                                            <div
+                                                key={si.item_id}
+                                                onClick={() => setDetailItem(si)}
+                                                style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '10px', cursor: 'pointer', background: '#fafafa', display: 'flex', flexDirection: 'column', gap: '6px' }}
+                                            >
+                                                <img
+                                                    src={(si.custom_image_url || si.image_url) ? `/api/proxy-image?url=${encodeURIComponent(si.custom_image_url || si.image_url)}` : 'https://via.placeholder.com/80?text=?'}
+                                                    alt={si.custom_title || si.title}
+                                                    style={{ width: '100%', height: '70px', objectFit: 'contain' }}
+                                                    onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/80?text=?'; }}
+                                                />
+                                                <div style={{ fontSize: '11px', fontWeight: '600', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{si.custom_title || si.title}</div>
+                                                <div style={{ fontSize: '11px', color: '#1565c0', fontWeight: '600' }}>{Number(si.custom_points_price || si.points_price).toLocaleString()} pts</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* ── Order Review Modal ── */}
             {reviewOpen && (
