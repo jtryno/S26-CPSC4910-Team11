@@ -3315,10 +3315,45 @@ app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
     const { sale_price } = req.body;
     const price = sale_price !== undefined && sale_price !== '' ? parseFloat(sale_price) : null;
     try {
+        const [[currentItem]] = await pool.query(
+            'SELECT sale_price, last_price_value, title FROM catalog_items WHERE item_id = ?',
+            [itemId]
+        );
         await pool.query(
             'UPDATE catalog_items SET sale_price = ?, updated_at = NOW() WHERE item_id = ?',
             [price, itemId]
         );
+        const isNewSale = price !== null && (currentItem.sale_price === null || price < parseFloat(currentItem.sale_price));
+ 
+        if(isNewSale) {
+            //find all active drivers in the org who have this item favorited
+            const [favoriteDrivers] = await pool.query(
+                `SELECT df.driver_user_id
+                 FROM driver_favorites df
+                 JOIN driver_user du ON df.driver_user_id = du.user_id
+                 JOIN catalog_items ci ON df.item_id = ci.item_id
+                 WHERE df.item_id = ?
+                 AND du.sponsor_org_id = ci.sponsor_org_id
+                 AND du.driver_status = 'active'`,
+                [itemId]
+            );
+ 
+            let from_price = parseFloat(currentItem.last_price_value);
+            if(currentItem.sale_price !== null) {
+                from_price = parseFloat(currentItem.sale_price);
+            }
+            if(favoriteDrivers.length > 0) {
+                const notifValues = favoriteDrivers.map(d => [
+                    d.driver_user_id,
+                    'price_drop',
+                    `Your favorited item "${currentItem.title}" has dropped in price to $${price.toFixed(2)} from $${from_price.toFixed(2)}!`,
+                ]);
+                await pool.query(
+                    `INSERT INTO notifications (user_id, category, message) VALUES ?`,
+                    [notifValues]
+                );
+            }
+        }
         res.json({ message: 'Sale price updated' });
     } catch (error) {
         console.error('Error updating sale price:', error);
