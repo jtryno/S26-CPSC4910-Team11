@@ -3803,10 +3803,12 @@ app.post('/api/support-tickets', async (req, res) => {
                 const notifValues = admins.map(a => [
                     a.user_id,
                     'ticket_updated',
-                    `Security alert: A user has submitted a security support ticket (#${insertId}): "${title}"`, 
+                    `Security alert: A user has submitted a security support ticket "${title}"`, 
                     new Date(),
                 ]);
-                await pool.query(`INSERT INTO notifications (user_id, category, message, created_at) VALUES ?`, [notifValues]);
+                await pool.query(`INSERT INTO notifications (user_id, category, message, created_at) VALUES ?`, 
+                    [notifValues]
+                );
             }
         }
         res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
@@ -4340,60 +4342,6 @@ app.get('/api/sponsor/transaction-comments/:sponsorOrgId', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch transaction comments' });
     }
 });
-
-if (process.env.NODE_ENV !== 'test') {
-    // Run migration to add delivery columns if they don't exist
-    (async () => {
-        try {
-            const deliveryCols = [
-                { name: 'delivery_name', type: 'VARCHAR(200) NULL' },
-                { name: 'delivery_address', type: 'VARCHAR(500) NULL' },
-                { name: 'delivery_city', type: 'VARCHAR(100) NULL' },
-                { name: 'delivery_state', type: 'VARCHAR(50) NULL' },
-                { name: 'delivery_zip', type: 'VARCHAR(20) NULL' },
-            ];
-            for (const col of deliveryCols) {
-                const [rows] = await pool.query(
-                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?`,
-                    [col.name]
-                );
-                if (rows.length === 0) {
-                    await pool.query(`ALTER TABLE orders ADD COLUMN ${col.name} ${col.type}`);
-                    console.log(`Added column orders.${col.name}`);
-                }
-            }
-        } catch (e) {
-            console.warn('Delivery columns migration failed:', e.message);
-        }
-
-        // Create recently_viewed table
-        try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS recently_viewed (
-                id INT PRIMARY KEY AUTO_INCREMENT,
-                driver_user_id INT NOT NULL,
-                item_id INT NOT NULL,
-                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_rv (driver_user_id, item_id)
-            )`);
-        } catch (e) {
-            console.warn('recently_viewed migration failed:', e.message);
-        }
-
-        // Create driver_favorites table
-        try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS driver_favorites (
-                favorite_id INT PRIMARY KEY AUTO_INCREMENT,
-                driver_user_id INT NOT NULL,
-                item_id INT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_fav (driver_user_id, item_id)
-            )`);
-        } catch (e) {
-            console.warn('driver_favorites migration failed:', e.message);
-        }
-    })();
-
 // --- Catalog Reviews ---
 const REVIEW_CHAR_LIMIT = 600;
  
@@ -4570,6 +4518,59 @@ app.delete('/api/catalog/reviews/:reviewId', async (req, res) => {
         res.status(500).json({error: 'Failed to delete review'});
     }
 });
+
+if (process.env.NODE_ENV !== 'test') {
+    // Run migration to add delivery columns if they don't exist
+    (async () => {
+        try {
+            const deliveryCols = [
+                { name: 'delivery_name', type: 'VARCHAR(200) NULL' },
+                { name: 'delivery_address', type: 'VARCHAR(500) NULL' },
+                { name: 'delivery_city', type: 'VARCHAR(100) NULL' },
+                { name: 'delivery_state', type: 'VARCHAR(50) NULL' },
+                { name: 'delivery_zip', type: 'VARCHAR(20) NULL' },
+            ];
+            for (const col of deliveryCols) {
+                const [rows] = await pool.query(
+                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?`,
+                    [col.name]
+                );
+                if (rows.length === 0) {
+                    await pool.query(`ALTER TABLE orders ADD COLUMN ${col.name} ${col.type}`);
+                    console.log(`Added column orders.${col.name}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Delivery columns migration failed:', e.message);
+        }
+
+        // Create recently_viewed table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS recently_viewed (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_rv (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('recently_viewed migration failed:', e.message);
+        }
+
+        // Create driver_favorites table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS driver_favorites (
+                favorite_id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_fav (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('driver_favorites migration failed:', e.message);
+        }
+    })();
 
     app.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
