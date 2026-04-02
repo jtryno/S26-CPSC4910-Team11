@@ -3346,10 +3346,11 @@ app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
                 const notifValues = favoriteDrivers.map(d => [
                     d.driver_user_id,
                     'price_drop',
-                    `Your favorited item "${currentItem.title}" has dropped in price to $${price.toFixed(2)} from $${from_price.toFixed(2)}!`,
+                    'Your favorited item "' + currentItem.title + '" has dropped in price to $' + price.toFixed(2) + ' from $' + from_price.toFixed(2) + '!',
+                    new Date(),
                 ]);
                 await pool.query(
-                    `INSERT INTO notifications (user_id, category, message) VALUES ?`,
+                    'INSERT INTO notifications (user_id, category, message, created_at) VALUES ?',
                     [notifValues]
                 );
             }
@@ -3795,6 +3796,19 @@ app.post('/api/support-tickets', async (req, res) => {
             'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id, related_order_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null, relatedOrderItemId || null]
         );
+        if(category === 'security') {
+            const [admins] = await pool.query(`SELECT user_id FROM users WHERE user_type = 'admin' AND is_active = 1`);
+
+            if(admins.length > 0) {
+                const notifValues = admins.map(a => [
+                    a.user_id,
+                    'ticket_updated',
+                    `Security alert: A user has submitted a security support ticket (#${insertId}): "${title}"`, 
+                    new Date(),
+                ]);
+                await pool.query(`INSERT INTO notifications (user_id, category, message, created_at) VALUES ?`, [notifValues]);
+            }
+        }
         res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
     } catch (error) {
         console.error('Error creating support ticket:', error);
