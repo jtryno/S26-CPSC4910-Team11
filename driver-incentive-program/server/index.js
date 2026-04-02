@@ -3320,10 +3320,46 @@ app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
     const { sale_price } = req.body;
     const price = sale_price !== undefined && sale_price !== '' ? parseFloat(sale_price) : null;
     try {
+        const [[currentItem]] = await pool.query(
+            'SELECT sale_price, last_price_value, title FROM catalog_items WHERE item_id = ?',
+            [itemId]
+        );
         await pool.query(
             'UPDATE catalog_items SET sale_price = ?, updated_at = NOW() WHERE item_id = ?',
             [price, itemId]
         );
+        const isNewSale = price !== null && (currentItem.sale_price === null || price < parseFloat(currentItem.sale_price));
+ 
+        if(isNewSale) {
+            //find all active drivers in the org who have this item favorited
+            const [favoriteDrivers] = await pool.query(
+                `SELECT df.driver_user_id
+                 FROM driver_favorites df
+                 JOIN driver_user du ON df.driver_user_id = du.user_id
+                 JOIN catalog_items ci ON df.item_id = ci.item_id
+                 WHERE df.item_id = ?
+                 AND du.sponsor_org_id = ci.sponsor_org_id
+                 AND du.driver_status = 'active'`,
+                [itemId]
+            );
+ 
+            let from_price = parseFloat(currentItem.last_price_value);
+            if(currentItem.sale_price !== null) {
+                from_price = parseFloat(currentItem.sale_price);
+            }
+            if(favoriteDrivers.length > 0) {
+                const notifValues = favoriteDrivers.map(d => [
+                    d.driver_user_id,
+                    'price_drop',
+                    'Your favorited item "' + currentItem.title + '" has dropped in price to $' + price.toFixed(2) + ' from $' + from_price.toFixed(2) + '!',
+                    new Date(),
+                ]);
+                await pool.query(
+                    'INSERT INTO notifications (user_id, category, message, created_at) VALUES ?',
+                    [notifValues]
+                );
+            }
+        }
         res.json({ message: 'Sale price updated' });
     } catch (error) {
         console.error('Error updating sale price:', error);
@@ -3804,6 +3840,21 @@ app.post('/api/support-tickets', async (req, res) => {
             'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id, related_order_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null, relatedOrderItemId || null]
         );
+        if(category === 'security') {
+            const [admins] = await pool.query(`SELECT user_id FROM users WHERE user_type = 'admin' AND is_active = 1`);
+
+            if(admins.length > 0) {
+                const notifValues = admins.map(a => [
+                    a.user_id,
+                    'ticket_updated',
+                    `Security alert: A user has submitted a security support ticket "${title}"`, 
+                    new Date(),
+                ]);
+                await pool.query(`INSERT INTO notifications (user_id, category, message, created_at) VALUES ?`, 
+                    [notifValues]
+                );
+            }
+        }
         res.json({ message: 'Ticket created successfully', ticket_id: result.insertId });
     } catch (error) {
         console.error('Error creating support ticket:', error);
@@ -4592,6 +4643,59 @@ app.delete('/api/catalog/reviews/:reviewId', async (req, res) => {
         res.status(500).json({error: 'Failed to delete review'});
     }
 });
+
+if (process.env.NODE_ENV !== 'test') {
+    // Run migration to add delivery columns if they don't exist
+    (async () => {
+        try {
+            const deliveryCols = [
+                { name: 'delivery_name', type: 'VARCHAR(200) NULL' },
+                { name: 'delivery_address', type: 'VARCHAR(500) NULL' },
+                { name: 'delivery_city', type: 'VARCHAR(100) NULL' },
+                { name: 'delivery_state', type: 'VARCHAR(50) NULL' },
+                { name: 'delivery_zip', type: 'VARCHAR(20) NULL' },
+            ];
+            for (const col of deliveryCols) {
+                const [rows] = await pool.query(
+                    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?`,
+                    [col.name]
+                );
+                if (rows.length === 0) {
+                    await pool.query(`ALTER TABLE orders ADD COLUMN ${col.name} ${col.type}`);
+                    console.log(`Added column orders.${col.name}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Delivery columns migration failed:', e.message);
+        }
+
+        // Create recently_viewed table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS recently_viewed (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_rv (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('recently_viewed migration failed:', e.message);
+        }
+
+        // Create driver_favorites table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS driver_favorites (
+                favorite_id INT PRIMARY KEY AUTO_INCREMENT,
+                driver_user_id INT NOT NULL,
+                item_id INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_fav (driver_user_id, item_id)
+            )`);
+        } catch (e) {
+            console.warn('driver_favorites migration failed:', e.message);
+        }
+    })();
 
     app.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
