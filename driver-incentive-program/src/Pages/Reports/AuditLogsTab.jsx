@@ -80,7 +80,7 @@ const AuditLogsTab = ({ orgId }) => {
     }, [logType, selectedOrg, fromDate, toDate]);
 
     useEffect(() => {
-       setSelectedOrg(orgId || null); 
+       setSelectedOrg(orgId || null);
     }, [orgId]);
 
     return (
