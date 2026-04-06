@@ -88,7 +88,7 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                     { key: 'user_id', label: 'User ID', sortable: true },
                     { key: 'username', label: 'Username', sortable: true },
                     { key: 'user_type', label: 'Role', sortable: true },
-                    ...(canManageMembers ? [{ key: 'points', label: 'Points', sortable: true }] : []),
+                    ...(canManageMembers ? [{ key: 'points', label: 'Points', sortable: true, render: (value) => value != null ? value : '' }] : []),
                     ...(canManageMembers ? [{
                         key: 'last_login',
                         label: 'Last Login',
