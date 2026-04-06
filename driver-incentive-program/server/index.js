@@ -327,7 +327,7 @@ async function createNotification(userId, category, message, extras = {}) {
 async function getSponsorOrgId(userId, userType) {
     if (userType === 'driver') {
         const [rows] = await pool.query(
-            'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active"',
+            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
             [userId]
         );
         return rows.length > 0 ? rows[0].sponsor_org_id : null;
@@ -756,11 +756,14 @@ async function resolveImportedUsername(connection, preparedRow, reservedUsername
 }
 
 // Inserts the new user into the role-specific organization table after the base user record is created.
-function insertOrganizationMembership(connection, userId, sponsorOrgId, userRole, requestingUserId) {
+async function insertOrganizationMembership(connection, userId, sponsorOrgId, userRole, requestingUserId) {
     if (userRole === 'driver') {
+        await connection.query('INSERT IGNORE INTO driver_user (user_id) VALUES (?)', [userId]);
         return connection.query(
-            'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, NOW())',
-            [userId, sponsorOrgId, 'active']
+            `INSERT INTO driver_sponsor (driver_user_id, sponsor_org_id, driver_status, affilated_at)
+             VALUES (?, ?, 'active', NOW())
+             ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL`,
+            [userId, sponsorOrgId]
         );
     }
 
@@ -910,17 +913,22 @@ app.get('/api/organization/:orgId/drivers', async (req, res) => {
     const { orgId } = req.params;
     const { dateRange, driverId } = req.query;
     try {
-        let query = 'Select driver_user.*, users.username FROM driver_user JOIN users ON driver_user.user_id = users.user_id'
+        let query = `SELECT du.user_id, du.created_at, u.username,
+                            ds.sponsor_org_id, ds.driver_status, ds.current_points_balance,
+                            ds.affilated_at, ds.dropped_at, ds.drop_reason
+                     FROM driver_user du
+                     JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
+                     JOIN users u ON du.user_id = u.user_id`
         const params = []
         const conditions = [];
 
         if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
-            conditions.push("driver_user.sponsor_org_id = ?");
+            conditions.push("ds.sponsor_org_id = ?");
             params.push(orgId);
         }
 
         if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
-                conditions.push("driver_user.user_id = ?");
+                conditions.push("du.user_id = ?");
                 params.push(driverId);
         }
 
@@ -928,15 +936,15 @@ app.get('/api/organization/:orgId/drivers', async (req, res) => {
             const { fromDate, toDate } = JSON.parse(dateRange);
 
             if (fromDate && toDate) {
-                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                conditions.push('du.created_at >= ? AND du.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(fromDate, toDate);
-            } 
+            }
             else if (fromDate) {
-                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                conditions.push('du.created_at >= ? AND du.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(fromDate, fromDate);
-            } 
+            }
             else if (toDate) {
-                conditions.push('driver_user.created_at >= ? AND driver_user.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                conditions.push('du.created_at >= ? AND du.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(toDate, toDate);
             }
         }
@@ -1028,8 +1036,10 @@ app.put('/api/application/:application_id', async (req, res) => {
                 if (status === 'approved') {
                     msg = `Your application to join ${orgName} was approved by ${reviewerName}.`;
                     await pool.query(
-                        'UPDATE driver_user SET sponsor_org_id = ?, driver_status = "active", affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL WHERE user_id = ?',
-                        [sponsor_org_id, driver_user_id]
+                        `INSERT INTO driver_sponsor (driver_user_id, sponsor_org_id, driver_status, affilated_at)
+                         VALUES (?, ?, 'active', NOW())
+                         ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL`,
+                        [driver_user_id, sponsor_org_id]
                     );
                 } else {
                     msg = `Your application to join ${orgName} was rejected. Reason: ${decision_reason || 'No reason provided.'}`;
@@ -1156,7 +1166,7 @@ app.get('/api/organization/:sponsor_org_id/count', async (req, res) => {
 
     try {
         const [[{ driverCount }]] = await pool.query(
-            'SELECT COUNT(*) AS driverCount FROM driver_user WHERE sponsor_org_id = ? AND driver_status = "active"',
+            'SELECT COUNT(*) AS driverCount FROM driver_sponsor WHERE sponsor_org_id = ? AND driver_status = "active"',
             [sponsor_org_id]
         );
         const [[{ sponsorCount }]] = await pool.query(
@@ -1196,9 +1206,10 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
 
     try {
         const [users] = await pool.query(
-            `SELECT u.*, du.current_points_balance AS points
+            `SELECT u.*, ds.current_points_balance AS points
              FROM users u
-             JOIN driver_user du ON u.user_id = du.user_id AND du.sponsor_org_id = ? AND du.driver_status = 'active'
+             JOIN driver_user du ON u.user_id = du.user_id
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id AND ds.sponsor_org_id = ? AND ds.driver_status = 'active'
              UNION
              SELECT u.*, NULL AS points
              FROM users u
@@ -1559,15 +1570,18 @@ async function processBulkUserLine({
             if (existingType === 'driver') {
                 // Check if already in this org
                 const [driverRows] = await connection.query(
-                    'SELECT user_id FROM driver_user WHERE user_id = ? AND sponsor_org_id = ? AND driver_status = ?',
+                    'SELECT driver_user_id FROM driver_sponsor WHERE driver_user_id = ? AND sponsor_org_id = ? AND driver_status = ?',
                     [userId, targetOrgId, 'active']
                 );
 
                 if (driverRows.length === 0) {
                     // Not in this org yet so add membership (auto-accept)
+                    await connection.query('INSERT IGNORE INTO driver_user (user_id) VALUES (?)', [userId]);
                     await connection.query(
-                        'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, NOW())',
-                        [userId, targetOrgId, 'active']
+                        `INSERT INTO driver_sponsor (driver_user_id, sponsor_org_id, driver_status, affilated_at)
+                         VALUES (?, ?, 'active', NOW())
+                         ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL`,
+                        [userId, targetOrgId]
                     );
                 }
 
@@ -2098,12 +2112,14 @@ app.post('/api/signup', async (req, res) => {
         const newUserId = result.insertId;
 
         if (userRole === 'driver') {
-            const driverStatus = orgId ? 'active' : 'unaffiliated';
-            const affiliatedAt = orgId ? new Date() : null;
-            await pool.query(
-                'INSERT INTO driver_user (user_id, sponsor_org_id, driver_status, affilated_at) VALUES (?, ?, ?, ?)',
-                [newUserId, orgId || null, driverStatus, affiliatedAt]
-            );
+            await pool.query('INSERT INTO driver_user (user_id) VALUES (?)', [newUserId]);
+            if (orgId) {
+                await pool.query(
+                    `INSERT INTO driver_sponsor (driver_user_id, sponsor_org_id, driver_status, affilated_at)
+                     VALUES (?, ?, 'active', NOW())`,
+                    [newUserId, orgId]
+                );
+            }
         } else if (userRole === 'sponsor') {
             await pool.query(
                 'INSERT INTO sponsor_user (user_id, sponsor_org_id, created_by_user_id) VALUES (?, ?, ?)',
@@ -2374,7 +2390,7 @@ app.post('/api/user/leave-organization', async (req, res) => {
     try {
         if (user_type === 'driver') {
             const [rows] = await pool.query(
-                'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active"',
+                'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
                 [user_id]
             );
             if (rows.length === 0) {
@@ -2382,7 +2398,7 @@ app.post('/api/user/leave-organization', async (req, res) => {
             }
             const { sponsor_org_id } = rows[0];
             await pool.query(
-                'UPDATE driver_user SET sponsor_org_id = NULL, driver_status = "dropped", dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
+                'UPDATE driver_sponsor SET driver_status = "dropped", dropped_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ?',
                 [user_id, sponsor_org_id]
             );
             await pool.query(
@@ -2510,9 +2526,10 @@ app.get('/api/driver/points/:userId', async (req, res) => {
         );
 
         const [driverRows] = await pool.query(
-            `SELECT du.driver_status, du.sponsor_org_id, so.name AS sponsor_name
+            `SELECT ds.driver_status, ds.sponsor_org_id, so.name AS sponsor_name
              FROM driver_user du
-             LEFT JOIN sponsor_organization so ON du.sponsor_org_id = so.sponsor_org_id
+             LEFT JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
+             LEFT JOIN sponsor_organization so ON ds.sponsor_org_id = so.sponsor_org_id
              WHERE du.user_id = ?`,
             [userId]
         );
@@ -2539,7 +2556,7 @@ app.post('/api/driver/leave-sponsor', async (req, res) => {
     }
     try {
         const [rows] = await pool.query(
-            'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = ?',
+            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = ?',
             [driverUserId, 'active']
         );
         if (rows.length === 0) {
@@ -2548,7 +2565,7 @@ app.post('/api/driver/leave-sponsor', async (req, res) => {
         const { sponsor_org_id } = rows[0];
 
         await pool.query(
-            'UPDATE driver_user SET driver_status = ?, sponsor_org_id = NULL, dropped_at = NOW() WHERE user_id = ? AND sponsor_org_id = ?',
+            'UPDATE driver_sponsor SET driver_status = ?, dropped_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ?',
             ['dropped', driverUserId, sponsor_org_id]
         );
 
@@ -2584,12 +2601,14 @@ app.get('/api/sponsor/drivers/:sponsorUserId', async (req, res) => {
                 u.first_name,
                 u.last_name,
                 u.email,
-                du.driver_status,
-                du.current_points_balance AS total_points
+                ds.driver_status,
+                ds.current_points_balance AS total_points
              FROM driver_user du
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
              JOIN users u ON du.user_id = u.user_id
-             WHERE du.sponsor_org_id = ?
-               AND du.driver_status = 'active'`,
+             WHERE ds.sponsor_org_id = ?
+               AND ds.driver_status = 'active'
+               AND u.user_type = 'driver'`,
             [sponsor_org_id]
         );
 
@@ -2709,8 +2728,10 @@ app.post('/api/sponsor/points', async (req, res) => {
         if (point_upper_limit != null || point_lower_limit != null) {
             const placeholders = driverIds.map(() => '?').join(', ');
             const [balanceRows] = await pool.query(
-                `SELECT user_id, current_points_balance FROM driver_user WHERE user_id IN (${placeholders})`,
-                driverIds
+                `SELECT driver_user_id AS user_id, current_points_balance
+                 FROM driver_sponsor
+                 WHERE driver_user_id IN (${placeholders}) AND sponsor_org_id = ?`,
+                [...driverIds, sponsor_org_id]
             );
             for (const driver of balanceRows) {
                 const projected = driver.current_points_balance + pointAmount;
@@ -2845,8 +2866,8 @@ app.delete('/api/admin/user/:userId', async (req, res) => {
 
         if (user_type === 'driver') {
             await pool.query(
-                'UPDATE driver_user SET driver_status = ? WHERE user_id = ?',
-                ['unaffiliated', userId]
+                'UPDATE driver_sponsor SET driver_status = "dropped", dropped_at = NOW() WHERE driver_user_id = ? AND driver_status = "active"',
+                [userId]
             );
         }
 
@@ -2948,25 +2969,26 @@ app.post('/api/driver/drop', async (req, res) => {
     }
 
     try {
-        //get users org id so we can get org name to show who dropped them
-        const [orgIdArray] = await pool.query('SELECT sponsor_org_id FROM driver_user WHERE user_id = ?',[driverId]);
+        //get users active org id so we can get org name to show who dropped them
+        const [orgIdArray] = await pool.query(
+            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
+            [driverId]
+        );
 
         if(orgIdArray.length === 0) {
-            return res.status(404).json({error: 'Driver not found'});
+            return res.status(400).json({error: 'Driver is not currently in an organization'});
         }
 
         const sponsor_org_id = orgIdArray[0].sponsor_org_id;
-
-        if(sponsor_org_id === null) {
-            return res.status(400).json({error: 'Driver is not currently in an organization'});
-        }
 
         const [orgRows] = await pool.query('SELECT name FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
 
         const orgName = orgRows[0].name;
 
         await pool.query(
-            'UPDATE driver_user SET sponsor_org_id = NULL, driver_status = "dropped", dropped_at = NOW(), drop_reason = ? WHERE user_id = ?', [drop_reason || null, driverId]);
+            'UPDATE driver_sponsor SET driver_status = "dropped", dropped_at = NOW(), drop_reason = ? WHERE driver_user_id = ? AND sponsor_org_id = ?',
+            [drop_reason || null, driverId, sponsor_org_id]
+        );
 
         let msg;
         if(drop_reason) {
@@ -3284,7 +3306,7 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
         );
         if(item) {
             const [drivers] = await pool.query(
-                'SELECT user_id FROM driver_user WHERE sponsor_org_id = ? AND driver_status = "active"',
+                'SELECT driver_user_id AS user_id FROM driver_sponsor WHERE sponsor_org_id = ? AND driver_status = "active"',
                 [item.sponsor_org_id]
             );
             for (const driver of drivers) {
@@ -3608,7 +3630,7 @@ app.post('/api/orders', async (req, res) => {
 
         // 5. Check driver has enough points
         const [[driverRow]] = await conn.query(
-            'SELECT current_points_balance FROM driver_user WHERE user_id = ? AND sponsor_org_id = ?',
+            'SELECT current_points_balance FROM driver_sponsor WHERE driver_user_id = ? AND sponsor_org_id = ?',
             [driverUserId, sponsorOrgId]
         );
         if (!driverRow || driverRow.current_points_balance < totalPoints) {
@@ -3634,7 +3656,7 @@ app.post('/api/orders', async (req, res) => {
             [orderItemValues]
         );
 
-        // 8. Deduct points — DB trigger auto-updates driver_user.current_points_balance
+        // 8. Deduct points — DB trigger auto-updates driver_sponsor.current_points_balance
         await conn.query(
             `INSERT INTO point_transactions
                (driver_user_id, sponsor_org_id, point_amount, reason, source, created_by_user_id)
@@ -3965,8 +3987,9 @@ app.get('/api/support-tickets/drivers/:sponsorUserId', async (req, res) => {
         const [drivers] = await pool.query(
             `SELECT u.user_id, u.first_name, u.last_name
              FROM driver_user du
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
              JOIN users u ON du.user_id = u.user_id
-             WHERE du.sponsor_org_id = ? AND du.driver_status = 'active'
+             WHERE ds.sponsor_org_id = ? AND ds.driver_status = 'active'
              ORDER BY u.last_name, u.first_name`,
             [sponsorUser.sponsor_org_id]
         );
@@ -4528,8 +4551,8 @@ app.post('/api/catalog/reviews', async (req, res) => {
         const [itemRows] = await pool.query(
             `SELECT ci.item_id
              FROM catalog_items ci
-             JOIN driver_user du ON ci.sponsor_org_id = du.sponsor_org_id
-             WHERE ci.item_id = ? AND du.user_id = ? AND ci.is_active = 1`,
+             JOIN driver_sponsor ds ON ci.sponsor_org_id = ds.sponsor_org_id
+             WHERE ci.item_id = ? AND ds.driver_user_id = ? AND ds.driver_status = 'active' AND ci.is_active = 1`,
             [itemId, driverUserId]
         );
         if(itemRows.length === 0) {
@@ -4636,7 +4659,7 @@ app.get('/api/messages/announcements/:userId', async (req, res) => {
         const userType = userRows[0].user_type;
         let orgIds = [];
         if (userType === 'driver') {
-            const [rows] = await pool.query('SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active" AND sponsor_org_id IS NOT NULL', [userId]);
+            const [rows] = await pool.query('SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"', [userId]);
             orgIds = rows.map(row => row.sponsor_org_id);
         } 
         else if (userType === 'sponsor') {
@@ -4706,8 +4729,15 @@ app.get('/api/messages/org/drivers/:sponsorUserId', async (req, res) => {
         if(sponsorRows.length === 0) return res.status(404).json({error: 'no sponsor'});
         const {sponsor_org_id} = sponsorRows[0];
 
-        const [drivers] = await pool.query(`SELECT u.user_id, u.username, u.first_name, u.last_name FROM driver_user du JOIN users u ON du.user_id = u.user_id
-             WHERE du.sponsor_org_id = ? AND du.driver_status = 'active' ORDER BY u.username ASC`, [sponsor_org_id]);
+        const [drivers] = await pool.query(
+            `SELECT u.user_id, u.username, u.first_name, u.last_name
+             FROM driver_user du
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
+             JOIN users u ON du.user_id = u.user_id
+             WHERE ds.sponsor_org_id = ? AND ds.driver_status = 'active'
+             ORDER BY u.username ASC`,
+            [sponsor_org_id]
+        );
         res.json({drivers, sponsor_org_id});
     } catch (error) {
         console.error('Error fetching org drivers:', error);
@@ -4720,12 +4750,17 @@ app.get('/api/messages/org/drivers/:sponsorUserId', async (req, res) => {
 app.get('/api/messages/sponsor/:driverUserId', async (req, res) => {
     const {driverUserId} = req.params;
     try {
-        const [rows] = await pool.query(`SELECT u.user_id, u.username, u.first_name, u.last_name, su.sponsor_org_id, so.name AS org_name FROM driver_user du
-             JOIN sponsor_user su ON du.sponsor_org_id = su.sponsor_org_id
+        const [rows] = await pool.query(
+            `SELECT u.user_id, u.username, u.first_name, u.last_name, ds.sponsor_org_id, so.name AS org_name
+             FROM driver_user du
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
+             JOIN sponsor_user su ON ds.sponsor_org_id = su.sponsor_org_id
              JOIN users u ON su.user_id = u.user_id
-             JOIN sponsor_organization so ON su.sponsor_org_id = so.sponsor_org_id
-             WHERE du.user_id = ? AND du.driver_status = 'active'
-             ORDER BY so.name ASC, u.username ASC`, [driverUserId]);
+             JOIN sponsor_organization so ON ds.sponsor_org_id = so.sponsor_org_id
+             WHERE du.user_id = ? AND ds.driver_status = 'active'
+             ORDER BY so.name ASC, u.username ASC`,
+            [driverUserId]
+        );
         res.json({sponsors: rows});
     } catch (error) {
         console.error('Error fetching sponsor users:', error);
@@ -4774,11 +4809,12 @@ app.get('/api/user/:userId/download-data', async (req, res) => {
         // Role-specific data
         if (user.user_type === 'driver') {
             const [driverInfo] = await pool.query(
-                `SELECT du.sponsor_org_id, du.driver_status, du.current_points_balance,
-                        du.affilated_at, du.dropped_at, du.drop_reason,
+                `SELECT ds.sponsor_org_id, ds.driver_status, ds.current_points_balance,
+                        ds.affilated_at, ds.dropped_at, ds.drop_reason,
                         so.name AS sponsor_org_name
                  FROM driver_user du
-                 LEFT JOIN sponsor_organization so ON du.sponsor_org_id = so.sponsor_org_id
+                 LEFT JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
+                 LEFT JOIN sponsor_organization so ON ds.sponsor_org_id = so.sponsor_org_id
                  WHERE du.user_id = ?`,
                 [userId]
             );

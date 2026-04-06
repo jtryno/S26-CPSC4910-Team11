@@ -69,7 +69,8 @@ function mockNewUserCreation(sponsorOrgName = 'My Org', insertId = 201) {
         .mockResolvedValueOnce([[]])                          // no existing user by email
         .mockResolvedValueOnce([[]])                          // username available
         .mockResolvedValueOnce([{ insertId }])                // INSERT INTO users
-        .mockResolvedValueOnce([{ affectedRows: 1 }])         // INSERT INTO driver_user / sponsor_user
+        .mockResolvedValueOnce([{ affectedRows: 1 }])         // INSERT IGNORE INTO driver_user (drivers) / INSERT INTO sponsor_user (sponsors)
+        .mockResolvedValueOnce([{ affectedRows: 1 }])         // INSERT INTO driver_sponsor (drivers only; unused for sponsors)
         .mockResolvedValueOnce([{ affectedRows: 1 }]);        // INSERT INTO password_reset_tokens
 }
 
@@ -201,12 +202,12 @@ describe('POST /api/organization/:id/users/bulk-import (sponsor)', () => {
         expect(res.body.results[0].type).toBe('D');
         expect(res.body.results[0].onboardingPath).toMatch(/^\/password-reset\?token=/);
 
-        // Verify driver_user insert used status='active' (auto-accept)
+        // Verify driver_sponsor insert used status='active' (auto-accept)
         const driverInsertCall = mockConn.query.mock.calls.find(
-            c => typeof c[0] === 'string' && c[0].includes('INSERT INTO driver_user')
+            c => typeof c[0] === 'string' && c[0].includes('INSERT INTO driver_sponsor')
         );
         expect(driverInsertCall).toBeTruthy();
-        expect(driverInsertCall[1]).toContain('active');
+        expect(driverInsertCall[0]).toContain('active');
         expect(mockConn.beginTransaction).toHaveBeenCalled();
         expect(mockConn.commit).toHaveBeenCalled();
     });
@@ -463,7 +464,8 @@ describe('POST /api/admin/users/bulk-import', () => {
             .mockResolvedValueOnce([[]])                          // no existing user
             .mockResolvedValueOnce([[]])                          // username
             .mockResolvedValueOnce([{ insertId: 201 }])           // users INSERT
-            .mockResolvedValueOnce([{ affectedRows: 1 }])         // driver_user INSERT
+            .mockResolvedValueOnce([{ affectedRows: 1 }])         // INSERT IGNORE INTO driver_user
+            .mockResolvedValueOnce([{ affectedRows: 1 }])         // INSERT INTO driver_sponsor
             .mockResolvedValueOnce([{ affectedRows: 1 }])         // password_reset_tokens
             .mockResolvedValueOnce([{ affectedRows: 1 }])         // point_transactions INSERT
             // S line: create sponsor (org resolved from orgMap — no org query)
