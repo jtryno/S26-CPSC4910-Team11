@@ -4283,6 +4283,12 @@ app.put('/api/orders/:orderId/cancel', async (req, res) => {
         }
 
         await conn.commit();
+
+        const refundMsg = tx
+            ? ` ${Math.abs(tx.point_amount).toLocaleString()} point(s) have been refunded to your account.`
+            : '';
+        await createNotification(driverUserId, 'order_placed', `Your order #${orderId} has been cancelled.${refundMsg}`, { related_order_id: Number(orderId) });
+
         res.json({ message: 'Order cancelled', points_refunded: tx ? Math.abs(tx.point_amount) : 0 });
     } catch (error) {
         await conn.rollback();
