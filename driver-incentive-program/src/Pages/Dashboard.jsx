@@ -428,7 +428,7 @@ const DriverDashboard = ({ user }) => {
                                         placed:    { bg: '#e3f2fd', color: '#1565c0' },
                                         shipped:   { bg: '#fff3e0', color: '#e65100' },
                                         delivered: { bg: '#e8f5e9', color: '#2e7d32' },
-                                        canceled:  { bg: '#f5f5f5', color: '#757575' },
+                                        cancelled:  { bg: '#f5f5f5', color: '#757575' },
                                     }[val] || { bg: '#f5f5f5', color: '#444' };
                                     return (
                                         <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', background: badge.bg, color: badge.color }}>
@@ -765,7 +765,7 @@ const DriverDashboard = ({ user }) => {
                                         if (res.ok) {
                                             setOrders(prev => prev.map(o =>
                                                 o.order_id === selectedCancelOrder.order_id
-                                                    ? { ...o, status: 'canceled', cancel_reason: cancelReason }
+                                                    ? { ...o, status: 'cancelled', cancel_reason: cancelReason }
                                                     : o
                                             ));
                                             setCancelModalOpen(false);
