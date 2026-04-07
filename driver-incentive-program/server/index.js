@@ -4268,7 +4268,7 @@ app.put('/api/orders/:orderId/cancel', async (req, res) => {
         // Cancel the order
         await conn.query(
             'UPDATE orders SET status = ?, cancel_reason = ?, cancelled_at = NOW() WHERE order_id = ?',
-            ['canceled', cancel_reason || null, orderId]
+            ['cancelled', cancel_reason || null, orderId]
         );
 
         // Refund points if a matching deduction was found
