@@ -4591,24 +4591,24 @@ app.delete('/api/catalog/reviews/:reviewId', async (req, res) => {
 });
 
 // ---- SPONSOR/DRIVER REVIEW ROUTES ----
-app.get('api/dashboard/reviews/:driverUserId', async(req, res) => {
-    const {driver_user_id} = req.params;
+app.get('/api/dashboard/reviews/:driverUserId', async(req, res) => {
+    const {driverUserId} = req.params;
 
     try {
-            const [[reviews]] = await pool.query(
+            const [rows] = await pool.query(
                 `SELECT r.review_id, r.driver_user_id, r.sponsor_user_id, r.rating, r.review_text, r.created_at, r.updated_at, 
                 u.username AS sponsor_username, so.name AS sponsor_org_name 
                 FROM sponsor_driver_reviews r
-                JOIN user u ON r.sponsor_user_id
-                LEFT JOIN sponsor_user  su ON su.user_id      = r.sponsor_user_id
+                JOIN users u ON u.user_id = r.sponsor_user_id
+                LEFT JOIN sponsor_user  su ON su.user_id = r.sponsor_user_id
                 LEFT JOIN sponsor_orgs  so ON so.sponsor_org_id = su.sponsor_org_id
                 WHERE r.driver_user_id = ?
                 ORDER BY r.created_at DESC`,
-                [driver_user_id]
+                [driverUserId]
             );
             let total = 0;
             for(const row of rows) {
-                total+= row;
+                total+= row.rating;
             }
             let avgRating = total/rows.length;
         res.json({reviews: rows, avgRating: Number(avgRating.toFixed(2)), totalReviews: rows.length});
@@ -4617,40 +4617,9 @@ app.get('api/dashboard/reviews/:driverUserId', async(req, res) => {
         res.status(500).json({error: 'Failed to fetch driver reviews'})
     }
 });
-app.post('/api/dashboard/reviews/:reviewId', async(req, res) => {
-    const { driverUserId } = req.params;
-    try {
-        const [rows] = await pool.query(
-            `SELECT
-                r.review_id,
-                r.driver_user_id,
-                r.sponsor_user_id,
-                r.rating,
-                r.review_text,
-                r.created_at,
-                r.updated_at,
-                u.username   AS sponsor_username,
-                so.name      AS sponsor_org_name
-             FROM sponsor_driver_reviews r
-             JOIN users              u  ON u.user_id       = r.sponsor_user_id
-             LEFT JOIN sponsor_user  su ON su.user_id      = r.sponsor_user_id
-             LEFT JOIN sponsor_orgs  so ON so.sponsor_org_id = su.sponsor_org_id
-             WHERE r.driver_user_id = ?
-             ORDER BY r.created_at DESC`,
-            [driverUserId]
-        );
-        const avgRating = rows.length
-            ? rows.reduce((sum, r) => sum + r.rating, 0) / rows.length
-            : 0;
-        res.json({ reviews: rows, avgRating: Number(avgRating.toFixed(2)), totalReviews: rows.length });
-    } catch (error) {
-        console.error('Error fetching driver reviews:', error);
-        res.status(500).json({ error: 'Failed to fetch driver reviews' });
-    }
-});
+
  
-// POST /api/driver-reviews
-// Upsert — creates a new review or updates an existing one from the same sponsor.
+//sponsor posting a new driver review 
 app.post('/api/driver-reviews', async (req, res) => {
     const {sponsorUserId, driverUserId, rating, reviewText} = req.body;
  
@@ -4701,7 +4670,7 @@ app.post('/api/driver-reviews', async (req, res) => {
         res.status(500).json({ error: 'Failed to save driver review' });
     }
 });
-app.delete('api/dashboard/reviews/reviewId', async(req, res) => {
+app.delete('/api/dashboard/reviews/:reviewId', async(req, res) => {
     const {reviewId} = req.params;
     const {sponsorUserId} = req.body;
  
