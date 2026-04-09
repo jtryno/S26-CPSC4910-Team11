@@ -5403,12 +5403,12 @@ app.get('/api/sales', async(req, res) => {
         const conditions = [];
 
         if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
-            conditions.push("sponsor_org_id = ?");
+            conditions.push("orders.sponsor_org_id = ?");
             params.push(orgId);
         }
 
         if (driverId && driverId !== 'undefined' && driverId !== 'null' && driverId !== "All") {
-                conditions.push("driver_user_id = ?");
+                conditions.push("orders.driver_user_id = ?");
                 params.push(driverId);
             }
 
@@ -5416,15 +5416,15 @@ app.get('/api/sales', async(req, res) => {
             const { fromDate, toDate } = JSON.parse(dateRange);
 
             if (fromDate && toDate) {
-                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                conditions.push('orders.created_at >= ? AND orders.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(fromDate, toDate);
             } 
             else if (fromDate) {
-                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                conditions.push('orders.created_at >= ? AND orders.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(fromDate, fromDate);
             } 
             else if (toDate) {
-                conditions.push('created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                conditions.push('orders.created_at >= ? AND orders.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
                 params.push(toDate, toDate);
             }
         }
@@ -5441,13 +5441,45 @@ app.get('/api/sales', async(req, res) => {
     }
 });
 
-app.get('/api/sales/:orderId/items', async(req, res) => {
-    const { orderId } = req.params;
+app.get('/api/sales/items', async(req, res) => {
+    const { orderId, orgId, dateRange } = req.query;
     try {
-        const [items] = await pool.query(
-            'SELECT * FROM order_items WHERE order_id = ?',
-            [orderId]
-        );
+        let query = 'SELECT order_items.*, orders.sponsor_org_id, orders.created_at FROM order_items JOIN orders ON order_items.order_id = orders.order_id WHERE orders.status != "cancelled"';
+        const conditions = [];
+        const params = [];
+
+        if (orderId && orderId !== 'undefined' && orderId !== 'null' && orderId !== "All") {
+            conditions.push('order_items.order_id = ?');
+            params.push(orderId);
+        }
+
+        if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
+            conditions.push('orders.sponsor_org_id = ?');
+            params.push(orgId);
+        }
+
+        if (dateRange) {
+            const { fromDate, toDate } = JSON.parse(dateRange);
+
+            if (fromDate && toDate) {
+                conditions.push('orders.created_at >= ? AND orders.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, toDate);
+            } 
+            else if (fromDate) {
+                conditions.push('orders.created_at >= ? AND orders.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(fromDate, fromDate);
+            } 
+            else if (toDate) {
+                conditions.push('orders.created_at >= ? AND orders.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+                params.push(toDate, toDate);
+            }
+        }
+
+        if (conditions.length > 0) {
+            query += ' AND ' + conditions.join(' AND ');
+        }
+
+        const [items] = await pool.query(query, params);
         res.json({ items });
     } catch (error) {
         console.error('Error fetching order items:', error);

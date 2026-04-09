@@ -12,9 +12,9 @@ async function fetchSalesData(orgId, driverId, dateRange) {
     }
 }
 
-async function fetchSalesItemData(orderId) {
+async function fetchSalesItemData(orderId, orgId, dateRange) {
     try {
-        const response = await fetch(`/api/sales/${orderId}/items`, {
+        const response = await fetch(`/api/sales/items?orderId=${orderId}&orgId=${orgId}&dateRange=${JSON.stringify(dateRange)}`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
         });
@@ -23,7 +23,6 @@ async function fetchSalesItemData(orderId) {
     } catch (error) {
         console.error('Error fetching sales items:', error);
         throw error;
-
     }
 }
 
