@@ -2381,6 +2381,106 @@ app.get('/api/logs/login-attempt-logs/:org_id', async (req, res) => {
     }
 });
 
+// --- Driver Activity Report ---
+app.get('/api/admin/driver-activity', async (req, res) => {
+    const { orgId, dateRange } = req.query;
+
+    try {
+        let fromDate = null;
+        let toDate = null;
+
+        if (dateRange) {
+            const parsed = JSON.parse(dateRange);
+            fromDate = parsed.fromDate || null;
+            toDate = parsed.toDate || fromDate;
+        }
+
+        const orgFilterParsed = parseInt(orgId);
+        const orgFilter = isNaN(orgFilterParsed) ? null : orgFilterParsed;
+
+        const query = `
+            SELECT
+                u.user_id, u.username, u.first_name, u.last_name, u.last_login, u.is_active,
+                GROUP_CONCAT(DISTINCT so.name SEPARATOR ', ') AS sponsor_names,
+                COUNT(DISTINCT CASE WHEN ll.result = 'success' AND (? IS NULL OR (ll.login_date >= ? AND ll.login_date < DATE_ADD(?, INTERVAL 1 DAY))) THEN ll.log_id END) AS successful_logins,
+                COUNT(DISTINCT CASE WHEN ll.result = 'failure' AND (? IS NULL OR (ll.login_date >= ? AND ll.login_date < DATE_ADD(?, INTERVAL 1 DAY))) THEN ll.log_id END) AS failed_logins,
+                COALESCE(SUM(CASE WHEN (? IS NULL OR (pt.created_at >= ? AND pt.created_at < DATE_ADD(?, INTERVAL 1 DAY))) THEN pt.point_amount END), 0) AS points_in_period,
+                COUNT(DISTINCT CASE WHEN (? IS NULL OR (o.created_at >= ? AND o.created_at < DATE_ADD(?, INTERVAL 1 DAY))) THEN o.order_id END) AS orders_in_period
+            FROM users u
+            JOIN driver_user du ON du.user_id = u.user_id
+            LEFT JOIN driver_sponsor ds ON ds.driver_user_id = u.user_id AND (? IS NULL OR ds.sponsor_org_id = ?)
+            LEFT JOIN sponsor_organization so ON so.sponsor_org_id = ds.sponsor_org_id
+            LEFT JOIN login_logs ll ON ll.user_id = u.user_id
+            LEFT JOIN point_transactions pt ON pt.driver_user_id = u.user_id AND (? IS NULL OR pt.sponsor_org_id = ?)
+            LEFT JOIN orders o ON o.driver_user_id = u.user_id AND (? IS NULL OR o.sponsor_org_id = ?)
+            WHERE (? IS NULL OR ds.sponsor_org_id = ?)
+            GROUP BY u.user_id, u.username, u.first_name, u.last_name, u.last_login, u.is_active
+            ORDER BY u.last_login DESC
+        `;
+
+        const params = [
+            fromDate, fromDate, toDate,   // successful_logins date filter
+            fromDate, fromDate, toDate,   // failed_logins date filter
+            fromDate, fromDate, toDate,   // points_in_period date filter
+            fromDate, fromDate, toDate,   // orders_in_period date filter
+            orgFilter, orgFilter,         // driver_sponsor join filter
+            orgFilter, orgFilter,         // point_transactions join filter
+            orgFilter, orgFilter,         // orders join filter
+            orgFilter, orgFilter          // WHERE clause filter
+        ];
+
+        const [drivers] = await pool.query(query, params);
+        res.json({ message: "Driver activity retrieved successfully", drivers });
+    } catch (error) {
+        console.error('Error fetching driver activity:', error);
+        res.status(500).json({ error: 'Failed to fetch driver activity' });
+    }
+});
+
+// --- Sponsor Activity Report ---
+app.get('/api/admin/sponsor-activity', async (req, res) => {
+    const { dateRange } = req.query;
+
+    try {
+        let fromDate = null;
+        let toDate = null;
+
+        if (dateRange) {
+            const parsed = JSON.parse(dateRange);
+            fromDate = parsed.fromDate || null;
+            toDate = parsed.toDate || fromDate;
+        }
+
+        const query = `
+            SELECT
+                so.sponsor_org_id, so.name,
+                COUNT(DISTINCT CASE WHEN ds.driver_status = 'active' THEN ds.driver_user_id END) AS active_drivers,
+                COALESCE(SUM(CASE WHEN (? IS NULL OR (pt.created_at >= ? AND pt.created_at < DATE_ADD(?, INTERVAL 1 DAY))) THEN pt.point_amount END), 0) AS points_awarded_in_period,
+                COUNT(DISTINCT CASE WHEN (? IS NULL OR (o.created_at >= ? AND o.created_at < DATE_ADD(?, INTERVAL 1 DAY))) THEN o.order_id END) AS orders_in_period,
+                MAX(u.last_login) AS most_recent_sponsor_login
+            FROM sponsor_organization so
+            LEFT JOIN driver_sponsor ds ON ds.sponsor_org_id = so.sponsor_org_id
+            LEFT JOIN point_transactions pt ON pt.sponsor_org_id = so.sponsor_org_id
+            LEFT JOIN orders o ON o.sponsor_org_id = so.sponsor_org_id
+            LEFT JOIN sponsor_user su ON su.sponsor_org_id = so.sponsor_org_id
+            LEFT JOIN users u ON u.user_id = su.user_id
+            GROUP BY so.sponsor_org_id, so.name
+            ORDER BY points_awarded_in_period DESC
+        `;
+
+        const params = [
+            fromDate, fromDate, toDate,   // points_awarded_in_period date filter
+            fromDate, fromDate, toDate    // orders_in_period date filter
+        ];
+
+        const [orgs] = await pool.query(query, params);
+        res.json({ message: "Sponsor activity retrieved successfully", orgs });
+    } catch (error) {
+        console.error('Error fetching sponsor activity:', error);
+        res.status(500).json({ error: 'Failed to fetch sponsor activity' });
+    }
+});
+
 // --- Leave Organization Route ---
 app.post('/api/user/leave-organization', async (req, res) => {
     const { user_id, user_type } = req.body;
