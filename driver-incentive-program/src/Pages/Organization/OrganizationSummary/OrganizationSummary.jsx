@@ -12,6 +12,7 @@ import OrganizationCatalogTab from './OrganizationCatalogTab';
 import OrganizationOrdersTab from './OrganizationOrdersTab';
 import OrganizationDropsTab from './OrganizationDropsTab';
 import OrganizationDriverStatusTab from './OrganizationDriverStatusTab';
+import OrganizationArchivedDriversTab from './OrganizationArchivedDriversTab';
 
 const OrganizationSummary = () => {
     const [userData, setUserData] = useState(() => {
@@ -71,7 +72,7 @@ const OrganizationSummary = () => {
                     { label: "Catalog", content: <OrganizationCatalogTab orgId={orgId} userData={userData} /> },
                     { label: "Orders", content: <OrganizationOrdersTab orgId={orgId} userData={userData} /> },
                     { label: "Driver Status", content: <OrganizationDriverStatusTab orgId={orgId} /> },
-
+                    { label: "Archived Drivers", content: <OrganizationArchivedDriversTab orgId={orgId} /> },
                 ] : [])
             ]} />
         </div>
