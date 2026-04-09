@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import SortableTable from '../../../components/SortableTable';
 
-const OrganizationCatalogTab = ({ orgId }) => {
+const OrganizationCatalogTab = ({ orgId, userData }) => {
     const [catalogItems, setCatalogItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -17,6 +17,14 @@ const OrganizationCatalogTab = ({ orgId }) => {
 
     // Featured toggling state (#6249)
     const [togglingFeatured, setTogglingFeatured] = useState(new Set());
+
+    // Availability toggling state (#3482)
+    const [togglingAvailability, setTogglingAvailability] = useState(new Set());
+
+    // Recommendations state (#6306)
+    const [recommendations, setRecommendations] = useState([]);
+    const [recLoading, setRecLoading] = useState(false);
+    const [addingRecIds, setAddingRecIds] = useState(new Set());
 
     // Edit item customization state
     const [editModalOpen, setEditModalOpen] = useState(false);
@@ -38,8 +46,25 @@ const OrganizationCatalogTab = ({ orgId }) => {
         }
     };
 
+    const fetchRecommendations = async () => {
+        if (!orgId) return;
+        setRecLoading(true);
+        try {
+            const res = await fetch(`/api/catalog/recommendations/${orgId}`);
+            const data = await res.json();
+            setRecommendations(data.items || []);
+        } catch {
+            setRecommendations([]);
+        } finally {
+            setRecLoading(false);
+        }
+    };
+
     useEffect(() => {
-        if (orgId) fetchCatalog();
+        if (orgId) {
+            fetchCatalog();
+            fetchRecommendations();
+        }
     }, [orgId]);
 
     const handleSearch = async () => {
@@ -199,6 +224,60 @@ const OrganizationCatalogTab = ({ orgId }) => {
         }
     };
 
+    const handleToggleAvailability = async (item) => {
+        if (togglingAvailability.has(item.item_id)) return;
+        setTogglingAvailability(prev => new Set([...prev, item.item_id]));
+        const newStatus = item.availability_status === 'in_stock' ? 'out_of_stock' : 'in_stock';
+        try {
+            const res = await fetch(`/api/catalog/items/${item.item_id}/availability`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ availability_status: newStatus }),
+            });
+            if (res.ok) {
+                await fetchCatalog();
+            } else {
+                setMessage({ type: 'error', text: 'Failed to update availability.' });
+            }
+        } catch {
+            setMessage({ type: 'error', text: 'Network error.' });
+        } finally {
+            setTogglingAvailability(prev => { const next = new Set(prev); next.delete(item.item_id); return next; });
+        }
+    };
+
+    const handleAddRecommendation = async (item) => {
+        const key = item.item_id;
+        setAddingRecIds(prev => new Set([...prev, key]));
+        try {
+            const res = await fetch(`/api/catalog/org/${orgId}/items`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ebay_item_id: item.item_id,
+                    title: item.title,
+                    item_web_url: item.item_web_url || '',
+                    image_url: item.image_url || '',
+                    description: item.description || '',
+                    last_price_value: parseFloat(item.last_price_value) || 0,
+                    category: item.category || null,
+                }),
+            });
+            if (res.ok) {
+                setRecommendations(prev => prev.filter(r => r.item_id !== key));
+                setMessage({ type: 'success', text: `"${item.title}" added to catalog.` });
+                await fetchCatalog();
+            } else {
+                const json = await res.json();
+                setMessage({ type: 'error', text: json.error || 'Failed to add item.' });
+            }
+        } catch {
+            setMessage({ type: 'error', text: 'Network error.' });
+        } finally {
+            setAddingRecIds(prev => { const next = new Set(prev); next.delete(key); return next; });
+        }
+    };
+
     return (
         <div>
             {message && (
@@ -340,6 +419,12 @@ const OrganizationCatalogTab = ({ orgId }) => {
                             onClick: openEditModal,
                         },
                         {
+                            headerLabel: 'Availability',
+                            label: (item) => togglingAvailability.has(item.item_id) ? '...'
+                                : item.availability_status === 'in_stock' ? 'Mark Out of Stock' : 'Mark In Stock',
+                            onClick: handleToggleAvailability,
+                        },
+                        {
                             label: 'Remove',
                             onClick: handleRemove,
                         },
@@ -436,6 +521,50 @@ const OrganizationCatalogTab = ({ orgId }) => {
 
             {!searching && searchResults.length === 0 && searchQuery && (
                 <p style={{ color: '#888' }}>No results. Try a different search term.</p>
+            )}
+
+            {/* ── Recommendations Section (#6306) ── */}
+            {(recLoading || recommendations.length > 0) && (
+                <div style={{ marginTop: '32px' }}>
+                    <h3 style={{ marginBottom: '4px' }}>Recommended for Your Catalog</h3>
+                    <p style={{ fontSize: '13px', color: '#666', margin: '0 0 16px' }}>
+                        Popular items carried by similar organizations that aren&apos;t in your catalog yet.
+                    </p>
+                    {recLoading ? (
+                        <p>Loading recommendations...</p>
+                    ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '16px' }}>
+                            {recommendations.map((item) => (
+                                <div key={item.item_id} style={{ border: '1px solid #e0e0e0', borderRadius: '8px', padding: '12px', background: '#fafffe', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <img
+                                        src={item.image_url ? `/api/proxy-image?url=${encodeURIComponent(item.image_url)}` : 'https://via.placeholder.com/120?text=No+Image'}
+                                        alt={item.title}
+                                        style={{ width: '100%', height: '120px', objectFit: 'contain' }}
+                                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/120?text=No+Image'; }}
+                                    />
+                                    <div style={{ fontSize: '13px', fontWeight: '600', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{item.title}</div>
+                                    <div style={{ fontSize: '13px', color: '#555' }}>${parseFloat(item.last_price_value).toFixed(2)}</div>
+                                    <div style={{ fontSize: '11px', color: '#1976d2', fontWeight: '600' }}>
+                                        {item.org_count} other org{item.org_count !== 1 ? 's' : ''} carry this
+                                    </div>
+                                    <button
+                                        onClick={() => handleAddRecommendation(item)}
+                                        disabled={addingRecIds.has(item.item_id)}
+                                        style={{
+                                            padding: '6px 12px', borderRadius: '4px', border: 'none',
+                                            background: addingRecIds.has(item.item_id) ? '#a5d6a7' : '#2e7d32',
+                                            color: '#fff',
+                                            cursor: addingRecIds.has(item.item_id) ? 'not-allowed' : 'pointer',
+                                            fontWeight: '600', fontSize: '13px', marginTop: 'auto',
+                                        }}
+                                    >
+                                        {addingRecIds.has(item.item_id) ? 'Adding...' : 'Add to Catalog'}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
             )}
 
             {/* ── Edit Item Modal ── */}

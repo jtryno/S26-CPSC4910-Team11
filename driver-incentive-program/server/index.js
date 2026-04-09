@@ -295,7 +295,7 @@ async function createNotification(userId, category, message, extras = {}) {
         if(!MANDATORY_CATEGORIES.includes(category)) {
 
             //null if not in preferences table
-            const prefColumnMap = {'points_changed': 'points_changed_enabled', 'order_placed': 'order_placed_enabled', 'application_status': null};
+            const prefColumnMap = {'points_changed': 'points_changed_enabled', 'order_placed': 'order_placed_enabled', 'application_status': null, 'catalog_item_removed': null, 'item_out_of_stock': null, 'ticket_updated': null, 'price_drop': null};
 
             const prefColumn = prefColumnMap[category];
 
@@ -3383,12 +3383,56 @@ app.put('/api/point-contest/:contest_id', async (req, res) => {
     }
 });
 
+// ─── Admin Catalog Maintenance Routes (#4566) ─────────────────────────────────
+
+// GET /api/admin/catalog-status — returns whether catalog is disabled
+app.get('/api/admin/catalog-status', async (_req, res) => {
+    try {
+        const [[row]] = await pool.query(
+            "SELECT setting_value FROM system_settings WHERE setting_key = 'catalog_disabled'"
+        );
+        res.json({ catalog_disabled: row?.setting_value === '1' });
+    } catch (error) {
+        console.error('Error fetching catalog status:', error);
+        res.status(500).json({ error: 'Failed to fetch catalog status' });
+    }
+});
+
+// PUT /api/admin/catalog-status — admin toggles catalog maintenance mode
+app.put('/api/admin/catalog-status', async (req, res) => {
+    const { disabled, userId } = req.body;
+    if (typeof disabled !== 'boolean' || !userId) {
+        return res.status(400).json({ error: 'disabled (boolean) and userId are required' });
+    }
+    try {
+        const [[user]] = await pool.query('SELECT user_type FROM users WHERE user_id = ?', [userId]);
+        if (!user || user.user_type !== 'admin') {
+            return res.status(403).json({ error: 'Admin access required' });
+        }
+        await pool.query(
+            "UPDATE system_settings SET setting_value = ? WHERE setting_key = 'catalog_disabled'",
+            [disabled ? '1' : '0']
+        );
+        res.json({ catalog_disabled: disabled });
+    } catch (error) {
+        console.error('Error updating catalog status:', error);
+        res.status(500).json({ error: 'Failed to update catalog status' });
+    }
+});
+
 // ─── Catalog Management Routes ───────────────────────────────────────────────
 
 // GET /api/catalog/org/:sponsorOrgId — active items for a sponsor's catalog
 app.get('/api/catalog/org/:sponsorOrgId', async (req, res) => {
     const { sponsorOrgId } = req.params;
     try {
+        // Check maintenance mode (#4566)
+        const [[setting]] = await pool.query(
+            "SELECT setting_value FROM system_settings WHERE setting_key = 'catalog_disabled'"
+        );
+        if (setting?.setting_value === '1') {
+            return res.status(503).json({ maintenance: true, message: 'Catalog is temporarily unavailable for maintenance.' });
+        }
         const [rows] = await pool.query(
             `SELECT ci.*, so.point_value,
                 (SELECT COUNT(DISTINCT o.driver_user_id)
@@ -3461,11 +3505,57 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
             for (const driver of drivers) {
                 await createNotification(driver.user_id, 'catalog_item_removed', `"${item.title}" has been removed from your organization's catalog and is no longer available.`);
             }
+            // Also notify sponsor users in the org (#3482)
+            const [sponsorUsers] = await pool.query(
+                'SELECT user_id FROM sponsor_user WHERE sponsor_org_id = ?',
+                [item.sponsor_org_id]
+            );
+            for (const su of sponsorUsers) {
+                await createNotification(su.user_id, 'catalog_item_removed', `"${item.title}" was removed from your catalog.`);
+            }
         }
         res.json({ message: 'Item removed from catalog' });
     } catch (error) {
         console.error('Error removing catalog item:', error);
         res.status(500).json({ error: 'Failed to remove item' });
+    }
+});
+
+// PUT /api/catalog/items/:itemId/availability — sponsor toggles stock status (#3482)
+app.put('/api/catalog/items/:itemId/availability', async (req, res) => {
+    const { itemId } = req.params;
+    const { availability_status } = req.body;
+    if (!['in_stock', 'out_of_stock'].includes(availability_status)) {
+        return res.status(400).json({ error: 'availability_status must be "in_stock" or "out_of_stock"' });
+    }
+    try {
+        const [[item]] = await pool.query(
+            'SELECT title, sponsor_org_id FROM catalog_items WHERE item_id = ? AND is_active = 1',
+            [itemId]
+        );
+        if (!item) return res.status(404).json({ error: 'Item not found' });
+
+        await pool.query(
+            'UPDATE catalog_items SET availability_status = ?, updated_at = NOW() WHERE item_id = ?',
+            [availability_status, itemId]
+        );
+
+        // Notify sponsor users when item goes out of stock (#3482)
+        if (availability_status === 'out_of_stock') {
+            const [sponsorUsers] = await pool.query(
+                'SELECT user_id FROM sponsor_user WHERE sponsor_org_id = ?',
+                [item.sponsor_org_id]
+            );
+            for (const su of sponsorUsers) {
+                await createNotification(su.user_id, 'item_out_of_stock',
+                    `"${item.title}" is now out of stock in your catalog.`);
+            }
+        }
+
+        res.json({ message: `Availability updated to ${availability_status}` });
+    } catch (error) {
+        console.error('Error updating availability:', error);
+        res.status(500).json({ error: 'Failed to update availability' });
     }
 });
 
@@ -3616,6 +3706,53 @@ app.get('/api/catalog/viewed/:driverUserId', async (req, res) => {
     }
 });
 
+// GET /api/catalog/drivers/:sponsorOrgId — active drivers in org (for share modal, #4662)
+app.get('/api/catalog/drivers/:sponsorOrgId', async (req, res) => {
+    const { sponsorOrgId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT u.user_id, u.username, u.first_name, u.last_name
+             FROM driver_user du
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
+             JOIN users u ON du.user_id = u.user_id
+             WHERE ds.sponsor_org_id = ? AND ds.driver_status = 'active'
+             ORDER BY u.username ASC`,
+            [sponsorOrgId]
+        );
+        res.json({ drivers: rows });
+    } catch (error) {
+        console.error('Error fetching org drivers:', error);
+        res.status(500).json({ error: 'Failed to fetch drivers' });
+    }
+});
+
+// GET /api/catalog/recommendations/:sponsorOrgId — popular items from other orgs (#6306)
+app.get('/api/catalog/recommendations/:sponsorOrgId', async (req, res) => {
+    const { sponsorOrgId } = req.params;
+    try {
+        const [rows] = await pool.query(
+            `SELECT ci.item_id, ci.title, ci.image_url, ci.item_web_url,
+                    ci.last_price_value, ci.points_price, ci.category, ci.description,
+                    COUNT(DISTINCT ci.sponsor_org_id) AS org_count
+             FROM catalog_items ci
+             WHERE ci.is_active = 1
+               AND ci.sponsor_org_id != ?
+               AND ci.ebay_item_id NOT IN (
+                 SELECT ebay_item_id FROM catalog_items
+                 WHERE sponsor_org_id = ? AND is_active = 1
+               )
+             GROUP BY ci.ebay_item_id
+             ORDER BY org_count DESC
+             LIMIT 12`,
+            [sponsorOrgId, sponsorOrgId]
+        );
+        res.json({ items: rows });
+    } catch (error) {
+        console.error('Error fetching recommendations:', error);
+        res.status(500).json({ error: 'Failed to fetch recommendations' });
+    }
+});
+
 // ─── Favorites Routes ─────────────────────────────────────────────────────────
 
 // POST /api/favorites — add item to driver's favorites
@@ -3703,7 +3840,8 @@ app.get('/api/cart/:cartId', async (req, res) => {
     const { cartId } = req.params;
     try {
         const [rows] = await pool.query(
-            `SELECT ci.*, cat.title, cat.image_url, cat.item_web_url, cat.description
+            `SELECT ci.*, cat.title, cat.image_url, cat.item_web_url, cat.description,
+                    cat.is_active, cat.availability_status AS current_availability
              FROM cart_items ci
              JOIN catalog_items cat ON ci.item_id = cat.item_id
              WHERE ci.cart_id = ?`,
@@ -4924,6 +5062,20 @@ if (process.env.NODE_ENV !== 'test') {
             )`);
         } catch (e) {
             console.warn('driver_favorites migration failed:', e.message);
+        }
+
+        // Create system_settings table and seed catalog_disabled flag
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS system_settings (
+                setting_key   VARCHAR(100) PRIMARY KEY,
+                setting_value VARCHAR(500) NOT NULL DEFAULT '',
+                updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )`);
+            await pool.query(
+                `INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES ('catalog_disabled', '0')`
+            );
+        } catch (e) {
+            console.warn('system_settings migration failed:', e.message);
         }
     })();
 

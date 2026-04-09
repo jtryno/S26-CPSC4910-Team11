@@ -36,7 +36,8 @@ const makeCartItem = (overrides = {}) => ({
 const emptyReviews = { ok: true, json: async () => ({ reviews: [], averageRating: null }) };
 
 /**
- * Standard 6-call init mock, no cart items.
+ * Standard 7-call init mock, no cart items.
+ * Call order: catalog, cart, drivers (#4662), cartItems, points, favorites, viewed.
  * Also mocks a reviews fetch for each catalog item (ReviewsSection fires
  * GET /api/catalog/reviews/:itemId on mount for every rendered product card).
  */
@@ -44,6 +45,7 @@ const mockInit = (catalogItems = []) => {
     fetch
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: catalogItems }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ cart_id: 1 }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ drivers: [] }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 5000 }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
@@ -59,6 +61,7 @@ const mockInitWithRestoredCart = (cartItems = []) => {
     fetch
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [makeCatalogItem()] }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ cart_id: 1 }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ drivers: [] }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: cartItems }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ total_points: 5000 }) })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
