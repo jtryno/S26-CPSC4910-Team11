@@ -44,6 +44,23 @@ const Catalog = () => {
     const [showOnSaleOnly, setShowOnSaleOnly] = useState(false);
     const [selectedCategories, setSelectedCategories] = useState(new Set());
 
+    // Search (#3777)
+    const [searchQuery, setSearchQuery] = useState('');
+
+    // Maintenance mode (#4566)
+    const [catalogMaintenance, setCatalogMaintenance] = useState(false);
+
+    // Image zoom on hover (#4946)
+    const [zoomedImage, setZoomedImage] = useState(null);
+
+    // Share modal (#4662)
+    const [shareItem, setShareItem] = useState(null);
+    const [shareRecipientId, setShareRecipientId] = useState('');
+    const [shareMsg, setShareMsg] = useState('');
+    const [shareSending, setShareSending] = useState(false);
+    const [shareDone, setShareDone] = useState(false);
+    const [orgDrivers, setOrgDrivers] = useState([]);
+
     const sponsorOrgId = user?.sponsor_org_id;
     const driverUserId = user?.user_id;
 
@@ -101,18 +118,30 @@ const Catalog = () => {
 
         const init = async () => {
             try {
-                const [catalogRes, cartRes] = await Promise.all([
+                const [catalogRes, cartRes, driversRes] = await Promise.all([
                     fetch(`/api/catalog/org/${sponsorOrgId}`),
                     fetch('/api/cart', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ driverUserId, sponsorOrgId }),
                     }),
+                    fetch(`/api/catalog/drivers/${sponsorOrgId}`),
                 ]);
 
-                if (!catalogRes.ok) throw new Error('Failed to load catalog');
+                if (!catalogRes.ok) {
+                    if (catalogRes.status === 503) {
+                        const d = await catalogRes.json();
+                        if (d.maintenance) { setCatalogMaintenance(true); return; }
+                    }
+                    throw new Error('Failed to load catalog');
+                }
                 const catalogData = await catalogRes.json();
                 setCatalogItems(catalogData.items || []);
+
+                if (driversRes.ok) {
+                    const dd = await driversRes.json();
+                    setOrgDrivers(dd.drivers || []);
+                }
 
                 if (cartRes.ok) {
                     const cartData = await cartRes.json();
@@ -283,6 +312,9 @@ const Catalog = () => {
     if (showFavoritesOnly) displayedItems = displayedItems.filter(i => favoriteIds.has(i.item_id));
     if (showOnSaleOnly) displayedItems = displayedItems.filter(isOnSale);
     if (selectedCategories.size > 0) displayedItems = displayedItems.filter(i => selectedCategories.has(i.category));
+    if (searchQuery) displayedItems = displayedItems.filter(i =>
+        (i.custom_title || i.title).toLowerCase().includes(searchQuery.toLowerCase())
+    );
 
     displayedItems = [...displayedItems].sort((a, b) => {
         // Featured items always float to top (#6249)
@@ -319,6 +351,14 @@ const Catalog = () => {
     }
 
     if (loading) return <div className="catalog-page"><h1>Catalog</h1><p>Loading...</p></div>;
+    if (catalogMaintenance) return (
+        <div className="catalog-page">
+            <h1>Catalog</h1>
+            <div style={{ background: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '8px', padding: '16px 20px', color: '#e65100', fontSize: '14px' }}>
+                The catalog is temporarily unavailable for maintenance. Please check back soon.
+            </div>
+        </div>
+    );
     if (error) return <div className="catalog-page"><h1>Catalog</h1><p>Error: {error}</p></div>;
 
     return (
@@ -422,6 +462,24 @@ const Catalog = () => {
                         )}
                     </button>
                 </div>
+            </div>
+
+            {/* Search input (#3777) */}
+            <div style={{ marginBottom: '12px' }}>
+                <input
+                    type="text"
+                    placeholder="Search products..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    style={{
+                        padding: '8px 12px',
+                        borderRadius: '4px',
+                        border: '1px solid #ccc',
+                        fontSize: '14px',
+                        width: '280px',
+                        maxWidth: '100%',
+                    }}
+                />
             </div>
 
             {/* Sort & Category filter bar (#6221, #6282) */}
@@ -573,7 +631,7 @@ const Catalog = () => {
                                             style={{
                                                 position: 'absolute',
                                                 top: '10px',
-                                                right: '10px',
+                                                right: '34px',
                                                 background: 'none',
                                                 border: 'none',
                                                 cursor: togglingFavorites.has(item.item_id) ? 'default' : 'pointer',
@@ -586,6 +644,26 @@ const Catalog = () => {
                                             {favoriteIds.has(item.item_id) ? '♥' : '♡'}
                                         </button>
 
+                                        {/* Share button (#4662) */}
+                                        <button
+                                            onClick={() => { setShareItem(item); setShareRecipientId(''); setShareMsg(''); setShareDone(false); }}
+                                            title="Share with another driver"
+                                            style={{
+                                                position: 'absolute',
+                                                top: '10px',
+                                                right: '10px',
+                                                background: 'none',
+                                                border: 'none',
+                                                cursor: 'pointer',
+                                                fontSize: '16px',
+                                                lineHeight: 1,
+                                                color: '#1976d2',
+                                                padding: 0,
+                                            }}
+                                        >
+                                            ↗
+                                        </button>
+
                                         {/* Stock badge */}
                                         <span style={{ ...statusBadgeStyle(item.availability_status), marginTop: '4px' }}>
                                             {item.availability_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
@@ -594,7 +672,9 @@ const Catalog = () => {
                                         <img
                                             src={displayImage ? `/api/proxy-image?url=${encodeURIComponent(displayImage)}` : 'https://via.placeholder.com/150?text=No+Image'}
                                             alt={displayTitle}
-                                            style={{ width: '100%', height: '150px', objectFit: 'contain' }}
+                                            style={{ width: '100%', height: '150px', objectFit: 'contain', cursor: 'zoom-in' }}
+                                            onMouseEnter={() => setZoomedImage({ src: displayImage ? `/api/proxy-image?url=${encodeURIComponent(displayImage)}` : null, title: displayTitle })}
+                                            onMouseLeave={() => setZoomedImage(null)}
                                             onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/150?text=No+Image'; }}
                                         />
                                         <div style={{ fontWeight: '600', fontSize: '14px', paddingRight: '24px' }}>{displayTitle}</div>
@@ -763,6 +843,16 @@ const Catalog = () => {
                                             <div style={{ fontSize: '13px', fontWeight: '600' }}>{ci.title}</div>
                                             <div style={{ fontSize: '12px', color: '#666' }}>
                                                 Qty {ci.quantity} · {(ci.points_price_at_add * ci.quantity).toLocaleString()} pts
+                                                {ci.is_active === 0 && (
+                                                    <div style={{ color: '#c62828', fontSize: '11px', marginTop: '2px' }}>
+                                                        ⚠ Item removed from catalog
+                                                    </div>
+                                                )}
+                                                {ci.is_active !== 0 && ci.current_availability === 'out_of_stock' && (
+                                                    <div style={{ color: '#c62828', fontSize: '11px', marginTop: '2px' }}>
+                                                        ⚠ Item is out of stock
+                                                    </div>
+                                                )}
                                                 {hasPriceIncreased(ci) && (
                                                     <div style={{ color: '#e65100', fontSize: '11px', marginTop: '2px' }}>
                                                         ⚠ Price increased to {currentPriceForCartItem(ci).toLocaleString()} pts
@@ -792,6 +882,11 @@ const Catalog = () => {
                         )}
 
                         <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '12px', marginBottom: '12px' }}>
+                            {cartItems.some(ci => ci.is_active === 0 || ci.current_availability === 'out_of_stock') && (
+                                <div style={{ background: '#ffebee', border: '1px solid #ef9a9a', borderRadius: '4px', padding: '8px 10px', marginBottom: '8px', color: '#c62828', fontSize: '12px' }}>
+                                    ⚠ One or more items in your cart are no longer available and will be skipped at checkout.
+                                </div>
+                            )}
                             {anyPriceIncreased && (
                                 <div style={{ background: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '4px', padding: '8px 10px', marginBottom: '8px', color: '#e65100', fontSize: '12px' }}>
                                     ⚠ Some item prices have increased since you added them to your cart.
@@ -1041,6 +1136,100 @@ const Catalog = () => {
                     </div>
                 );
             })()}
+
+            {/* ── Image Zoom Overlay (#4946) ── */}
+            {zoomedImage && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 2000, pointerEvents: 'none',
+                }}>
+                    <div style={{
+                        background: '#fff', borderRadius: '8px', padding: '8px',
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                        maxWidth: '380px', maxHeight: '380px',
+                    }}>
+                        <img
+                            src={zoomedImage.src || 'https://via.placeholder.com/300?text=No+Image'}
+                            alt={zoomedImage.title}
+                            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* ── Share Modal (#4662) ── */}
+            {shareItem && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ background: '#fff', borderRadius: '8px', padding: '28px', width: '400px', maxWidth: '95vw', boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                            <h2 style={{ margin: 0, fontSize: '16px' }}>Share &ldquo;{shareItem.custom_title || shareItem.title}&rdquo;</h2>
+                            <button onClick={() => setShareItem(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#888' }}>×</button>
+                        </div>
+
+                        {shareDone ? (
+                            <p style={{ color: '#2e7d32', fontSize: '14px', textAlign: 'center', margin: '16px 0' }}>Shared successfully!</p>
+                        ) : (
+                            <>
+                                <div style={{ marginBottom: '12px' }}>
+                                    <label style={{ fontSize: '13px', color: '#555', display: 'block', marginBottom: '4px' }}>Send to:</label>
+                                    <select
+                                        value={shareRecipientId}
+                                        onChange={e => setShareRecipientId(e.target.value)}
+                                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '14px' }}
+                                    >
+                                        <option value="">Select a driver...</option>
+                                        {orgDrivers.filter(d => d.user_id !== driverUserId).map(d => (
+                                            <option key={d.user_id} value={d.user_id}>
+                                                {d.username}{d.first_name ? ` (${d.first_name} ${d.last_name})` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div style={{ marginBottom: '16px' }}>
+                                    <label style={{ fontSize: '13px', color: '#555', display: 'block', marginBottom: '4px' }}>Note (optional):</label>
+                                    <textarea
+                                        value={shareMsg}
+                                        onChange={e => setShareMsg(e.target.value)}
+                                        placeholder="Add a message..."
+                                        rows={3}
+                                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '14px', resize: 'vertical', boxSizing: 'border-box' }}
+                                    />
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                                    <button onClick={() => setShareItem(null)} style={{ padding: '8px 16px', borderRadius: '4px', border: '1px solid #ccc', background: '#f5f5f5', cursor: 'pointer' }}>Cancel</button>
+                                    <button
+                                        disabled={!shareRecipientId || shareSending}
+                                        onClick={async () => {
+                                            if (!shareRecipientId) return;
+                                            setShareSending(true);
+                                            try {
+                                                await fetch('/api/messages', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({
+                                                        sender_id: driverUserId,
+                                                        recipient_id: Number(shareRecipientId),
+                                                        message_type: 'direct',
+                                                        message_subject: `Check out this item: ${shareItem.custom_title || shareItem.title}`,
+                                                        body: `${shareMsg ? shareMsg + '\n\n' : ''}${shareItem.item_web_url || ''}`,
+                                                    }),
+                                                });
+                                                setShareDone(true);
+                                                setTimeout(() => setShareItem(null), 1500);
+                                            } catch { /* non-critical */ }
+                                            finally { setShareSending(false); }
+                                        }}
+                                        style={{ padding: '8px 16px', borderRadius: '4px', border: 'none', background: !shareRecipientId || shareSending ? '#e0e0e0' : '#1976d2', color: !shareRecipientId || shareSending ? '#999' : '#fff', cursor: !shareRecipientId || shareSending ? 'not-allowed' : 'pointer', fontWeight: '600' }}
+                                    >
+                                        {shareSending ? 'Sending...' : 'Send'}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* ── Order Review Modal ── */}
             {reviewOpen && (

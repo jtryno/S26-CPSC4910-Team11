@@ -95,7 +95,9 @@ describe('POST /api/support-tickets', () => {
 
     // security ticket with a subject driver attached
     it('returns 200 and ticket_id on success with category security and subjectDriverId', async () => {
-        pool.query.mockResolvedValueOnce([{ insertId: 55 }]);
+        pool.query
+            .mockResolvedValueOnce([{ insertId: 55 }])                // INSERT ticket
+            .mockResolvedValueOnce([[]]);                             // SELECT admins returns [[]]
         const res = await request(app)
             .post('/api/support-tickets')
             .send({ ...validBody, category: 'security', subjectDriverId: 7 });

@@ -18,7 +18,12 @@ import pool from '../../server/db.js';
 describe('GET /api/catalog/org/:sponsorOrgId', () => {
     beforeEach(() => vi.clearAllMocks());
 
+    // Helper: mock the system_settings check (first query in the route) as "enabled"
+    const mockCatalogEnabled = () =>
+        pool.query.mockResolvedValueOnce([[{ setting_value: '0' }]]);
+
     it('returns 200 with items array', async () => {
+        mockCatalogEnabled();
         pool.query.mockResolvedValueOnce([[
             { item_id: 1, title: 'Widget', is_featured: 0, driver_purchase_count: 0 },
         ]]);
@@ -31,6 +36,7 @@ describe('GET /api/catalog/org/:sponsorOrgId', () => {
     });
 
     it('includes driver_purchase_count on each item (#6222)', async () => {
+        mockCatalogEnabled();
         pool.query.mockResolvedValueOnce([[
             { item_id: 1, title: 'Popular Item', is_featured: 0, driver_purchase_count: 7 },
         ]]);
@@ -41,6 +47,7 @@ describe('GET /api/catalog/org/:sponsorOrgId', () => {
     });
 
     it('includes is_featured on each item (#6249)', async () => {
+        mockCatalogEnabled();
         pool.query.mockResolvedValueOnce([[
             { item_id: 2, title: 'Featured Item', is_featured: 1, driver_purchase_count: 0 },
         ]]);
@@ -48,6 +55,15 @@ describe('GET /api/catalog/org/:sponsorOrgId', () => {
         const res = await request(app).get('/api/catalog/org/1');
 
         expect(res.body.items[0]).toHaveProperty('is_featured', 1);
+    });
+
+    it('returns 503 when catalog is in maintenance mode (#4566)', async () => {
+        pool.query.mockResolvedValueOnce([[{ setting_value: '1' }]]);
+
+        const res = await request(app).get('/api/catalog/org/1');
+
+        expect(res.status).toBe(503);
+        expect(res.body).toHaveProperty('maintenance', true);
     });
 
     it('returns 500 on database error', async () => {
@@ -210,7 +226,10 @@ describe('PUT /api/catalog/items/:itemId/sale-price', () => {
     beforeEach(() => vi.clearAllMocks());
 
     it('returns 200 with success message when setting a sale price', async () => {
-        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+        pool.query
+            .mockResolvedValueOnce([[{ sale_price: null, last_price_value: '10', title: 'Item' }]])
+            .mockResolvedValueOnce([{ affectedRows: 1 }])
+            .mockResolvedValueOnce([[]]);  // favoriteDrivers query returns [[]]
 
         const res = await request(app)
             .put('/api/catalog/items/1/sale-price')
@@ -221,47 +240,57 @@ describe('PUT /api/catalog/items/:itemId/sale-price', () => {
     });
 
     it('stores the parsed float value in DB', async () => {
-        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+        pool.query
+            .mockResolvedValueOnce([[{ sale_price: null, last_price_value: '10', title: 'Item' }]])
+            .mockResolvedValueOnce([{ affectedRows: 1 }])
+            .mockResolvedValueOnce([[]]);  // favoriteDrivers query returns [[]]
 
         await request(app)
             .put('/api/catalog/items/1/sale-price')
             .send({ sale_price: '7.99' });
 
-        const params = pool.query.mock.calls[0][1];
+        const params = pool.query.mock.calls[1][1];
         expect(params[0]).toBeCloseTo(7.99);
     });
 
     it('stores null when sale_price is an empty string (removes sale)', async () => {
-        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+        pool.query
+            .mockResolvedValueOnce([[{ sale_price: null, last_price_value: '10', title: 'Item' }]])
+            .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
         const res = await request(app)
             .put('/api/catalog/items/1/sale-price')
             .send({ sale_price: '' });
 
         expect(res.status).toBe(200);
-        const params = pool.query.mock.calls[0][1];
+        const params = pool.query.mock.calls[1][1];
         expect(params[0]).toBeNull();
     });
 
     it('stores null when sale_price is omitted from body (removes sale)', async () => {
-        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+        pool.query
+            .mockResolvedValueOnce([[{ sale_price: null, last_price_value: '10', title: 'Item' }]])
+            .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
         await request(app)
             .put('/api/catalog/items/1/sale-price')
             .send({});
 
-        const params = pool.query.mock.calls[0][1];
+        const params = pool.query.mock.calls[1][1];
         expect(params[0]).toBeNull();
     });
 
     it('passes the correct item_id to DB', async () => {
-        pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+        pool.query
+            .mockResolvedValueOnce([[{ sale_price: null, last_price_value: '10', title: 'Item' }]])
+            .mockResolvedValueOnce([{ affectedRows: 1 }])
+            .mockResolvedValueOnce([[]]);  // favoriteDrivers query returns [[]]
 
         await request(app)
             .put('/api/catalog/items/5/sale-price')
             .send({ sale_price: '3.50' });
 
-        const params = pool.query.mock.calls[0][1];
+        const params = pool.query.mock.calls[1][1];
         expect(params[1]).toBe('5');
     });
 

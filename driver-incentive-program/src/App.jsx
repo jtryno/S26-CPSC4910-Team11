@@ -18,6 +18,7 @@ import { FaUser } from 'react-icons/fa';
 import Notifications from './Pages/Notifications'
 import Messages from './Pages/Messages'
 import ImpersonationBanner from './components/ImpersonationBanner'
+import AdminSettings from './Pages/AdminSettings'
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -376,6 +377,7 @@ useEffect(() => {
               </>
             )}
             {userData?.user_type != "driver" && isLoggedIn && <li><Link to={`/reports/${userData?.user_type}`}>Reports</Link></li>}
+            {userData?.user_type === 'admin' && isLoggedIn && <li><Link to="/settings">Settings</Link></li>}
           </ul>
         </div>
         <ul className="nav-auth">
@@ -418,6 +420,7 @@ useEffect(() => {
           <Route path="/support-tickets" element={<SupportTickets userData={userData} />} />
           <Route path="/messages" element={<Messages />} />
           <Route path="/reports/:user_type" element={<Reports />} />
+          <Route path="/settings" element={<AdminSettings />} />
         </Routes>
       </main>
 
