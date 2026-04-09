@@ -69,6 +69,21 @@ async function dropDriver(driverId, dropReason) {
     }
 }
 
+async function archiveDriver(driverId, orgId) {
+    try {
+        const response = await fetch(`/api/driver/${driverId}/archive`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orgId }),
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error archiving driver:', error);
+        throw error;
+    }
+}
+
 async function signUpUser(userData, userRole) {
     console.log(userData);
     try {
@@ -146,4 +161,4 @@ async function importUsersFromPipeFile(orgId, requestingUserId, fileText) {
     }
 }
 
-export { removeFromOrganization, updateField, signUpUser, dropDriver, fetchUserData, importOrganizationUsersFromCsv, importUsersFromPipeFile };
+export { removeFromOrganization, updateField, signUpUser, dropDriver, archiveDriver, fetchUserData, importOrganizationUsersFromCsv, importUsersFromPipeFile };

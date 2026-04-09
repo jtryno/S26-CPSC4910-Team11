@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SortableTable from '../../../components/SortableTable';
 import SignupModal from '../../../components/SignupModal';
-import { dropDriver } from '../../../api/UserApi';
+import { dropDriver, archiveDriver } from '../../../api/UserApi';
 import { startImpersonation } from '../../../api/ImpersonationApi';
 import Modal from '../../../components/Modal';
 import InputField from '../../../components/InputField';
@@ -20,11 +20,18 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
     const [dropReason, setDropReason] = useState('');
     const [purchaseDriver, setPurchaseDriver] = useState(null);
     const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+    const [isArchiveOpen, setArchiveOpen] = useState(false);
+    const [archiveMember, setArchiveMember] = useState(null);
 
     function handleDropClose() {
         setRemoveOpen(false);
         setSelectedMember(null);
         setDropReason('');
+    }
+
+    function handleArchiveClose() {
+        setArchiveOpen(false);
+        setArchiveMember(null);
     }
 
     // Sponsors only get member-management actions inside their own organization; admins always can.
@@ -139,6 +146,20 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                                     setRemoveOpen(true);
                                 },
                             },
+                            {
+                                label: 'Archive',
+                                render: (row) => row.user_type === 'driver' ? (
+                                    <button
+                                        onClick={() => {
+                                            setArchiveMember(row);
+                                            setArchiveOpen(true);
+                                        }}
+                                        style={{ backgroundColor: '#757575', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}
+                                    >
+                                        Archive
+                                    </button>
+                                ) : null,
+                            },
                         ];
                     }
                     return [];
@@ -175,6 +196,21 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                         onChange={(value) => setDropReason(value)}
                     />
                 </div>
+            </Modal>
+            <Modal
+                isOpen={isArchiveOpen}
+                onClose={handleArchiveClose}
+                title={`Archive ${archiveMember?.username || 'Driver'}`}
+                onSave={async () => {
+                    await archiveDriver(archiveMember.user_id, orgId);
+                    fetchOrg();
+                    handleArchiveClose();
+                }}
+            >
+                <p style={{ margin: 0, color: '#444', fontSize: '14px' }}>
+                    Are you sure you want to archive <strong>{archiveMember?.username}</strong>?
+                    They will no longer appear in the active members list.
+                </p>
             </Modal>
             <SponsorPurchaseModal
                 isOpen={!!purchaseDriver}

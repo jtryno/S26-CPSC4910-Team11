@@ -327,7 +327,7 @@ async function createNotification(userId, category, message, extras = {}) {
 async function getSponsorOrgId(userId, userType) {
     if (userType === 'driver') {
         const [rows] = await pool.query(
-            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
+            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active" AND is_archived = 0',
             [userId]
         );
         return rows.length > 0 ? rows[0].sponsor_org_id : null;
@@ -762,7 +762,7 @@ async function insertOrganizationMembership(connection, userId, sponsorOrgId, us
         return connection.query(
             `INSERT INTO driver_sponsor (driver_user_id, sponsor_org_id, driver_status, affilated_at)
              VALUES (?, ?, 'active', NOW())
-             ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL`,
+             ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL, is_archived = 0`,
             [userId, sponsorOrgId]
         );
     }
@@ -920,7 +920,7 @@ app.get('/api/organization/:orgId/drivers', async (req, res) => {
                      JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
                      JOIN users u ON du.user_id = u.user_id`
         const params = []
-        const conditions = [];
+        const conditions = ['ds.is_archived = 0'];
 
         if (orgId && orgId !== 'undefined' && orgId !== 'null' && orgId !== "All") {
             conditions.push("ds.sponsor_org_id = ?");
@@ -1038,7 +1038,7 @@ app.put('/api/application/:application_id', async (req, res) => {
                     await pool.query(
                         `INSERT INTO driver_sponsor (driver_user_id, sponsor_org_id, driver_status, affilated_at)
                          VALUES (?, ?, 'active', NOW())
-                         ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL`,
+                         ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL, is_archived = 0`,
                         [driver_user_id, sponsor_org_id]
                     );
                 } else {
@@ -1209,7 +1209,7 @@ app.get('/api/organization/:sponsor_org_id/users', async (req, res) => {
             `SELECT u.*, ds.current_points_balance AS points
              FROM users u
              JOIN driver_user du ON u.user_id = du.user_id
-             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id AND ds.sponsor_org_id = ? AND ds.driver_status = 'active'
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id AND ds.sponsor_org_id = ? AND ds.driver_status = 'active' AND ds.is_archived = 0
              UNION
              SELECT u.*, NULL AS points
              FROM users u
@@ -1580,7 +1580,7 @@ async function processBulkUserLine({
                     await connection.query(
                         `INSERT INTO driver_sponsor (driver_user_id, sponsor_org_id, driver_status, affilated_at)
                          VALUES (?, ?, 'active', NOW())
-                         ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL`,
+                         ON DUPLICATE KEY UPDATE driver_status = 'active', affilated_at = NOW(), dropped_at = NULL, drop_reason = NULL, is_archived = 0`,
                         [userId, targetOrgId]
                     );
                 }
@@ -3108,6 +3108,55 @@ app.post('/api/driver/drop', async (req, res) => {
     } catch (error) {
         console.error('Error dropping driver:', error);
         res.status(500).json({error: 'Failed to remove driver from organization'});
+    }
+});
+
+app.put('/api/driver/:driverId/archive', async (req, res) => {
+    const { driverId } = req.params;
+    const { orgId } = req.body;
+
+    if (!orgId) {
+        return res.status(400).json({ error: 'orgId is required' });
+    }
+
+    try {
+        const [[row]] = await pool.query(
+            'SELECT driver_sponsor_id FROM driver_sponsor WHERE driver_user_id = ? AND sponsor_org_id = ?',
+            [driverId, orgId]
+        );
+        if (!row) {
+            return res.status(404).json({ error: 'Driver-sponsor relationship not found.' });
+        }
+
+        await pool.query(
+            'UPDATE driver_sponsor SET is_archived = 1 WHERE driver_user_id = ? AND sponsor_org_id = ?',
+            [driverId, orgId]
+        );
+
+        res.json({ message: 'Driver archived successfully.' });
+    } catch (error) {
+        console.error('Error archiving driver:', error);
+        res.status(500).json({ error: 'Failed to archive driver.' });
+    }
+});
+
+app.get('/api/organization/:orgId/archived-drivers', async (req, res) => {
+    const { orgId } = req.params;
+    try {
+        const [drivers] = await pool.query(
+            `SELECT du.user_id, u.username,
+                    ds.sponsor_org_id, ds.driver_status, ds.current_points_balance,
+                    ds.affilated_at, ds.dropped_at, ds.drop_reason
+             FROM driver_user du
+             JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
+             JOIN users u ON du.user_id = u.user_id
+             WHERE ds.sponsor_org_id = ? AND ds.is_archived = 1`,
+            [orgId]
+        );
+        res.json({ drivers });
+    } catch (error) {
+        console.error('Error fetching archived drivers:', error);
+        res.status(500).json({ error: 'Failed to fetch archived drivers.' });
     }
 });
 

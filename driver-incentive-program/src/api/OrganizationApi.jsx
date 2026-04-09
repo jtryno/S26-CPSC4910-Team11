@@ -126,4 +126,18 @@ async function fetchOrgDrivers(orgId, driverId, dateRange) {
     }
 }
 
-export { fetchOrgDrivers, fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization, updateOrganizationField, fetchDropLogs, fetchOrgPointChanges };
+async function fetchArchivedDrivers(orgId) {
+    try {
+        const response = await fetch(`/api/organization/${orgId}/archived-drivers`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        return data.drivers;
+    } catch (error) {
+        console.error('Error fetching archived drivers:', error);
+        throw error;
+    }
+}
+
+export { fetchOrgDrivers, fetchArchivedDrivers, fetchOrgData, fetchOrgUsers, fetchOrganizations, deleteOrganization, createOrganization, updateOrganizationField, fetchDropLogs, fetchOrgPointChanges };
