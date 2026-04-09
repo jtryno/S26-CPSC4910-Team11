@@ -6,6 +6,7 @@ import SignupModal from '../components/SignupModal';
 import { fetchOrganizations } from '../api/OrganizationApi';
 import { startImpersonation } from '../api/ImpersonationApi';
 import BulkUploadModal from './Organization/OrganizationSummary/BulkUploadModal';
+import DriverReviewsSection from './DriverReviewsSection';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -520,6 +521,9 @@ const DriverDashboard = ({ user }) => {
                     />
                 </div>
             )}
+
+            {/* ── Performance Reviews ── */}
+            <DriverReviewsSection driverUserId={user.user_id} />
 
             {/* ── Order Detail Modal ── */}
             {orderDetailOpen && (
