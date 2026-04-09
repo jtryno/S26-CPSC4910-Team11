@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 
 const DropdownField = ({ label, options, onChange }) => {
-    const [selectedValue, setSelectedValue] = useState(options[0]?.value || null);
+    const [selectedValue, setSelectedValue] = useState(null);
 
     useEffect(() => {
+        if (options.length > 0 && selectedValue == null) {
+            setSelectedValue(options[0].value);
+        }
         onChange(selectedValue);
     }, [options]);
 

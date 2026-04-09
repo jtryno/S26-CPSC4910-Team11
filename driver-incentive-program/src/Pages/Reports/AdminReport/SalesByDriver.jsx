@@ -37,7 +37,7 @@ const SalesByDriver = () => {
     }
 
     async function fetchDetailedOrderItems() {
-        const data = await fetchSalesItemData(detailedViewRow.order_id);
+        const data = await fetchSalesItemData(detailedViewRow.order_id, null, {fromDate: null, toDate: null});
         setDetailedOrderItems(data);
     }
 
@@ -61,6 +61,7 @@ const SalesByDriver = () => {
 
     return (
         <div>
+            <h3>Filters</h3>
             <div 
                 style={{
                     display: "grid",
