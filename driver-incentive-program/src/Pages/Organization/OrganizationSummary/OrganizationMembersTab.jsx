@@ -10,8 +10,13 @@ import InputField from '../../../components/InputField';
 import SponsorPurchaseModal from './SponsorPurchaseModal';
 import DriverCsvImportModal from './DriverCSVImportModal';
 import BulkUploadModal from './BulkUploadModal';
+import RateDriverModal from './RateDriverModal';
+
+
+
 
 const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgId}) => {
+    
     const navigate = useNavigate();
     const [signupModalOpen, setSignupModalOpen] = useState(false);
     const [csvImportOpen, setCsvImportOpen] = useState(false);
@@ -20,6 +25,7 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
     const [dropReason, setDropReason] = useState('');
     const [purchaseDriver, setPurchaseDriver] = useState(null);
     const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+    const [rateDriver, setRateDriver] = useState(null);
 
     function handleDropClose() {
         setRemoveOpen(false);
@@ -27,43 +33,143 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
         setDropReason('');
     }
 
-    // Sponsors only get member-management actions inside their own organization; admins always can.
     const canManageMembers = userData?.user_type === 'admin' ||
-        (userData?.user_type === 'sponsor' && Number(userData?.sponsor_org_id) === Number(orgId));
+        (userData?.user_type === 'sponsor' && Number(userData?.sponsor_org_id)=== Number(orgId));
+
+const canRateDrivers = userData?.user_type === 'sponsor';
+    let actions = [];
+    if (canManageMembers) {
+        actions = [
+            {
+                label: 'View As',
+                render: (row) => {
+                    const canViewAs = row.user_type === 'driver' || (userData?.user_type === 'admin' && row.user_type === 'sponsor');
+                    if (!canViewAs) return null;
+                    return (
+                        <button
+                            onClick={async () => {
+                                try {
+                                    await startImpersonation(row.user_id);
+                                    navigate('/dashboard');
+                                } catch (err) {
+                                    alert(err.message || 'Failed to assume identity');
+                                }
+                            }}
+                            style={{backgroundColor: '#ff9800', color: '#1a1a1a', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600'}}
+                        >
+                            View As
+                        </button>
+                    );
+                },
+            },
+            {
+                label: 'Purchase for Driver',
+                render: (row) => {
+                    if (row.user_type !== 'driver') return null;
+                    return (
+                        <button
+                            onClick={() => setPurchaseDriver(row)}
+                            style={{backgroundColor: '#1976d2', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer'}}
+                        >
+                            Purchase
+                        </button>
+                    );
+                },
+            },
+            {
+                label: 'Remove',
+                onClick: (row) => {
+                    setSelectedMember(row);
+                    setRemoveOpen(true);
+                },
+            },
+        ];
+
+        if (canRateDrivers) {
+            actions.splice(2, 0, {
+                label: 'Rate',
+                render: (row) => {
+                    if (row.user_type !== 'driver') return null;
+                    return (
+                        <button
+                            onClick={() => setRateDriver(row)}
+                            style={{backgroundColor: '#f59e0b', color: '#1a1a1a', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600'}}
+                        >
+                            Rate
+                        </button>
+                    );
+                },
+            });
+        }
+    }
+
+    let pointsColumn = [];
+    if (canManageMembers) {
+        pointsColumn = [{
+            key: 'points',
+            label: 'Points',
+            sortable: true,
+            render: (value) => {
+                if (value != null) return value;
+                return '';
+            }
+        }];
+    }
+
+    let lastLoginColumn = [];
+    if (canManageMembers) {
+        lastLoginColumn = [{
+            key: 'last_login',
+            label: 'Last Login',
+            sortable: true,
+            render: (value, row) => {
+                if (row.user_type !== 'driver') return null;
+                if (!value) return 'Never';
+                return new Date(value).toLocaleString();
+            }
+        }];
+    }
+
+    let removeModalTitle;
+    if (selectedMember?.username) {
+        removeModalTitle = `Remove ${selectedMember.username}`;
+    } else {
+        removeModalTitle = 'Remove Member';
+    }
 
     return (
-        <div style={{ display: 'grid', direction: 'column', margin: '20px', gap: '20px'}}>
-            { canManageMembers &&
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+        <div style={{display: 'grid', direction: 'column', margin: '20px', gap: '20px'}}>
+            {canManageMembers && (
+                <div style={{display: 'flex', gap: '12px', flexWrap: 'wrap'}}>
                     <button
-                        style={{ width: '200px'}}
+                        style={{width: '200px'}}
                         onClick={() => setSignupModalOpen(true)}
                     >
                         Create Org User
                     </button>
                     <button
-                        style={{ width: '200px'}}
+                        style={{width: '200px'}}
                         onClick={() => setCsvImportOpen(true)}
                     >
                         Import Drivers/Sponsors CSV
                     </button>
                     {userData?.user_type === 'sponsor' && (
                         <button
-                            style={{ width: '200px'}}
+                            style={{width: '200px'}}
                             onClick={() => setBulkUploadOpen(true)}
                         >
                             Bulk Upload Users
                         </button>
                     )}
                 </div>
-            }
+            )}
             <SignupModal
                 isOpen={signupModalOpen}
                 onClose={() => setSignupModalOpen(false)}
                 onSave={() => fetchOrg()}
                 possibleRoles={[
-                    { label: 'Driver', value: 'driver' },
-                    { label : 'Sponsor', value: 'sponsor' },
+                    {label: 'Driver', value: 'driver'},
+                    {label: 'Sponsor', value: 'sponsor'},
                 ]}
                 orgId={orgId}
                 createdByUserId={userData?.user_id}
@@ -85,75 +191,29 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
             />
             <SortableTable
                 columns={[
-                    { key: 'user_id', label: 'User ID', sortable: true },
-                    { key: 'username', label: 'Username', sortable: true },
-                    { key: 'user_type', label: 'Role', sortable: true },
-                    ...(canManageMembers ? [{ key: 'points', label: 'Points', sortable: true, render: (value) => value != null ? value : '' }] : []),
-                    ...(canManageMembers ? [{
-                        key: 'last_login',
-                        label: 'Last Login',
-                        sortable: true,
-                        render: (value, row) => {
-                            if (row.user_type !== 'driver') return null;
-                            if (!value) return 'Never';
-                            return new Date(value).toLocaleString();
-                        }
-                    }] : []),
+                    {key: 'user_id', label: 'User ID', sortable: true},
+                    {key: 'username', label: 'Username', sortable: true},
+                    {key: 'user_type', label: 'Role', sortable: true},
+                    ...pointsColumn,
+                    ...lastLoginColumn,
                 ]}
-                actions={(() => {
-                    if (canManageMembers) {
-                        return [
-                            {
-                                label: 'View As',
-                                render: (row) => (row.user_type === 'driver' || (userData?.user_type === 'admin' && row.user_type === 'sponsor')) ? (
-                                    <button
-                                        onClick={async () => {
-                                            try {
-                                                await startImpersonation(row.user_id);
-                                                navigate('/dashboard');
-                                            } catch (err) {
-                                                alert(err.message || 'Failed to assume identity');
-                                            }
-                                        }}
-                                        style={{ backgroundColor: '#ff9800', color: '#1a1a1a', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600' }}
-                                    >
-                                        View As
-                                    </button>
-                                ) : null,
-                            },
-                            {
-                                label: 'Purchase for Driver',
-                                render: (row) => row.user_type === 'driver' ? (
-                                    <button
-                                        onClick={() => setPurchaseDriver(row)}
-                                        style={{ backgroundColor: '#1976d2', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}
-                                    >
-                                        Purchase
-                                    </button>
-                                ) : null,
-                            },
-                            {
-                                label: 'Remove',
-                                onClick: (row) => {
-                                    setSelectedMember(row);
-                                    setRemoveOpen(true);
-                                },
-                            },
-                        ];
+                actions={actions}
+                data={(orgUsers || []).map(user => {
+                    let points = null;
+                    if (user.user_type === 'driver') {
+                        if (user.points != null) {
+                            points = Number(user.points);
+                        } else {
+                            points = 0;
+                        }
                     }
-                    return [];
-                })()}
-                data={(orgUsers || []).map(user => ({
-                    ...user,
-                    points: user.user_type === 'driver'
-                        ? (user.points != null ? Number(user.points) : 0)
-                        : null,
-                }))}
+                    return {...user, points};
+                })}
             />
             <Modal
                 isOpen={isRemoveOpen}
                 onClose={handleDropClose}
-                title={`Remove ${selectedMember?.username || 'Member'}`}
+                title={removeModalTitle}
                 onSave={async () => {
                     if (window.confirm(`Are you sure you want to remove ${selectedMember?.username} from the organization?`)) {
                         await dropDriver(selectedMember.user_id, dropReason);
@@ -165,8 +225,8 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                     }
                 }}
             >
-                <div style={{ display: 'grid', gap: '10px' }}>
-                    <p style={{ margin: 0, color: '#444', fontSize: '14px' }}>
+                <div style={{display: 'grid', gap: '10px'}}>
+                    <p style={{margin: 0, color: '#444', fontSize: '14px'}}>
                         You are removing <strong>{selectedMember?.username}</strong> from the organization. You can choose to provide a reason.
                     </p>
                     <InputField
@@ -182,6 +242,13 @@ const OrganizationMembersTab = ({orgUsers, userData, setUserData, fetchOrg, orgI
                 driver={purchaseDriver}
                 orgId={orgId}
                 sponsorUserId={userData?.user_id}
+            />
+            <RateDriverModal
+                isOpen={!!rateDriver}
+                onClose={() => setRateDriver(null)}
+                driver={rateDriver}
+                sponsorUserId={userData?.user_id}
+                onReviewSaved={() => setRateDriver(null)}
             />
         </div>
     );

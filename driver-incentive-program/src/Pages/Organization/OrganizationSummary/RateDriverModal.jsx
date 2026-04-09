@@ -14,7 +14,7 @@ const StarRating = ({value, onChange, readonly = false}) => {
                 if (filled) {
                     starColor = '#f5e50b';
                 } else {
-                    starColor = '#ffffff';
+                    starColor = '#817e7e';
                 }
 
                 let starCursor;

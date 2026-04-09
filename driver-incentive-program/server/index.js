@@ -4601,7 +4601,7 @@ app.get('/api/dashboard/reviews/:driverUserId', async(req, res) => {
                 FROM sponsor_driver_reviews r
                 JOIN users u ON u.user_id = r.sponsor_user_id
                 LEFT JOIN sponsor_user  su ON su.user_id = r.sponsor_user_id
-                LEFT JOIN sponsor_orgs  so ON so.sponsor_org_id = su.sponsor_org_id
+                LEFT JOIN sponsor_organization  so ON so.sponsor_org_id = su.sponsor_org_id
                 WHERE r.driver_user_id = ?
                 ORDER BY r.created_at DESC`,
                 [driverUserId]
@@ -4645,7 +4645,7 @@ app.post('/api/driver-reviews', async (req, res) => {
         const sponsorOrgId = sponsorRows[0].sponsor_org_id;
  
         const [driverRows] = await pool.query(
-            'SELECT sponsor_org_id FROM driver_user WHERE user_id = ? AND driver_status = "active"',
+            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ?',
             [driverUserId]
         );
         if (driverRows.length === 0 || driverRows[0].sponsor_org_id !== sponsorOrgId) {
