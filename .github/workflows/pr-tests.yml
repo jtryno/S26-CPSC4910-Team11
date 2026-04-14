@@ -1,0 +1,60 @@
+name: Run PR Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASS: ${{ secrets.DB_PASS }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+    defaults:
+      run:
+        working-directory: driver-incentive-program
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: driver-incentive-program/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run all tests
+        id: tests
+        continue-on-error: true
+        run: npm test -- --run
+
+      - name: Summarize test result
+        if: always()
+        run: |
+          {
+            echo "## PR Test Run"
+            echo
+            if [ "${{ steps.tests.outcome }}" = "success" ]; then
+              echo "All tests passed."
+            elif [ "${{ steps.tests.outcome }}" = "failure" ]; then
+              echo "Some tests failed, but this workflow is intentionally non-blocking so the PR can still be merged."
+            else
+              echo "Tests did not run because an earlier setup step failed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
