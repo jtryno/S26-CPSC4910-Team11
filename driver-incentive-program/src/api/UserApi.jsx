@@ -1,4 +1,9 @@
-async function removeFromOrganization(userId) {
+// Drops a single sponsor affiliation. Callers pass `sponsorOrgId` for drivers
+// with more than one sponsor so the server knows which one to drop; sponsors
+// (single-org) can omit it.
+import { reconcileActiveSponsor } from '../activeSponsor';
+
+async function removeFromOrganization(userId, sponsorOrgId = null) {
     const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
     const userType = storedUser ? JSON.parse(storedUser)?.user_type : null;
 
@@ -8,7 +13,7 @@ async function removeFromOrganization(userId) {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ user_id: userId, user_type: userType }),
+            body: JSON.stringify({ user_id: userId, user_type: userType, sponsor_org_id: sponsorOrgId }),
         });
         if (!response.ok) throw new Error('Failed to leave organization');
     } catch (error) {
@@ -16,13 +21,17 @@ async function removeFromOrganization(userId) {
         throw error;
     }
 
-    if (localStorage.getItem('user')) {
-        const updatedUser = { ...JSON.parse(localStorage.getItem('user')), sponsor_org_id: null };
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-    }
-    else {
-        const updatedUser = { ...JSON.parse(sessionStorage.getItem('user')), sponsor_org_id: null };
-        sessionStorage.setItem('user', JSON.stringify(updatedUser));
+    // Re-fetch the user so sponsors[] and sponsor_org_id in local storage
+    // reflect the remaining affiliations, then reconcile the navbar's active
+    // sponsor in case the one they just left was selected.
+    try {
+        const fresh = await fetchUserData(userId);
+        const storage = localStorage.getItem('user') ? localStorage : sessionStorage;
+        const existing = JSON.parse(storage.getItem('user') || '{}');
+        storage.setItem('user', JSON.stringify({ ...existing, ...fresh }));
+        reconcileActiveSponsor();
+    } catch (err) {
+        console.error('Failed to refresh user after leaving org:', err);
     }
 }
 

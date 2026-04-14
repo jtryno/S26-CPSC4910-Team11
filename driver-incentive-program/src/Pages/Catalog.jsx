@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import ReviewsSection from '../components/ReviewsSection';
+import { getActiveSponsorOrgId, ACTIVE_SPONSOR_EVENT } from '../activeSponsor';
 
 const statusBadgeStyle = (status) => ({
     display: 'inline-block',
@@ -61,19 +62,27 @@ const Catalog = () => {
     const [shareDone, setShareDone] = useState(false);
     const [orgDrivers, setOrgDrivers] = useState([]);
 
-    const sponsorOrgId = user?.sponsor_org_id;
+    // Drivers with multiple sponsors use the navbar dropdown to pick an active
+    // sponsor. We read it here (and subscribe to changes) so the catalog, cart,
+    // favorites, and points all switch together when the user flips sponsors.
+    const [sponsorOrgId, setSponsorOrgId] = useState(getActiveSponsorOrgId());
+    useEffect(() => {
+        const sync = () => setSponsorOrgId(getActiveSponsorOrgId());
+        window.addEventListener(ACTIVE_SPONSOR_EVENT, sync);
+        return () => window.removeEventListener(ACTIVE_SPONSOR_EVENT, sync);
+    }, []);
     const driverUserId = user?.user_id;
 
     const fetchBalance = useCallback(async () => {
-        if (!driverUserId) return;
+        if (!driverUserId || !sponsorOrgId) return;
         try {
-            const res = await fetch(`/api/driver/points/${driverUserId}`);
+            const res = await fetch(`/api/driver/points/${driverUserId}?sponsorOrgId=${sponsorOrgId}`);
             if (res.ok) {
                 const d = await res.json();
                 setBalance(d.total_points ?? 0);
             }
         } catch { /* non-critical */ }
-    }, [driverUserId]);
+    }, [driverUserId, sponsorOrgId]);
 
     const fetchCart = useCallback(async (id) => {
         try {

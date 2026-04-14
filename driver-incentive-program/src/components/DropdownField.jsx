@@ -6,8 +6,8 @@ const DropdownField = ({ label, options, onChange }) => {
     useEffect(() => {
         if (options.length > 0 && selectedValue == null) {
             setSelectedValue(options[0].value);
+            onChange(options[0].value);
         }
-        onChange(selectedValue);
     }, [options]);
 
     return (

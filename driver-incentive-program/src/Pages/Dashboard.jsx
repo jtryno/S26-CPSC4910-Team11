@@ -7,6 +7,7 @@ import { fetchOrganizations } from '../api/OrganizationApi';
 import { startImpersonation } from '../api/ImpersonationApi';
 import BulkUploadModal from './Organization/OrganizationSummary/BulkUploadModal';
 import DriverReviewsSection from './DriverReviewsSection';
+import { getActiveSponsorOrgId, ACTIVE_SPONSOR_EVENT } from '../activeSponsor';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -58,8 +59,21 @@ const DriverDashboard = ({ user }) => {
         order: 'Order',
     };
 
+    // Drivers may belong to multiple sponsors; the dashboard scopes points,
+    // transactions, and the sponsor banner to the one currently selected in
+    // the navbar dropdown so balances reflect a single sponsor at a time.
+    const [activeSponsorOrgId, setActiveSponsorOrgId] = useState(getActiveSponsorOrgId());
+    useEffect(() => {
+        const sync = () => setActiveSponsorOrgId(getActiveSponsorOrgId());
+        window.addEventListener(ACTIVE_SPONSOR_EVENT, sync);
+        return () => window.removeEventListener(ACTIVE_SPONSOR_EVENT, sync);
+    }, []);
+
     const fetchData = () => {
-        fetch(`/api/driver/points/${user.user_id}`)
+        const url = activeSponsorOrgId
+            ? `/api/driver/points/${user.user_id}?sponsorOrgId=${activeSponsorOrgId}`
+            : `/api/driver/points/${user.user_id}`;
+        fetch(url)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load points');
                 return res.json();
@@ -68,7 +82,7 @@ const DriverDashboard = ({ user }) => {
             .catch(err => { setError(err.message); setLoading(false); });
     };
 
-    useEffect(() => { fetchData(); }, [user.user_id]);
+    useEffect(() => { fetchData(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [user.user_id, activeSponsorOrgId]);
 
     const handleConfirmDelivery = async (row) => {
         try {

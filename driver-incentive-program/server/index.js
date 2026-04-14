@@ -341,6 +341,33 @@ async function getSponsorOrgId(userId, userType) {
     return null;
 }
 
+// Helper: Get the full list of active sponsor affiliations for a driver, in a
+// stable order so the navbar dropdown is consistent across sessions.
+async function getDriverSponsors(userId) {
+    const [rows] = await pool.query(
+        `SELECT ds.sponsor_org_id, so.name, ds.driver_status
+         FROM driver_sponsor ds
+         JOIN sponsor_organization so ON so.sponsor_org_id = ds.sponsor_org_id
+         WHERE ds.driver_user_id = ?
+           AND ds.driver_status = 'active'
+           AND ds.is_archived = 0
+         ORDER BY so.name ASC`,
+        [userId]
+    );
+    return rows;
+}
+
+// Helper: Build the user payload returned to the client, including the list of
+// sponsor affiliations for drivers so the frontend can render the switcher.
+async function buildUserPayload(user) {
+    const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
+    const payload = { ...user, sponsor_org_id };
+    if (user.user_type === 'driver') {
+        payload.sponsors = await getDriverSponsors(user.user_id);
+    }
+    return payload;
+}
+
 // Maps common CSV header variants onto the fields our importer understands.
 const DRIVER_IMPORT_HEADER_ALIASES = {
     firstname: 'firstName',
@@ -1979,8 +2006,8 @@ app.post('/api/login', async (req, res) => {
         await pool.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE user_id = ?', [user.user_id]);
         await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, 'success', user.user_id]);
         
-        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
-        return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
+        const userPayload = await buildUserPayload(userNoPassword);
+        return res.json({ message: 'Login successful', user: userPayload });
 
     } catch (error) {
         console.error('Login error:', error);
@@ -2058,7 +2085,7 @@ app.get('/api/session', async (req, res) => {
             return res.status(401).json({ loggedIn: false });
         }
         const realUser = users[0];
-        const realSponsorOrgId = await getSponsorOrgId(realUser.user_id, realUser.user_type);
+        const realUserPayload = await buildUserPayload(realUser);
 
         // Check for active impersonation
         const impersonatingId = req.cookies.impersonating;
@@ -2078,12 +2105,12 @@ app.get('/api/session', async (req, res) => {
                 }
 
                 if (permitted) {
-                    const targetSponsorOrgId = await getSponsorOrgId(targetUser.user_id, targetUser.user_type);
+                    const targetUserPayload = await buildUserPayload(targetUser);
                     return res.json({
                         loggedIn: true,
                         isImpersonating: true,
-                        user: { ...targetUser, sponsor_org_id: targetSponsorOrgId },
-                        originalUser: { ...realUser, sponsor_org_id: realSponsorOrgId },
+                        user: targetUserPayload,
+                        originalUser: realUserPayload,
                     });
                 }
             }
@@ -2091,7 +2118,7 @@ app.get('/api/session', async (req, res) => {
             res.clearCookie('impersonating');
         }
 
-        res.json({ loggedIn: true, user: { ...realUser, sponsor_org_id: realSponsorOrgId } });
+        res.json({ loggedIn: true, user: realUserPayload });
     } catch (error) {
         res.status(500).json({ error: 'Session check failed' });
     }
@@ -2208,8 +2235,8 @@ app.post('/api/impersonate', async (req, res) => {
             [actor.user_id, actor.username, actor.user_type, target.user_id, target.username, target.user_type]
         );
 
-        const targetSponsorOrgId = await getSponsorOrgId(target.user_id, target.user_type);
-        res.json({ user: { ...target, sponsor_org_id: targetSponsorOrgId } });
+        const targetUserPayload = await buildUserPayload(target);
+        res.json({ user: targetUserPayload });
     } catch (error) {
         console.error('Impersonation start error:', error);
         res.status(500).json({ error: 'Server error during impersonation' });
@@ -2247,8 +2274,8 @@ app.post('/api/impersonate/exit', async (req, res) => {
             return res.status(401).json({ error: 'User not found' });
         }
         const user = users[0];
-        const sponsorOrgId = await getSponsorOrgId(user.user_id, user.user_type);
-        res.json({ user: { ...user, sponsor_org_id: sponsorOrgId } });
+        const userPayload = await buildUserPayload(user);
+        res.json({ user: userPayload });
     } catch (error) {
         console.error('Impersonation exit error:', error);
         res.status(500).json({ error: 'Server error during impersonation exit' });
@@ -2267,8 +2294,8 @@ app.get('/api/user/:user_id', async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
         const user = users[0];
-        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
-        res.json({ user: { ...user, sponsor_org_id } });
+        const userPayload = await buildUserPayload(user);
+        res.json({ user: userPayload });
     } catch (error) {
         console.error('Error fetching user data:', error);
         res.status(500).json({ error: 'Failed to fetch user data' });
@@ -2303,7 +2330,7 @@ app.get('/api/logs/password-change-logs/:org_id', async (req, res) => {
         let conditions = [];
 
         if (org_id && org_id !== 'undefined' && org_id !== 'null' && org_id !== 'All') {
-            conditions.push("user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)");
+            conditions.push("user_id IN (SELECT driver_user_id FROM driver_sponsor WHERE sponsor_org_id = ?)");
             params.push(org_id);
         }
 
@@ -2347,7 +2374,7 @@ app.get('/api/logs/login-attempt-logs/:org_id', async (req, res) => {
         let conditions = [];
 
         if (org_id && org_id !== 'undefined' && org_id !== 'null' && org_id !== 'All') {
-            conditions.push("user_id IN (SELECT user_id FROM driver_user WHERE sponsor_org_id = ?)");
+            conditions.push("user_id IN (SELECT driver_user_id FROM driver_sponsor WHERE sponsor_org_id = ?)");
             params.push(org_id);
         }
 
@@ -2483,20 +2510,34 @@ app.get('/api/admin/sponsor-activity', async (req, res) => {
 
 // --- Leave Organization Route ---
 app.post('/api/user/leave-organization', async (req, res) => {
-    const { user_id, user_type } = req.body;
+    const { user_id, user_type, sponsor_org_id: requestedOrgId } = req.body;
     if (!user_id || !user_type) {
         return res.status(400).json({ error: 'user_id and user_type are required' });
     }
     try {
         if (user_type === 'driver') {
-            const [rows] = await pool.query(
-                'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
-                [user_id]
-            );
-            if (rows.length === 0) {
-                return res.status(404).json({ error: 'No active organization found for this driver' });
+            // Drivers can have multiple active sponsors; the client specifies
+            // which affiliation to drop. Fall back to the first active one when
+            // no sponsor_org_id is provided so single-sponsor callers still work.
+            let sponsor_org_id = requestedOrgId ? Number(requestedOrgId) : null;
+            if (sponsor_org_id) {
+                const [check] = await pool.query(
+                    'SELECT 1 FROM driver_sponsor WHERE driver_user_id = ? AND sponsor_org_id = ? AND driver_status = "active"',
+                    [user_id, sponsor_org_id]
+                );
+                if (check.length === 0) {
+                    return res.status(404).json({ error: 'Not an active member of the specified organization' });
+                }
+            } else {
+                const [rows] = await pool.query(
+                    'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
+                    [user_id]
+                );
+                if (rows.length === 0) {
+                    return res.status(404).json({ error: 'No active organization found for this driver' });
+                }
+                sponsor_org_id = rows[0].sponsor_org_id;
             }
-            const { sponsor_org_id } = rows[0];
             await pool.query(
                 'UPDATE driver_sponsor SET driver_status = "dropped", dropped_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ?',
                 [user_id, sponsor_org_id]
@@ -2595,6 +2636,10 @@ app.get('/api/driver/:userId', async (req, res) => {
 // --- Driver Points History Route ---
 app.get('/api/driver/points/:userId', async (req, res) => {
     const { userId } = req.params;
+    // Optional scoping: when the driver has more than one sponsor, the UI passes
+    // the currently selected sponsor so total_points, transactions, and the
+    // sponsor_name banner all reflect only that affiliation.
+    const sponsorOrgIdParam = req.query.sponsorOrgId ? Number(req.query.sponsorOrgId) : null;
     try {
         const [users] = await pool.query('SELECT user_type FROM users WHERE user_id = ?', [userId]);
         if (users.length === 0) {
@@ -2602,6 +2647,13 @@ app.get('/api/driver/points/:userId', async (req, res) => {
         }
         if (users[0].user_type !== 'driver') {
             return res.status(403).json({ error: 'Not a driver account' });
+        }
+
+        const txParams = [userId];
+        let txSponsorClause = '';
+        if (sponsorOrgIdParam) {
+            txSponsorClause = ' AND pt.sponsor_org_id = ?';
+            txParams.push(sponsorOrgIdParam);
         }
 
         const [transactions] = await pool.query(
@@ -2615,23 +2667,37 @@ app.get('/api/driver/points/:userId', async (req, res) => {
                 so.name AS sponsor_name
              FROM point_transactions pt
              LEFT JOIN sponsor_organization so ON pt.sponsor_org_id = so.sponsor_org_id
-             WHERE pt.driver_user_id = ?
+             WHERE pt.driver_user_id = ?${txSponsorClause}
              ORDER BY pt.created_at DESC`,
-            [userId]
+            txParams
         );
 
+        const totalsParams = [userId];
+        let totalsSponsorClause = '';
+        if (sponsorOrgIdParam) {
+            totalsSponsorClause = ' AND sponsor_org_id = ?';
+            totalsParams.push(sponsorOrgIdParam);
+        }
         const [[{ total_points }]] = await pool.query(
-            'SELECT COALESCE(SUM(point_amount), 0) AS total_points FROM point_transactions WHERE driver_user_id = ?',
-            [userId]
+            `SELECT COALESCE(SUM(point_amount), 0) AS total_points
+             FROM point_transactions
+             WHERE driver_user_id = ?${totalsSponsorClause}`,
+            totalsParams
         );
 
+        const dsParams = [userId];
+        let dsSponsorClause = '';
+        if (sponsorOrgIdParam) {
+            dsSponsorClause = ' AND ds.sponsor_org_id = ?';
+            dsParams.push(sponsorOrgIdParam);
+        }
         const [driverRows] = await pool.query(
             `SELECT ds.driver_status, ds.sponsor_org_id, so.name AS sponsor_name
              FROM driver_user du
              LEFT JOIN driver_sponsor ds ON du.user_id = ds.driver_user_id
              LEFT JOIN sponsor_organization so ON ds.sponsor_org_id = so.sponsor_org_id
-             WHERE du.user_id = ?`,
-            [userId]
+             WHERE du.user_id = ?${dsSponsorClause}`,
+            dsParams
         );
         const driverInfo = driverRows[0] || {};
 
@@ -2920,8 +2986,8 @@ app.post('/api/2fa/verify', async (req, res) => {
         await pool.query('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
         await pool.query('INSERT INTO login_logs (username, login_date, result, user_id) VALUES (?, NOW(), ?, ?)', [user.username, `success`, user.user_id]);
 
-        const sponsor_org_id = await getSponsorOrgId(user.user_id, user.user_type);
-        return res.json({ message: 'Login successful', user: { ...userNoPassword, sponsor_org_id } });
+        const userPayload = await buildUserPayload(userNoPassword);
+        return res.json({ message: 'Login successful', user: userPayload });
     } catch (error) {
         console.error('2FA verify error:', error);
         res.status(500).json({ error: 'Server error during 2FA verification' });
