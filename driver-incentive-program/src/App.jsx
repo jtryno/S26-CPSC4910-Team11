@@ -19,11 +19,19 @@ import Notifications from './Pages/Notifications'
 import Messages from './Pages/Messages'
 import ImpersonationBanner from './components/ImpersonationBanner'
 import AdminSettings from './Pages/AdminSettings'
+import {
+  getActiveSponsorOrgId,
+  getDriverSponsors,
+  setActiveSponsorOrgId,
+  clearActiveSponsor,
+  ACTIVE_SPONSOR_EVENT,
+} from './activeSponsor'
 
 function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userData, setUserData] = useState(null);
-  const [orgName, setOrgName] = useState(null);
+  const [driverSponsors, setDriverSponsors] = useState([]);
+  const [activeSponsorOrgId, setActiveSponsorOrgIdState] = useState(null);
   const [showInactivityModal, setShowInactivityModal] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -38,6 +46,13 @@ function AppContent() {
   // (real value 28 * 60 * 1000 = 28 minutes, testing value 10 seconds of pop up)
 
 useEffect(() => {
+    // Pull sponsors/active-sponsor straight from localStorage so navbar state
+    // stays in sync whenever the stored user or selection changes.
+    const syncSponsorState = () => {
+      setDriverSponsors(getDriverSponsors());
+      setActiveSponsorOrgIdState(getActiveSponsorOrgId());
+    };
+
     const checkAuth = async () => {
       const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
 
@@ -46,26 +61,11 @@ useEffect(() => {
         const user = JSON.parse(storedUser);
         setIsLoggedIn(true);
         setUserData(user);
-        
-        //get org name from sponsor org table if driver has a sponsor_org_id
-        if (user.sponsor_org_id) {
-          try {
-            const orgRes = await fetch(`/api/organization/${user.sponsor_org_id}`);
-            const orgData = await orgRes.json();
-            if (orgData.organization?.name) {
-              setOrgName(orgData.organization.name);
-            }
-          } catch (err) {
-            console.error("Failed to fetch org name:", err);
-          }
-        } else {
-          setOrgName(null);
-        }
+        syncSponsorState();
       } else {
         setIsLoggedIn(false);
         setUserData(null);
-        setOrgName(null);
-        setUserData(JSON.parse(storedUser));
+        syncSponsorState();
       }
 
       // check if there is valid cookie session
@@ -86,35 +86,30 @@ useEffect(() => {
             localStorage.removeItem('impersonation_original_user');
           }
 
-          if (data.user.sponsor_org_id) {
-            try {
-              const orgRes = await fetch(`/api/organization/${data.user.sponsor_org_id}`);
-              const orgData = await orgRes.json();
-              if (orgData.organization?.name) {
-                setOrgName(orgData.organization.name);
-              }
-            } catch (err) {
-              console.error("Failed to fetch org name:", err);
-            }
-          }
+          syncSponsorState();
         } else if (!storedUser) {
           setIsLoggedIn(false);
           setUserData(null);
-          setOrgName(null);
+          syncSponsorState();
         }
       } catch (err) {
         console.error("session error", err);
         if (storedUser) {
           setIsLoggedIn(true);
           setUserData(JSON.parse(storedUser));
+          syncSponsorState();
         }
       }
     };
 
     checkAuth();
     window.addEventListener('authStateChanged', checkAuth);
+    window.addEventListener(ACTIVE_SPONSOR_EVENT, syncSponsorState);
 
-    return () => window.removeEventListener('authStateChanged', checkAuth);
+    return () => {
+      window.removeEventListener('authStateChanged', checkAuth);
+      window.removeEventListener(ACTIVE_SPONSOR_EVENT, syncSponsorState);
+    };
   }, []);
 
   // initialize or clear inactivity timers based on login state
@@ -324,6 +319,7 @@ useEffect(() => {
       localStorage.removeItem('lastActivityTime');
       sessionStorage.removeItem('lastActivityTime');
       localStorage.removeItem('impersonation_original_user');
+      clearActiveSponsor();
 
       // signal other tabs to logout (writes to localStorage so storage event fires)
       localStorage.setItem('logout', Date.now().toString());
@@ -346,6 +342,7 @@ useEffect(() => {
       localStorage.removeItem('lastActivityTime');
       sessionStorage.removeItem('lastActivityTime');
       localStorage.removeItem('impersonation_original_user');
+      clearActiveSponsor();
       localStorage.setItem('logout', Date.now().toString());
       localStorage.removeItem('logout');
       setIsLoggedIn(false);
@@ -385,11 +382,36 @@ useEffect(() => {
           {!isLoggedIn && <li><Link to="/driver-signup">Sign Up</Link></li>}
           {isLoggedIn && (
             <div style={{display: 'flex', alignItems: 'center', gap: '20px'}}>
+              {userData?.user_type === 'driver' && driverSponsors.length > 0 && (
+                driverSponsors.length === 1 ? (
+                  <span style={{ color: '#2f2f2f', fontSize: '14px' }}>
+                    {driverSponsors[0].name}
+                  </span>
+                ) : (
+                  <select
+                    aria-label="Active sponsor"
+                    value={activeSponsorOrgId ?? ''}
+                    onChange={(e) => setActiveSponsorOrgId(Number(e.target.value))}
+                    style={{
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      border: '1px solid #c0c0c0',
+                      fontSize: '14px',
+                      background: '#fff',
+                    }}
+                  >
+                    {driverSponsors.map(s => (
+                      <option key={s.sponsor_org_id} value={s.sponsor_org_id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                )
+              )}
               <Link to="/account" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
                 <FaUser size={20} />
                 <span className="nav-username">
                   {userData?.username || 'User'}
-                  {orgName && <span style={{ color: '#2f2f2f', fontWeight: '400' }}> • {orgName}</span>}
                 </span>
               </Link>
               <li>

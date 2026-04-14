@@ -142,7 +142,8 @@ describe('POST /api/impersonate', () => {
             .mockResolvedValueOnce([[adminUser]])                           // actor
             .mockResolvedValueOnce([[driverUser]])                          // target
             .mockResolvedValueOnce([{ insertId: 1 }])                      // audit log insert
-            .mockResolvedValueOnce([[{ sponsor_org_id: 10 }]]);            // getSponsorOrgId for driver
+            .mockResolvedValueOnce([[{ sponsor_org_id: 10 }]])             // getSponsorOrgId for driver
+            .mockResolvedValueOnce([[]]);                                   // getDriverSponsors
 
         const res = await request(app)
             .post('/api/impersonate')
@@ -178,7 +179,8 @@ describe('POST /api/impersonate', () => {
             .mockResolvedValueOnce([[{ sponsor_org_id: 10 }]])              // sponsor's org
             .mockResolvedValueOnce([[{ sponsor_org_id: 10 }]])              // driver's org (same)
             .mockResolvedValueOnce([{ insertId: 1 }])                       // audit log insert
-            .mockResolvedValueOnce([[{ sponsor_org_id: 10 }]]);             // getSponsorOrgId for response
+            .mockResolvedValueOnce([[{ sponsor_org_id: 10 }]])              // getSponsorOrgId for response
+            .mockResolvedValueOnce([[]]);                                    // getDriverSponsors
 
         const res = await request(app)
             .post('/api/impersonate')

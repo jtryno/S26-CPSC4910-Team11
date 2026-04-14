@@ -33,7 +33,17 @@ const DriverFields = ({orgData, numUsers}) => {
     );
 }
 
-const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserData, fetchOrg, hasPendingApplication, pendingApplication}) => {
+const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserData, fetchOrg, pendingApplication}) => {
+    // Drivers can belong to many sponsors now, so "is the current org one of
+    // mine" is answered by the sponsors list rather than the single sponsor_org_id.
+    const orgSponsorId = Number(orgData?.sponsor_org_id);
+    const driverSponsorIds = Array.isArray(userData?.sponsors)
+        ? userData.sponsors.map(s => Number(s.sponsor_org_id))
+        : [];
+    const isDriverMember = userData?.user_type === 'driver' && driverSponsorIds.includes(orgSponsorId);
+    const isSponsorMember = userData?.user_type === 'sponsor' && Number(userData?.sponsor_org_id) === orgSponsorId;
+    const canLeave = (isDriverMember || isSponsorMember) && !!orgSponsorId;
+
     return (
         <div style={{ margin: '20px'}}>
             <h1 style={{ color: '#1a1a1a', marginBottom: '20px'}}>Organization Summary</h1>
@@ -43,22 +53,27 @@ const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserDat
                 ) : (
                     <SponsorFields orgData={orgData} setOrgData={setOrgData} numUsers={numUsers} />
                 )}
-                {userData?.sponsor_org_id === orgData?.sponsor_org_id && 
-                    <button 
+                {canLeave &&
+                    <button
                         onClick={async () => {
                             if (window.confirm("Are you sure you want to leave the organization? You will need to request to join again if you change your mind.")) {
-                                await removeFromOrganization(userData.user_id);
+                                await removeFromOrganization(userData.user_id, orgSponsorId);
                                 fetchOrg();
-                                setUserData(prev => ({ ...prev, sponsor_org_id: null }));
+                                setUserData(prev => {
+                                    const nextSponsors = (prev.sponsors || []).filter(s => Number(s.sponsor_org_id) !== orgSponsorId);
+                                    const nextActiveId = nextSponsors.length > 0 ? nextSponsors[0].sponsor_org_id : null;
+                                    return { ...prev, sponsors: nextSponsors, sponsor_org_id: nextActiveId };
+                                });
                             }
                         }}
                         style={{ height: '50px', width: '200px', marginTop: 'auto', marginLeft: 'auto', backgroundColor: '#e74c3c', color: 'white', borderRadius: '4px', padding: '0 15px' }}
                     >
-                        Leave Organization        
+                        Leave Organization
                     </button>
                 }
-                {/* Only show join/withdraw controls for drivers not yet in an org */}
-                {userData?.user_type === 'driver' && userData?.sponsor_org_id === null && (
+                {/* Drivers who aren't already a member of this org can apply —
+                    even if they already belong to one or more other sponsors. */}
+                {userData?.user_type === 'driver' && !isDriverMember && (
                     pendingApplication ? (
                         // Driver has a pending application for this org — show status + withdraw option
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', marginLeft: 'auto' }}>
@@ -81,19 +96,16 @@ const OrganizationHeader = ({userData, numUsers, orgData, setOrgData, setUserDat
                             </button>
                         </div>
                     ) : (
-                        // No pending application for this org — allow requesting to join
-                        // Disabled if the driver has a pending application to a different org
                         <button
-                            disabled={hasPendingApplication}
                             onClick={async () => {
                                 if (window.confirm(`Are you sure you want to request to join "${orgData?.name}"?`)) {
                                     await createApplication(userData.user_id, orgData.sponsor_org_id);
                                     await fetchOrg();
                                 }
                             }}
-                            style={{ height: '50px', width: '200px', marginTop: 'auto', marginLeft: 'auto', color: 'white', borderRadius: '4px', padding: '0 15px', backgroundColor: hasPendingApplication ? '#95a5a6' : '#3498db', cursor: hasPendingApplication ? 'not-allowed' : 'pointer' }}
+                            style={{ height: '50px', width: '200px', marginTop: 'auto', marginLeft: 'auto', color: 'white', borderRadius: '4px', padding: '0 15px', backgroundColor: '#3498db', cursor: 'pointer' }}
                         >
-                            {hasPendingApplication ? "Pending Application" : "Request to Join Organization"}
+                            Request to Join Organization
                         </button>
                     )
                 )}

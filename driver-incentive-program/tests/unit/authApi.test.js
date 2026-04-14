@@ -119,7 +119,8 @@ describe('POST /api/login', () => {
             .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE password_hash (plaintext upgrade)
             .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE last_login
             .mockResolvedValueOnce([{ insertId: 1 }])     // INSERT login_logs
-            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]); // getSponsorOrgId
+            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]) // getSponsorOrgId
+            .mockResolvedValueOnce([[]]);                  // getDriverSponsors
 
         const res = await request(app)
             .post('/api/login')
@@ -139,7 +140,8 @@ describe('POST /api/login', () => {
             .mockResolvedValueOnce([{ affectedRows: 1 }])
             .mockResolvedValueOnce([{ affectedRows: 1 }])
             .mockResolvedValueOnce([{ insertId: 1 }])
-            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]);
+            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]])
+            .mockResolvedValueOnce([[]]);                  // getDriverSponsors
 
         const res = await request(app)
             .post('/api/login')
@@ -156,7 +158,8 @@ describe('POST /api/login', () => {
             .mockResolvedValueOnce([{ affectedRows: 1 }])
             .mockResolvedValueOnce([{ affectedRows: 1 }])
             .mockResolvedValueOnce([{ insertId: 1 }])
-            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]);
+            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]])
+            .mockResolvedValueOnce([[]]);                  // getDriverSponsors
 
         const res = await request(app)
             .post('/api/login')
@@ -331,7 +334,8 @@ describe('GET /api/session', () => {
         const sessionUser = { user_id: 1, email: baseUser.email, username: baseUser.username, user_type: 'driver' };
         pool.query
             .mockResolvedValueOnce([[sessionUser]])         // SELECT users
-            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]); // getSponsorOrgId
+            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]) // getSponsorOrgId
+            .mockResolvedValueOnce([[]]);                    // getDriverSponsors
 
         const res = await request(app)
             .get('/api/session')
@@ -519,7 +523,8 @@ describe('POST /api/2fa/verify', () => {
             .mockResolvedValueOnce([[baseUser]])            // SELECT users
             .mockResolvedValueOnce([{ affectedRows: 1 }])  // UPDATE last_login
             .mockResolvedValueOnce([{ insertId: 1 }])      // INSERT login_logs
-            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]); // getSponsorOrgId
+            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]) // getSponsorOrgId
+            .mockResolvedValueOnce([[]]);                    // getDriverSponsors
 
         const res = await request(app)
             .post('/api/2fa/verify')
@@ -545,7 +550,8 @@ describe('POST /api/2fa/verify', () => {
             .mockResolvedValueOnce([[baseUser]])
             .mockResolvedValueOnce([{ affectedRows: 1 }])
             .mockResolvedValueOnce([{ insertId: 1 }])
-            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]]);
+            .mockResolvedValueOnce([[{ sponsor_org_id: 5 }]])
+            .mockResolvedValueOnce([[]]);                    // getDriverSponsors
 
         const res = await request(app)
             .post('/api/2fa/verify')

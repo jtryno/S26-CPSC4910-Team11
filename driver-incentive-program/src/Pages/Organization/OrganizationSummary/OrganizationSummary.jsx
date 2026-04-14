@@ -5,6 +5,7 @@ import OrganizationMembersTab from './OrganizationMembersTab';
 import { fetchOrgData, fetchOrgUsers, fetchDropLogs } from '../../../api/OrganizationApi';
 import { featchApplicationsUser } from '../../../api/ApplicationApi';
 import { fetchUserData } from '../../../api/UserApi';
+import { reconcileActiveSponsor } from '../../../activeSponsor';
 import TabGroup from '../../../components/TabGroup';
 import OrganizationApplicationsTab from './OrganizationApplicationsTab';
 import OrganizationContestsTab from './OrganizationContestsTab';
@@ -22,7 +23,6 @@ const OrganizationSummary = () => {
     const { orgId } = useParams();
     const [orgData, setOrgData] = useState(null);
     const [orgUsers, setOrgUsers] = useState(null);
-    const [hasPendingApplication, setHasPendingApplication] = useState(true);
     const [pendingApplication, setPendingApplication] = useState(null);
     const [dropData, setDropData] = useState([]);
 
@@ -32,18 +32,20 @@ const OrganizationSummary = () => {
         const users = await fetchOrgUsers(orgId);
         setOrgUsers(users);
 
-        // Refresh the driver's data from the DB so sponsor_org_id reflects any approval
-        // without requiring a logout/login
+        // Refresh the driver's data from the DB so sponsors[] and sponsor_org_id
+        // reflect any approval/leave/drop without requiring a logout/login.
         const freshUser = await fetchUserData(userData.user_id);
-        if (freshUser && freshUser.sponsor_org_id !== userData.sponsor_org_id) {
+        if (freshUser) {
             const storage = localStorage.getItem('user') ? localStorage : sessionStorage;
             const stored = JSON.parse(storage.getItem('user'));
-            storage.setItem('user', JSON.stringify({ ...stored, sponsor_org_id: freshUser.sponsor_org_id }));
-            setUserData(prev => ({ ...prev, sponsor_org_id: freshUser.sponsor_org_id }));
+            storage.setItem('user', JSON.stringify({ ...stored, ...freshUser }));
+            setUserData(prev => ({ ...prev, ...freshUser }));
+            // If this fetch ran because an application was just approved,
+            // make sure the navbar picks up a valid active sponsor.
+            reconcileActiveSponsor();
         }
 
         const applications = await featchApplicationsUser(userData.user_id, 'pending');
-        setHasPendingApplication(applications.length > 0);
         // Find the pending application specifically for this org so the driver can withdraw it
         const appForThisOrg = applications.find(a => a.sponsor_org_id === Number(orgId)) || null;
         setPendingApplication(appForThisOrg);
@@ -61,7 +63,7 @@ const OrganizationSummary = () => {
     
     return (
         <div style={{background: '#f9f9f9', borderRadius: '8px', border: '1px solid #e0e0e0'}}>
-            <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg} hasPendingApplication={hasPendingApplication} pendingApplication={pendingApplication}/>
+            <OrganizationHeader userData={userData} numUsers={orgUsers?.length || 0} orgData={orgData} setOrgData={setOrgData} setUserData={setUserData} fetchOrg={fetchOrg} pendingApplication={pendingApplication}/>
             <div style={{ borderBottom: '1px solid #e0e0e0', marginBottom: '20px'}}/>
             <TabGroup tabs={[
                 { label: "Members", content: <OrganizationMembersTab orgUsers={orgUsers} userData={userData} setUserData={setUserData} fetchOrg={fetchOrg} orgId={orgId}/> },
