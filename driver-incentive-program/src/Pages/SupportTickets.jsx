@@ -27,6 +27,15 @@ const STATUS_STYLES = {
     archived: { background: '#f5f5f5', color: '#616161', label: 'Archived' },
 };
 
+const SECURITY_ISSUE_TYPES = {
+    unauthorized_access: 'Unauthorized Access',
+    account_compromise: 'Account Compromise',
+    data_breach: 'Data Breach',
+    suspicious_activity: 'Suspicious Activity',
+    brute_force: 'Brute Force / Failed Logins',
+    other: 'Other',
+};
+
 // current status of a ticket
 const StatusBadge = ({ status }) => {
     const style = STATUS_STYLES[status] || STATUS_STYLES.open;
@@ -152,6 +161,7 @@ const DriverView = ({ user }) => {
 
     // category and driver subject (for sponsors) on create form
     const [ticketCategory, setTicketCategory] = useState('general');
+    const [securityIssueType, setSecurityIssueType] = useState('');
     const [driverPickerEnabled, setDriverPickerEnabled] = useState(false);
     const [subjectDriverId, setSubjectDriverId] = useState('');
     const [orgDrivers, setOrgDrivers] = useState([]);
@@ -203,6 +213,7 @@ const DriverView = ({ user }) => {
         setTicketTitle('');
         setTicketDesc('');
         setTicketCategory('general');
+        setSecurityIssueType('');
         setDriverPickerEnabled(false);
         setSubjectDriverId('');
         setSelectedOrderItemId('');
@@ -225,6 +236,10 @@ const DriverView = ({ user }) => {
             setSubmitMsg({ type: 'error', text: 'Please select the item you are complaining about.' });
             return;
         }
+        if (ticketCategory === 'security' && !securityIssueType) {
+            setSubmitMsg({ type: 'error', text: 'Please select a security issue type.' });
+            return;
+        }
         setSubmitting(true);
         try {
             const result = await createTicket(
@@ -233,6 +248,7 @@ const DriverView = ({ user }) => {
                 ticketTitle.trim(),
                 ticketDesc.trim(),
                 ticketCategory,
+                ticketCategory === 'security' ? securityIssueType : null,
                 driverPickerEnabled && subjectDriverId ? parseInt(subjectDriverId) : null,
                 ticketCategory === 'catalog_order' && selectedOrderItemId ? parseInt(selectedOrderItemId) : null
             );
@@ -476,6 +492,22 @@ const DriverView = ({ user }) => {
                             <option value="catalog_order">Catalog Order Complaint</option>
                         </select>
                     </div>
+                    {/* security issue type: only shown when category is security */}
+                    {ticketCategory === 'security' && (
+                        <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontWeight: 600, color: '#1a1a1a' }}>Security Issue Type</label>
+                            <select
+                                value={securityIssueType}
+                                onChange={e => setSecurityIssueType(e.target.value)}
+                                style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }}
+                            >
+                                <option value="">— Select a type —</option>
+                                {Object.entries(SECURITY_ISSUE_TYPES).map(([val, label]) => (
+                                    <option key={val} value={val}>{label}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                     {/* catalog order complaint: item picker populated from the driver's purchase history */}
                     {ticketCategory === 'catalog_order' && (
                         <div>
@@ -937,6 +969,8 @@ const AdminView = ({ user }) => {
     const [statusUpdating, setStatusUpdating] = useState({});
     // category filter: null = all tickets, 'general' | 'security' | 'catalog_order' = that category only
     const [categoryFilter, setCategoryFilter] = useState(null);
+    // security issue type sub-filter: null = all security tickets, one of the SECURITY_ISSUE_TYPES keys = that type only
+    const [securityIssueTypeFilter, setSecurityIssueTypeFilter] = useState(null);
     // sponsor/driver/date filters: null = show all
     const [selectedSponsor, setSelectedSponsor] = useState(null);
     const [selectedDriver, setSelectedDriver] = useState(null);
@@ -1022,9 +1056,10 @@ const AdminView = ({ user }) => {
     const sponsorId = (() => { const n = parseInt(selectedSponsor, 10); return isNaN(n) ? null : n; })();
     const driverId = (() => { const n = parseInt(selectedDriver, 10); return isNaN(n) ? null : n; })();
 
-    // apply all active filters category, sponsor, driver, and date range
+    // apply all active filters category, security issue type sub-filter, sponsor, driver, and date range
     const displayedTickets = tickets.filter(t => {
         if (categoryFilter && t.category !== categoryFilter) return false;
+        if (categoryFilter === 'security' && securityIssueTypeFilter && t.security_issue_type !== securityIssueTypeFilter) return false;
         if (sponsorId !== null && t.sponsor_org_id !== sponsorId) return false;
         if (driverId !== null) {
             const isSubmitter = t.user_type === 'driver' && t.user_id === driverId;
@@ -1056,6 +1091,14 @@ const AdminView = ({ user }) => {
                 return <span style={{ background: '#f5f5f5', color: '#616161', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>General</span>;
             },
         },
+        ...(categoryFilter === 'security' ? [{
+            key: 'security_issue_type',
+            label: 'Issue Type',
+            sortable: true,
+            render: (val) => val
+                ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontSize: '0.85em', fontWeight: 600 }}>{SECURITY_ISSUE_TYPES[val] || val}</span>
+                : <span style={{ color: '#aaa' }}>—</span>,
+        }] : []),
         {
             key: 'first_name',
             label: 'Submitted By',
@@ -1177,9 +1220,9 @@ const AdminView = ({ user }) => {
                                 </div>
                             </div>
                             {/* filter toggles: all tickets, or filter by category */}
-                            <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+                            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                                 <button
-                                    onClick={() => setCategoryFilter(null)}
+                                    onClick={() => { setCategoryFilter(null); setSecurityIssueTypeFilter(null); }}
                                     style={{
                                         padding: '6px 16px',
                                         borderRadius: '4px',
@@ -1193,7 +1236,7 @@ const AdminView = ({ user }) => {
                                     All Tickets
                                 </button>
                                 <button
-                                    onClick={() => setCategoryFilter('security')}
+                                    onClick={() => { setCategoryFilter('security'); setSecurityIssueTypeFilter(null); }}
                                     style={{
                                         padding: '6px 16px',
                                         borderRadius: '4px',
@@ -1207,7 +1250,7 @@ const AdminView = ({ user }) => {
                                     Security Issues Only
                                 </button>
                                 <button
-                                    onClick={() => setCategoryFilter('catalog_order')}
+                                    onClick={() => { setCategoryFilter('catalog_order'); setSecurityIssueTypeFilter(null); }}
                                     style={{
                                         padding: '6px 16px',
                                         borderRadius: '4px',
@@ -1221,6 +1264,56 @@ const AdminView = ({ user }) => {
                                     Catalog Orders Only
                                 </button>
                             </div>
+                            {/* security issue type sub-filter: only shown when security category is active */}
+                            {categoryFilter === 'security' && (
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '10px 14px',
+                                    marginBottom: '14px',
+                                    background: '#fce4ec',
+                                    border: '1px solid #f8bbd0',
+                                    borderRadius: '6px',
+                                }}>
+                                    <span style={{ fontSize: '0.9em', fontWeight: 600, color: '#880e4f', whiteSpace: 'nowrap' }}>Issue Type:</span>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                        <button
+                                            onClick={() => setSecurityIssueTypeFilter(null)}
+                                            style={{
+                                                padding: '4px 12px',
+                                                borderRadius: '4px',
+                                                border: '1px solid #f48fb1',
+                                                backgroundColor: securityIssueTypeFilter === null ? '#880e4f' : '#fff',
+                                                color: securityIssueTypeFilter === null ? 'white' : '#880e4f',
+                                                cursor: 'pointer',
+                                                fontSize: '0.85em',
+                                                fontWeight: securityIssueTypeFilter === null ? 600 : 400,
+                                            }}
+                                        >
+                                            All Types
+                                        </button>
+                                        {Object.entries(SECURITY_ISSUE_TYPES).map(([val, label]) => (
+                                            <button
+                                                key={val}
+                                                onClick={() => setSecurityIssueTypeFilter(val)}
+                                                style={{
+                                                    padding: '4px 12px',
+                                                    borderRadius: '4px',
+                                                    border: '1px solid #f48fb1',
+                                                    backgroundColor: securityIssueTypeFilter === val ? '#880e4f' : '#fff',
+                                                    color: securityIssueTypeFilter === val ? 'white' : '#880e4f',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.85em',
+                                                    fontWeight: securityIssueTypeFilter === val ? 600 : 400,
+                                                }}
+                                            >
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             {displayedTickets.length === 0 && (
                                 <p style={{ color: '#666' }}>No tickets found for this filter.</p>
                             )}
@@ -1244,6 +1337,17 @@ const AdminView = ({ user }) => {
 
                                         {/* the description the user wrote when submitting */}
                                         <p style={{ margin: '0 0 12px', color: '#333', whiteSpace: 'pre-wrap' }}>{t.description}</p>
+
+                                        {/* security issue type badge — only shown for security tickets */}
+                                        {t.category === 'security' && (
+                                            <p style={{ margin: '0 0 10px', fontSize: '0.85em' }}>
+                                                <strong style={{ color: '#1a1a1a' }}>Issue Type: </strong>
+                                                {t.security_issue_type
+                                                    ? <span style={{ background: '#fce4ec', color: '#880e4f', padding: '2px 10px', borderRadius: '12px', fontWeight: 600 }}>{SECURITY_ISSUE_TYPES[t.security_issue_type] || t.security_issue_type}</span>
+                                                    : <span style={{ color: '#aaa' }}>Not categorized</span>
+                                                }
+                                            </p>
+                                        )}
 
                                         {/* submitter info line */}
                                         <p style={{ margin: '0 0 8px', color: '#666', fontSize: '0.85em' }}>
