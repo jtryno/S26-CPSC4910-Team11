@@ -1,13 +1,13 @@
 // creates new support ticket for driver or sponsor
-// sends the user id, their org (if they have one), title, description, category, optional subject driver, and optional order item for catalog_order complaints
-async function createTicket(userId, sponsorOrgId, title, description, category, subjectDriverId, relatedOrderItemId) {
+// sends the user id, their org (if they have one), title, description, category, optional security issue type, optional subject driver, and optional order item for catalog_order complaints
+async function createTicket(userId, sponsorOrgId, title, description, category, securityIssueType, subjectDriverId, relatedOrderItemId) {
     try {
         const response = await fetch('/api/support-tickets', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ userId, sponsorOrgId, title, description, category: category || 'general', subjectDriverId: subjectDriverId || null, relatedOrderItemId: relatedOrderItemId || null }),
+            body: JSON.stringify({ userId, sponsorOrgId, title, description, category: category || 'general', securityIssueType: securityIssueType || null, subjectDriverId: subjectDriverId || null, relatedOrderItemId: relatedOrderItemId || null }),
         });
         const data = await response.json();
         return data;

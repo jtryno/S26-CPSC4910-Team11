@@ -4194,7 +4194,7 @@ app.get('/api/support-tickets/purchased-items/:driverId', async (req, res) => {
 // creates new support ticket, called when a driver or sponsor submits the form
 // sponsorOrgId can be null if the user isn't affiliated with an org
 app.post('/api/support-tickets', async (req, res) => {
-    const { userId, sponsorOrgId, title, description, category, subjectDriverId, relatedOrderItemId } = req.body;
+    const { userId, sponsorOrgId, title, description, category, securityIssueType, subjectDriverId, relatedOrderItemId } = req.body;
     // make sure both fields are filled in before inserting
     if (!title || !title.trim()) {
         return res.status(400).json({ error: 'Title is required.' });
@@ -4208,10 +4208,19 @@ app.post('/api/support-tickets', async (req, res) => {
     if (!validCategories.includes(ticketCategory)) {
         return res.status(400).json({ error: 'Invalid category. Must be general, security, or catalog_order.' });
     }
+    // validate security issue type when category is security
+    const validSecurityIssueTypes = ['unauthorized_access', 'account_compromise', 'data_breach', 'suspicious_activity', 'brute_force', 'other'];
+    let securityIssueTypeValue = null;
+    if (ticketCategory === 'security') {
+        if (!securityIssueType || !validSecurityIssueTypes.includes(securityIssueType)) {
+            return res.status(400).json({ error: 'A security issue type is required for security tickets.' });
+        }
+        securityIssueTypeValue = securityIssueType;
+    }
     try {
         const [result] = await pool.query(
-            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, subject_driver_id, related_order_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, subjectDriverId || null, relatedOrderItemId || null]
+            'INSERT INTO support_tickets (user_id, sponsor_org_id, title, description, category, security_issue_type, subject_driver_id, related_order_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [userId, sponsorOrgId || null, title.trim(), description.trim(), ticketCategory, securityIssueTypeValue, subjectDriverId || null, relatedOrderItemId || null]
         );
 
         if(ticketCategory === 'security') {
