@@ -1,8 +1,16 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import DriverPointTrackingTab from '../../src/Pages/Reports/SponsorReport/DriverPointTrackingTab';
 
-global.fetch = vi.fn();
+import {
+  fetchOrgDrivers,
+  fetchOrgPointChanges
+} from '../../src/api/OrganizationApi';
+
+vi.mock('../../src/api/OrganizationApi', () => ({
+  fetchOrgDrivers: vi.fn(),
+  fetchOrgPointChanges: vi.fn(),
+}));
 
 const makeDriver = (overrides = {}) => ({
   user_id: 10,
@@ -30,31 +38,28 @@ describe('DriverPointTrackingTab', () => {
     const driver = makeDriver();
     const pointChanges = [makePointChange()];
 
-    // First two fetch calls: fetchDrivers and fetchDropdownDrivers
-    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ drivers: [driver] }) });
-    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ drivers: [driver] }) });
+    fetchOrgDrivers.mockResolvedValue([driver]);
+    fetchOrgPointChanges.mockResolvedValue(pointChanges);
 
     render(<DriverPointTrackingTab orgId={123} />);
 
-    // Wait for driver username to appear in table
+
     const table = screen.getByRole('table');
-    await waitFor(() => expect(within(table).getByText('driver_1')).toBeInTheDocument());
+    expect(await within(table).findByText('driver_1')).toBeInTheDocument();
 
-    // Prepare point changes fetch (triggered when modal opens)
-    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ changes: pointChanges }) });
-
-    // Click the first "View Point Changes" button
     const buttons = screen.getAllByRole('button', { name: /View Point Changes/i });
     expect(buttons.length).toBeGreaterThan(0);
+
     fireEvent.click(buttons[0]);
 
-    // Modal title should show username
-    await waitFor(() => expect(screen.getByText('driver_1 Point Changes')).toBeInTheDocument());
+    const modal = await screen.findByRole('dialog');
 
-    // Point change row should be visible
-    expect(screen.getByText('1')).toBeInTheDocument();
+    expect(within(modal).getByText(/driver_1 Point Changes/i)).toBeInTheDocument();
 
-    // CSV generation button exists
-    expect(screen.getByRole('button', { name: /Generate CSV/i })).toBeInTheDocument();
+    expect(within(modal).getByText('1')).toBeInTheDocument();
+
+    expect(
+      within(modal).getByRole('button', { name: /Generate CSV/i })
+    ).toBeInTheDocument();
   });
 });

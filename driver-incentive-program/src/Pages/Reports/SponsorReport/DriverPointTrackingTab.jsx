@@ -81,7 +81,7 @@ const DriverPointTrackingTab = ({ orgId }) => {
         setDropdownDrivers(data);
     }
 
-    async function fetchPointChanges(driverId) {
+    async function fetchPointChanges() {
         const data = await fetchOrgPointChanges(orgId, {fromDate: null, toDate: null});
         setPointChanges(data);
     }
