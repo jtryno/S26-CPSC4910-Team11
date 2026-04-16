@@ -26,13 +26,13 @@ import { app } from '../../server/index.js';
 import pool from '../../server/db.js';
 
 beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks clears queued mockResolvedValueOnce values as well as call history,
+    // preventing leftover mocks from contaminating subsequent tests.
+    vi.resetAllMocks();
     pool.getConnection.mockResolvedValue(mockConn);
     mockConn.beginTransaction.mockResolvedValue();
     mockConn.commit.mockResolvedValue();
     mockConn.rollback.mockResolvedValue();
-    mockConn.release.mockReset();
-    mockConn.query.mockReset();
 });
 
 // POST /api/support-tickets — Create a new ticket
@@ -100,7 +100,7 @@ describe('POST /api/support-tickets', () => {
             .mockResolvedValueOnce([[]]);                             // SELECT admins returns [[]]
         const res = await request(app)
             .post('/api/support-tickets')
-            .send({ ...validBody, category: 'security', subjectDriverId: 7 });
+            .send({ ...validBody, category: 'security', securityIssueType: 'other', subjectDriverId: 7 });
         expect(res.status).toBe(200);
         expect(res.body).toHaveProperty('ticket_id', 55);
     });

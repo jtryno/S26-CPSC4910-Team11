@@ -3449,6 +3449,96 @@ app.put('/api/point-contest/:contest_id', async (req, res) => {
     }
 });
 
+// ─── Health Check (#5617) ─────────────────────────────────────────────────────
+
+// GET /api/health — public endpoint confirming the server is up
+app.get('/api/health', (_req, res) => {
+    res.json({
+        status: 'ok',
+        uptime: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString(),
+    });
+});
+
+// ─── Admin Statistics Routes (#5961) ──────────────────────────────────────────
+
+// GET /api/admin/statistics — aggregated system metrics for the admin dashboard
+app.get('/api/admin/statistics', async (_req, res) => {
+    try {
+        const [[userCounts]] = await pool.query(`
+            SELECT
+                COUNT(*)                                           AS total_users,
+                SUM(user_type = 'driver')                         AS total_drivers,
+                SUM(user_type = 'sponsor')                        AS total_sponsors,
+                SUM(user_type = 'admin')                          AS total_admins,
+                SUM(is_active = 1)                                AS active_users,
+                SUM(is_active = 0)                                AS inactive_users
+            FROM users
+        `);
+
+        const [[orgCounts]] = await pool.query(`
+            SELECT COUNT(*) AS total_orgs FROM sponsor_organization
+        `);
+
+        const [[orderCounts]] = await pool.query(`
+            SELECT
+                COUNT(*)                          AS total_orders,
+                SUM(status = 'placed')            AS placed_orders,
+                SUM(status = 'shipped')           AS shipped_orders,
+                SUM(status = 'delivered')         AS delivered_orders,
+                SUM(status = 'canceled')          AS canceled_orders,
+                COALESCE(SUM(points_spent), 0)    AS total_points_spent
+            FROM orders
+        `);
+
+        const [[catalogCounts]] = await pool.query(`
+            SELECT COUNT(*) AS total_catalog_items FROM catalog_items WHERE is_active = 1
+        `);
+
+        const [[ticketCounts]] = await pool.query(`
+            SELECT
+                COUNT(*)                           AS total_tickets,
+                SUM(status = 'open')               AS open_tickets,
+                SUM(status = 'resolved')           AS resolved_tickets
+            FROM support_tickets
+        `);
+
+        res.json({
+            users: userCounts,
+            organizations: orgCounts,
+            orders: orderCounts,
+            catalog: catalogCounts,
+            tickets: ticketCounts,
+            generated_at: new Date().toISOString(),
+        });
+    } catch (error) {
+        console.error('Error fetching admin statistics:', error);
+        res.status(500).json({ error: 'Failed to fetch statistics' });
+    }
+});
+
+// ─── Admin System Error Log Routes (#5981) ────────────────────────────────────
+
+// GET /api/admin/errors — recent server errors for the stability dashboard
+app.get('/api/admin/errors', async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+    try {
+        const [rows] = await pool.query(
+            `SELECT error_id, route, method, status_code, message, stack_trace, occurred_at
+             FROM server_error_log
+             ORDER BY occurred_at DESC
+             LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
+        const [[{ total }]] = await pool.query('SELECT COUNT(*) AS total FROM server_error_log');
+        res.json({ errors: rows, total, limit, offset });
+    } catch (error) {
+        console.error('Error fetching error log:', error);
+        res.status(500).json({ error: 'Failed to fetch error log' });
+    }
+});
+
 // ─── Admin Catalog Maintenance Routes (#4566) ─────────────────────────────────
 
 // GET /api/admin/catalog-status — returns whether catalog is disabled
@@ -5060,6 +5150,36 @@ app.delete('/api/dashboard/reviews/:reviewId', async(req, res) => {
     }
 });
 
+// ─── Global error-logging middleware (#5981) ──────────────────────────────────
+// Catches any error thrown from route handlers and logs it to server_error_log.
+// eslint-disable-next-line no-unused-vars
+app.use(async (err, req, res, _next) => {
+    const statusCode = err.status || err.statusCode || 500;
+    console.error(`[${req.method}] ${req.path} →`, err.message);
+
+    if (process.env.NODE_ENV !== 'test') {
+        try {
+            await pool.query(
+                `INSERT INTO server_error_log (route, method, status_code, message, stack_trace)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [
+                    req.path,
+                    req.method,
+                    statusCode,
+                    err.message?.slice(0, 1000) ?? 'Unknown error',
+                    err.stack?.slice(0, 4000) ?? null,
+                ]
+            );
+        } catch (_logErr) {
+            // Don't let logging failures cascade
+        }
+    }
+
+    if (!res.headersSent) {
+        res.status(statusCode).json({ error: err.message || 'Internal server error' });
+    }
+});
+
 if (process.env.NODE_ENV !== 'test') {
     // Run migration to add delivery columns if they don't exist
     (async () => {
@@ -5151,6 +5271,21 @@ if (process.env.NODE_ENV !== 'test') {
             );
         } catch (e) {
             console.warn('system_settings migration failed:', e.message);
+        }
+
+        // Create server_error_log table (#5981)
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS server_error_log (
+                error_id    INT PRIMARY KEY AUTO_INCREMENT,
+                route       VARCHAR(500)  NULL,
+                method      VARCHAR(10)   NULL,
+                status_code SMALLINT      NOT NULL DEFAULT 500,
+                message     VARCHAR(1000) NULL,
+                stack_trace TEXT          NULL,
+                occurred_at TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )`);
+        } catch (e) {
+            console.warn('server_error_log migration failed:', e.message);
         }
     })();
 
