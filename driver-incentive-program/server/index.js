@@ -3482,13 +3482,14 @@ app.get('/api/admin/statistics', async (_req, res) => {
 
         const [[orderCounts]] = await pool.query(`
             SELECT
-                COUNT(*)                          AS total_orders,
-                SUM(status = 'placed')            AS placed_orders,
-                SUM(status = 'shipped')           AS shipped_orders,
-                SUM(status = 'delivered')         AS delivered_orders,
-                SUM(status = 'canceled')          AS canceled_orders,
-                COALESCE(SUM(points_spent), 0)    AS total_points_spent
-            FROM orders
+                COUNT(*)                                                        AS total_orders,
+                SUM(o.status = 'placed')                                        AS placed_orders,
+                SUM(o.status = 'shipped')                                       AS shipped_orders,
+                SUM(o.status = 'delivered')                                     AS delivered_orders,
+                SUM(o.status = 'cancelled')                                     AS canceled_orders,
+                COALESCE(SUM(oi.points_price_at_purchase * oi.quantity), 0)     AS total_points_spent
+            FROM orders o
+            LEFT JOIN order_items oi ON o.order_id = oi.order_id
         `);
 
         const [[catalogCounts]] = await pool.query(`
