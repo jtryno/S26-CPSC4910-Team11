@@ -6,7 +6,6 @@ import DatePicker from '../../../components/DatePicker';
 import { fetchOrgDrivers } from '../../../api/OrganizationApi';
 import { fetchOrgPointChanges } from '../../../api/OrganizationApi';
 
-
 const DriverPointTrackingTab = ({ orgId }) => {
     const [fromDate, setFromDate] = useState(null);
     const [toDate, setToDate] = useState(null);
@@ -17,6 +16,60 @@ const DriverPointTrackingTab = ({ orgId }) => {
     const [pointChangeModalOpen, setPointChangeModalOpen] = useState(false);
     const [selectedPointChangeDriver, setSelectedPointChangeDriver] = useState(null);
     const [pointChanges, setPointChanges] = useState([]);
+
+    const driverReportColumns = [
+        { key: "transaction_id", label: "Transaction ID", sortable: true },
+        { key: "point_amount", label: "Point Amount", sortable: true },
+        { key: "reason", label: "Reason", sortable: false },
+        { key: "source", label: "Source", sortable: true },
+        { key: "created_by_user_id", label: "Created By", sortable: true }
+    ];
+
+    function escapeCSV(value) {
+        if (value == null) return "";
+
+        const str = value.toString();
+
+        if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+            return `"${str.replace(/"/g, '""')}"`;
+        }
+
+        return str;
+    }
+
+    function generateCSVString() {
+        const keys = driverReportColumns.map(col => col.key);
+
+        const filteredData = pointChanges.map(change => {
+            const filtered = {};
+
+            keys.forEach(key => {
+                filtered[key] = change[key];
+            });
+
+            return filtered;
+        })
+
+        const headers = Object.keys(filteredData[0]);
+        const rows = filteredData.map(change => headers.map(h => escapeCSV(change[h])).join(","));
+        
+        return [
+            headers.join(","),
+            ...rows
+        ].join("\n");
+    }
+
+    function generateCSV(csvString, filename = "point_changes.csv") {
+        const blob = new Blob([csvString], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    }
 
     async function fetchDrivers() {
         const data = await fetchOrgDrivers(orgId, selectedDriver, {fromDate, toDate});
@@ -29,7 +82,7 @@ const DriverPointTrackingTab = ({ orgId }) => {
     }
 
     async function fetchPointChanges(driverId) {
-        const data = await fetchOrgPointChanges(orgId, {fromDate: null, toData: null});
+        const data = await fetchOrgPointChanges(orgId, {fromDate: null, toDate: null});
         setPointChanges(data);
     }
 
@@ -52,7 +105,7 @@ const DriverPointTrackingTab = ({ orgId }) => {
             <h3>Filters</h3>
             <div 
                 style={{
-                    display: "grid",
+                    display: "grid",    
                     gridTemplateColumns: "1fr 1fr",
                     gap: "20px",
                     padding: "15px",
@@ -125,19 +178,14 @@ const DriverPointTrackingTab = ({ orgId }) => {
                 children={
                     <div style={{ display: "grid", direction: "row", gap: "10px" }}>
                         <SortableTable
-                            columns={[
-                                { key: "transaction_id", label: "Transaction ID", sortable: true },
-                                { key: "point_amount", label: "Point Amount", sortable: true },
-                                { key: "reason", label: "Reason", sortable: false },
-                                { key: "source", label: "Source", sortable: true },
-                                { key: "created_by_user_id", label: "Created By", sortable: true }
-                            ]}
+                            columns={driverReportColumns}
                             data={pointChanges}
                             rowsPerPage={8}
                         />
                         <button
                             onClick={() => {
-
+                                const csvString = generateCSVString();
+                                generateCSV(csvString, `${selectedPointChangeDriver?.username}_point_changes.csv`);
                             }}
                             style={{
                                 width: "200px"

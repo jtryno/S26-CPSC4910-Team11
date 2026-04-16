@@ -8,10 +8,11 @@ import { fetchOrgDrivers, fetchOrganizations } from '../../../api/OrganizationAp
 import { fetchSalesData, fetchSalesItemData } from '../../../api/SalesApi';
 
 
-const SalesByDriver = () => {
+const Sales = () => {
     const [fromDate, setFromDate] = useState(null);
     const [toDate, setToDate] = useState(null);
     const [isDateRange, setIsDateRange] = useState(false);
+    const [selectedDriver, setSelectedDriver] = useState(null);
     const [selectedOrg, setSelectedOrg] = useState([]);
     const [dropdownDrivers, setDropdownDrivers] = useState([]);
     const [dropdownOrgs, setDropdownOrgs] = useState([]);
@@ -31,7 +32,7 @@ const SalesByDriver = () => {
     }
 
     async function fetchSales() {
-        const data = await fetchSalesData(selectedOrg, null, {fromDate, toDate});
+        const data = await fetchSalesData(selectedOrg, selectedDriver, {fromDate, toDate});
         setSalesData(data);
     }
 
@@ -50,7 +51,7 @@ const SalesByDriver = () => {
 
     useEffect(() => {
         fetchSales();
-    }, [selectedOrg, fromDate, toDate])
+    }, [selectedOrg, selectedDriver, fromDate, toDate])
 
     useEffect(() => {
         if (detailedViewRow != null) {
@@ -105,6 +106,17 @@ const SalesByDriver = () => {
                         ]}
                         value={selectedOrg}
                         onChange={setSelectedOrg}
+                    />
+                    <DropdownField
+                        label="Driver User"
+                        options={[{label: 'All', value: null},
+                            ...dropdownDrivers.map(driver => ({
+                                label: driver.username,
+                                value: driver.user_id,
+                            }))
+                        ]}
+                        value={selectedDriver}
+                        onChange={setSelectedDriver}
                     />
             </div>
             <Field
@@ -169,4 +181,4 @@ const SalesByDriver = () => {
     );
 }
 
-export default SalesByDriver;
+export default Sales;
