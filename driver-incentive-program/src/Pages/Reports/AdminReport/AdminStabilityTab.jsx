@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 const PAGE_SIZE = 25;
 
@@ -9,26 +9,20 @@ const severityColor = (code) => {
 };
 
 const AdminStabilityTab = () => {
-    const [data, setData]       = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError]     = useState(null);
-    const [offset, setOffset]   = useState(0);
+    const [data, setData]         = useState(null);
+    const [loading, setLoading]   = useState(true);
+    const [error, setError]       = useState(null);
+    const [offset, setOffset]     = useState(0);
     const [expanded, setExpanded] = useState(null);
 
     const load = async (off = 0) => {
         setLoading(true);
         setError(null);
         try {
-            // PLACEHOLDER FOR DEMO: 
-            // Simulate a brief delay then return a "Healthy" empty state
-            await new Promise(resolve => setTimeout(resolve, 600)); 
-            
-            const mockHealthyData = {
-                total: 0,
-                errors: []
-            };
-
-            setData(mockHealthyData);
+            const res = await fetch(`/api/admin/errors?limit=${PAGE_SIZE}&offset=${off}`);
+            if (!res.ok) throw new Error('Failed to load error log');
+            const json = await res.json();
+            setData(json);
             setOffset(off);
         } catch (e) {
             setError(e.message);
@@ -39,30 +33,13 @@ const AdminStabilityTab = () => {
 
     useEffect(() => { load(0); }, []);
 
-    const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
+    if (loading) return <div style={{ color: '#666' }}>Loading error log...</div>;
+
+    const totalPages  = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
     const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
 
     return (
         <div style={{ padding: '24px', maxWidth: '1000px' }}>
-            {/* DEMO HEALTH INDICATOR */}
-            {!loading && !error && data?.total === 0 && (
-                <div style={{ 
-                    padding: '16px', 
-                    background: '#e8f5e9', 
-                    color: '#2e7d32', 
-                    borderRadius: '8px', 
-                    marginBottom: '24px',
-                    border: '1px solid #c8e6c9',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px'
-                }}>
-                    <div style={{ width: '12px', height: '12px', background: '#4caf50', borderRadius: '50%' }}></div>
-                    <strong style={{ fontSize: '16px' }}>System Status: Healthy</strong>
-                    <span style={{ fontSize: '14px', opacity: 0.8 }}>— No system crashes or critical stability issues reported.</span>
-                </div>
-            )}
-
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h2 style={{ margin: 0, fontSize: '20px' }}>System Stability / Error Log</h2>
                 <button
@@ -79,9 +56,7 @@ const AdminStabilityTab = () => {
                 </div>
             )}
 
-            {loading && <div style={{ color: '#666' }}>Checking system stability...</div>}
-
-            {!loading && data && (
+            {!error && data && (
                 <>
                     <div style={{ fontSize: '13px', color: '#888', marginBottom: '12px' }}>
                         {data.total === 0
@@ -105,9 +80,7 @@ const AdminStabilityTab = () => {
                                 <tbody>
                                     {data.errors.map((e, i) => (
                                         <React.Fragment key={e.error_id}>
-                                            <tr
-                                                style={{ borderTop: '1px solid #eee', background: i % 2 === 0 ? '#fff' : '#fafafa' }}
-                                            >
+                                            <tr style={{ borderTop: '1px solid #eee', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
                                                 <td style={{ padding: '8px 12px', whiteSpace: 'nowrap', color: '#555' }}>
                                                     {new Date(e.occurred_at).toLocaleString()}
                                                 </td>
