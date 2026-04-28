@@ -7,6 +7,11 @@ services:
       DB_USER: "${DB_USER}"
       DB_PASS: "${DB_PASS}"
       DB_NAME: "${DB_NAME}"
+      DB_PORT: "${DB_PORT:-3306}"
+      DB_SSL: "${DB_SSL:-false}"
+      DB_SSL_CA: "${DB_SSL_CA:-}"
+      DB_SSL_CA_PATH: "${DB_SSL_CA_PATH:-}"
+      DB_SSL_REJECT_UNAUTHORIZED: "${DB_SSL_REJECT_UNAUTHORIZED:-true}"
       EBAY_CLIENT_ID: "${EBAY_CLIENT_ID}"
       EBAY_CLIENT_SECRET: "${EBAY_CLIENT_SECRET}"
     expose:
