@@ -1,196 +1,208 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Button, FormField, Input, Alert } from '../components/ui';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
 
-  // 2FA state (only used when the server says 2FA is required)
-  const [requiresTwoFa, setRequiresTwoFa] = useState(false); // switches the UI to step 2
-  const [pendingUserId, setPendingUserId] = useState(null);  // need to send userId when verifying the code
-  const [twoFaCode, setTwoFaCode] = useState('');            // code the server givesd to display
-  const [twoFaInput, setTwoFaInput] = useState('');          // what the user types into input box
+  const [requiresTwoFa, setRequiresTwoFa] = useState(false);
+  const [pendingUserId, setPendingUserId] = useState(null);
+  const [twoFaCode, setTwoFaCode] = useState('');
+  const [twoFaInput, setTwoFaInput] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
+  const location = useLocation();
+  const successMessage = location.state?.message || '';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
+    setError('');
+    setLoading(true);
     try {
       const response = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, rememberMe })
+        body: JSON.stringify({ email, password, rememberMe }),
       });
-
       const data = await response.json();
-
       if (response.ok) {
-        // Server says 2FA is required — save the userId and code,
-        // then switch the UI to the second step instead of navigating home
         if (data.requiresTwoFa) {
           setPendingUserId(data.userId);
-          setTwoFaCode(data.twoFaCode); // display this code to the user
+          setTwoFaCode(data.twoFaCode);
           setRequiresTwoFa(true);
+          setLoading(false);
           return;
         }
-
-        // Normal login success (no 2FA)
         const userDataString = JSON.stringify(data.user);
         if (rememberMe) {
           localStorage.setItem('user', userDataString);
         } else {
           sessionStorage.setItem('user', userDataString);
         }
-
-        // always use localStorage for lastActivityTime (crosstab sync)
         localStorage.setItem('lastActivityTime', Date.now().toString());
-
-        // Dispatch event to notify app of login
         window.dispatchEvent(new Event('authStateChanged'));
-
-        console.log("User Data:", data.user);
         navigate('/');
       } else {
-        alert(data.message);
+        setError(data.message || 'Login failed. Please check your credentials.');
       }
-    } catch (error) {
-      console.error("Login error:", error);
-      alert("Cant connect to server");
+    } catch {
+      setError('Cannot connect to server. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  // handles the second step (sends code the user typed to the server for verif.)
-  // if code is correct, server returns user data and finish login process
   const handleTwoFaSubmit = async (e) => {
     e.preventDefault();
-
+    setError('');
+    setLoading(true);
     try {
       const response = await fetch('/api/2fa/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // send userId so the server knows whose codes to check & the code
-        body: JSON.stringify({ userId: pendingUserId, code: twoFaInput, rememberMe })
+        body: JSON.stringify({ userId: pendingUserId, code: twoFaInput, rememberMe }),
       });
-
       const data = await response.json();
-
       if (response.ok) {
-        // same login success logic
         const userDataString = JSON.stringify(data.user);
         if (rememberMe) {
           localStorage.setItem('user', userDataString);
         } else {
           sessionStorage.setItem('user', userDataString);
         }
-
         localStorage.setItem('lastActivityTime', Date.now().toString());
         window.dispatchEvent(new Event('authStateChanged'));
-
-        console.log("User Data:", data.user);
         navigate('/');
       } else {
-        alert(data.message || data.error || '2FA verification failed');
+        setError(data.message || data.error || '2FA verification failed.');
       }
-    } catch (error) {
-      console.error("2FA verify error:", error);
-      alert("Cant connect to server");
+    } catch {
+      setError('Cannot connect to server. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
   if (requiresTwoFa) {
     return (
-      <div style={{ maxWidth: '440px', margin: '60px auto', padding: '40px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)' }}>
-        <h2 style={{ textAlign: 'center', color: '#1a1a1a', marginBottom: '30px', fontSize: '1.8em' }}>Two-Factor Authentication</h2>
-        <p style={{ color: '#444444', marginBottom: '20px', fontSize: '0.95em' }}>
+      <div className="auth-card">
+        <h2 className="auth-card__title">Two-Factor Authentication</h2>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-5)' }}>
           Your account has 2FA enabled. Enter the code below to complete sign in.
         </p>
-        <div style={{ background: '#f0f0f0', border: '1px solid #d0d0d0', borderRadius: '6px', padding: '14px', marginBottom: '24px', textAlign: 'center' }}>
-          <span style={{ fontSize: '0.85em', color: '#666666' }}>Your 2FA code:</span>
-          <div style={{ fontSize: '2em', fontWeight: '700', letterSpacing: '0.2em', color: '#1a1a1a', marginTop: '6px' }}>{twoFaCode}</div>
+
+        <div style={{
+          background: 'var(--color-surface-alt)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-lg)',
+          padding: 'var(--space-4)',
+          textAlign: 'center',
+          marginBottom: 'var(--space-6)',
+        }}>
+          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', margin: '0 0 var(--space-1)' }}>
+            Your 2FA code
+          </p>
+          <p style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 'var(--font-weight-bold)', letterSpacing: '0.2em', color: 'var(--color-text)', margin: 0 }}>
+            {twoFaCode}
+          </p>
         </div>
-        <form onSubmit={handleTwoFaSubmit}>
-          <div style={{ marginBottom: '20px' }}>
-            <input
+
+        {error && <Alert tone="danger" className="auth-card__form" style={{ marginBottom: 'var(--space-4)' }}>{error}</Alert>}
+
+        <form onSubmit={handleTwoFaSubmit} className="auth-card__form">
+          <FormField label="Verification Code" htmlFor="tfa-code" required>
+            <Input
+              id="tfa-code"
               type="text"
               placeholder="Enter 6-digit code"
               value={twoFaInput}
               onChange={(e) => setTwoFaInput(e.target.value)}
               maxLength={6}
-              style={{ width: '100%', padding: '12px', fontSize: '1em', border: '1px solid #d0d0d0', borderRadius: '6px', boxSizing: 'border-box', fontFamily: 'inherit', textAlign: 'center', letterSpacing: '0.15em' }}
+              style={{ textAlign: 'center', letterSpacing: '0.2em', fontSize: 'var(--font-size-lg)' }}
               required
             />
-          </div>
-          <button type="submit" style={{ width: '100%', padding: '12px', background: '#0066cc', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '1em', transition: 'background-color 0.2s' }}>
-            Verify
-          </button>
+          </FormField>
+          <Button type="submit" fullWidth loading={loading}>Verify</Button>
+          <Button
+            type="button"
+            variant="secondary"
+            fullWidth
+            onClick={() => { setRequiresTwoFa(false); setTwoFaCode(''); setTwoFaInput(''); setPendingUserId(null); }}
+          >
+            Back to Sign In
+          </Button>
         </form>
-        <button
-          onClick={() => { setRequiresTwoFa(false); setTwoFaCode(''); setTwoFaInput(''); setPendingUserId(null); }}
-          style={{ marginTop: '16px', width: '100%', padding: '10px', background: 'none', color: '#0066cc', border: '1px solid #d0d0d0', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9em' }}
-        >
-          Back to Sign In
-        </button>
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: '440px', margin: '60px auto', padding: '40px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e0e0e0', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)' }}>
-      <h2 style={{ textAlign: 'center', color: '#1a1a1a', marginBottom: '30px', fontSize: '1.8em' }}>Log In</h2>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '20px' }}>
-          <input
+    <div className="auth-card">
+      <h2 className="auth-card__title">Log In</h2>
+
+      {successMessage && <Alert tone="success" style={{ marginBottom: 'var(--space-5)' }}>{successMessage}</Alert>}
+      {error && <Alert tone="danger" style={{ marginBottom: 'var(--space-5)' }}>{error}</Alert>}
+
+      <form onSubmit={handleSubmit} className="auth-card__form">
+        <FormField label="Email Address" htmlFor="login-email" required>
+          <Input
+            id="login-email"
             type="email"
-            placeholder="Email Address"
+            placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={{ width: '100%', padding: '12px', fontSize: '1em', border: '1px solid #d0d0d0', borderRadius: '6px', boxSizing: 'border-box', fontFamily: 'inherit' }}
             required
           />
-        </div>
-        <div style={{ marginBottom: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <input
+        </FormField>
+
+        <FormField label="Password" htmlFor="login-password" required>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <Input
+              id="login-password"
               type={showPassword ? 'text' : 'password'}
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              style={{ flex: 1, padding: '12px', fontSize: '1em', border: '1px solid #d0d0d0', borderRadius: '6px', fontFamily: 'inherit' }}
               required
             />
             <button
               type="button"
+              className="ui-btn ui-btn--secondary ui-btn--md"
+              style={{ flexShrink: 0 }}
               onClick={() => setShowPassword(!showPassword)}
-              style={{ padding: '10px 16px', background: '#f0f0f0', color: '#333333', border: '1px solid #d0d0d0', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', fontSize: '0.9em', transition: 'background-color 0.2s' }}
-              onHover={e => e.target.style.backgroundColor = '#e0e0e0'}
             >
               {showPassword ? 'Hide' : 'Show'}
             </button>
           </div>
-        </div>
-        <div style={{ marginBottom: '25px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#666666', fontSize: '0.95em', cursor: 'pointer' }}>
+        </FormField>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--font-size-sm)' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
             <input
               type="checkbox"
               checked={rememberMe}
               onChange={(e) => setRememberMe(e.target.checked)}
-              style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+              style={{ width: 16, height: 16, cursor: 'pointer' }}
             />
-            Remember Me
+            Remember me
           </label>
+          <Link to="/password-reset" style={{ color: 'var(--color-primary)', fontSize: 'var(--font-size-sm)' }}>
+            Forgot password?
+          </Link>
         </div>
-        <div style={{ marginBottom: '25px' }}>
-          <label onClick={() => navigate("/password-reset")} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#666666', fontSize: '0.95em', cursor: 'pointer' }}>
-            <span style={{color: "#1a73e8"}}>Forgot Password?</span>
-          </label>
-        </div>
-        <button type="submit" style={{ width: '100%', padding: '12px', background: '#0066cc', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '1em', transition: 'background-color 0.2s' }}>
-          Log In
-        </button>
+
+        <Button type="submit" fullWidth loading={loading} size="lg">Log In</Button>
       </form>
+
+      <div className="auth-card__footer">
+        Don't have an account?{' '}
+        <Link to="/driver-signup">Sign up</Link>
+      </div>
     </div>
   );
 };

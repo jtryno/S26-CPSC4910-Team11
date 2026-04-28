@@ -8,6 +8,7 @@ import { startImpersonation } from '../api/ImpersonationApi';
 import BulkUploadModal from './Organization/OrganizationSummary/BulkUploadModal';
 import DriverReviewsSection from './DriverReviewsSection';
 import { getActiveSponsorOrgId, ACTIVE_SPONSOR_EVENT } from '../activeSponsor';
+import { PageHeader, MetricCard, Badge, Button, Alert, Card, EmptyState } from '../components/ui';
 
 const DriverDashboard = ({ user }) => {
     const [data, setData] = useState(null);
@@ -175,8 +176,8 @@ const DriverDashboard = ({ user }) => {
         }
     };
 
-    if (loading) return <div>Loading dashboard...</div>;
-    if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
+    if (loading) return <div style={{ padding: 'var(--space-8)', color: 'var(--color-text-muted)' }}>Loading dashboard…</div>;
+    if (error) return <Alert tone="danger" style={{ margin: 'var(--space-6) 0' }}>Error: {error}</Alert>;
 
     const breakdown = data.transactions.reduce((acc, tx) => {
         const label = SOURCE_LABELS[tx.source] || tx.source;
@@ -186,69 +187,36 @@ const DriverDashboard = ({ user }) => {
 
     return (
         <>
-            <h1>Driver Dashboard</h1>
-
-            <div style={{
-                background: '#f0f7ff',
-                border: '1px solid #b3d4ff',
-                borderRadius: '8px',
-                padding: '20px 28px',
-                marginBottom: '16px',
-                display: 'inline-block',
-            }}>
-                <div style={{ fontSize: '14px', color: '#555' }}>Total Points</div>
-                <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#1a1a1a' }}>{data.total_points}</div>
-            </div>
-
-            {data.driver_status === 'active' && (
-                <div style={{ marginBottom: '28px' }}>
-                    <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
-                        Sponsor: <strong>{data.sponsor_name}</strong>
-                    </div>
-                    <button
+            <PageHeader
+                title="Driver Dashboard"
+                subtitle={data.driver_status === 'active' ? `Sponsor: ${data.sponsor_name}` : undefined}
+                actions={data.driver_status === 'active' && (
+                    <Button
+                        variant="danger"
+                        size="sm"
                         onClick={() => { setLeaveMsg(null); setLeaveModalOpen(true); }}
-                        style={{
-                            padding: '6px 18px',
-                            borderRadius: '4px',
-                            border: '1px solid #c62828',
-                            background: '#fff',
-                            color: '#c62828',
-                            cursor: 'pointer',
-                            fontSize: '13px',
-                        }}
                     >
                         Leave Sponsor
-                    </button>
-                </div>
-            )}
+                    </Button>
+                )}
+            />
 
-            <h2 style={{ marginBottom: '12px' }}>Breakdown by Source</h2>
-            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '32px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-8)' }}>
+                <MetricCard label="Total Points" value={data.total_points} tone="primary" />
                 {Object.entries(breakdown).map(([label, points]) => (
-                    <div key={label} style={{
-                        background: '#fff',
-                        border: '1px solid #e0e0e0',
-                        borderRadius: '8px',
-                        padding: '16px 24px',
-                        minWidth: '160px',
-                        textAlign: 'center'
-                    }}>
-                        <div style={{ fontSize: '13px', color: '#666', marginBottom: '6px' }}>{label}</div>
-                        <div style={{
-                            fontSize: '24px',
-                            fontWeight: 'bold',
-                            color: points >= 0 ? '#2e7d32' : '#c62828'
-                        }}>
-                            {points >= 0 ? '+' : ''}{points}
-                        </div>
-                    </div>
+                    <MetricCard
+                        key={label}
+                        label={label}
+                        value={(points >= 0 ? '+' : '') + points}
+                        tone={points >= 0 ? 'success' : 'danger'}
+                    />
                 ))}
                 {Object.keys(breakdown).length === 0 && (
-                    <div style={{ color: '#888' }}>No transactions yet.</div>
+                    <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>No transactions yet.</div>
                 )}
             </div>
 
-            <h2 style={{ marginBottom: '12px' }}>Points History</h2>
+            <h2 style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--font-size-xl)' }}>Points History</h2>
             {data.transactions.length === 0 ? (
                 <div style={{ color: '#888' }}>No transactions found.</div>
             ) : (
@@ -279,25 +247,9 @@ const DriverDashboard = ({ user }) => {
                                 label: 'Source',
                                 sortable: true,
                                 render: (val) => {
-                                    const colors = {
-                                        Manual:    { bg: '#e3f2fd', text: '#1565c0' },
-                                        Recurring: { bg: '#e8f5e9', text: '#2e7d32' },
-                                        Order:     { bg: '#fff3e0', text: '#e65100' },
-                                    };
+                                    const tones = { Manual: 'info', Recurring: 'success', Order: 'warning' };
                                     const label = SOURCE_LABELS[val] || val;
-                                    const style = colors[label] || { bg: '#f5f5f5', text: '#444' };
-                                    return (
-                                        <span style={{
-                                            background: style.bg,
-                                            color: style.text,
-                                            padding: '2px 8px',
-                                            borderRadius: '12px',
-                                            fontSize: '12px',
-                                            fontWeight: '600',
-                                        }}>
-                                            {label}
-                                        </span>
-                                    );
+                                    return <Badge tone={tones[label] || 'neutral'}>{label}</Badge>;
                                 },
                             },
                             {
@@ -2374,7 +2326,7 @@ const Dashboard = () => {
     }
 
     return (
-        <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ maxWidth: '960px', margin: '0 auto' }}>
             <RoleDashboard user={user} />
         </div>
     );

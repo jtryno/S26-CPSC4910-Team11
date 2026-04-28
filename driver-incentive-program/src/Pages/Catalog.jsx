@@ -1,16 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import ReviewsSection from '../components/ReviewsSection';
 import { getActiveSponsorOrgId, ACTIVE_SPONSOR_EVENT } from '../activeSponsor';
+import { PageHeader, Badge, Button, Alert, Card, MetricCard, EmptyState, Toolbar } from '../components/ui';
 
-const statusBadgeStyle = (status) => ({
-    display: 'inline-block',
-    fontSize: '11px',
-    fontWeight: '600',
-    padding: '2px 8px',
-    borderRadius: '12px',
-    background: status === 'in_stock' ? '#e8f5e9' : '#ffebee',
-    color: status === 'in_stock' ? '#2e7d32' : '#c62828',
-});
+const StatusBadge = ({ status }) => (
+    <Badge tone={status === 'in_stock' ? 'success' : 'danger'}>
+        {status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
+    </Badge>
+);
 
 const Catalog = () => {
     const user = JSON.parse(localStorage.getItem('user') || sessionStorage.getItem('user') || 'null');
@@ -674,9 +671,9 @@ const Catalog = () => {
                                         </button>
 
                                         {/* Stock badge */}
-                                        <span style={{ ...statusBadgeStyle(item.availability_status), marginTop: '4px' }}>
-                                            {item.availability_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
-                                        </span>
+                                        <div style={{ marginTop: '4px' }}>
+                                            <StatusBadge status={item.availability_status} />
+                                        </div>
 
                                         <img
                                             src={displayImage ? `/api/proxy-image?url=${encodeURIComponent(displayImage)}` : 'https://via.placeholder.com/150?text=No+Image'}
