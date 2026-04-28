@@ -45,11 +45,9 @@ const PasswordReset = () => {
       });
       const data = await response.json();
       if (response.ok) {
-        setMessage('Reset token sent! Check the token below or use the one returned.');
-        setToken(data.token);
-        setStep(2);
+        setMessage(data.message || 'If an account exists for that email, a reset link has been sent.');
       } else {
-        setError(data.message || 'Failed to request reset token');
+        setError(data.message || data.error || 'Failed to request reset link');
       }
     } catch {
       setError('Could not connect to server');
@@ -111,7 +109,7 @@ const PasswordReset = () => {
             />
           </FormField>
           <Button type="submit" fullWidth size="lg" loading={loading}>
-            Request Reset Token
+            Send Reset Link
           </Button>
           <Button type="button" variant="secondary" fullWidth onClick={() => navigate('/')}>
             Cancel
@@ -122,7 +120,7 @@ const PasswordReset = () => {
           <FormField
             label="Reset Token"
             htmlFor="reset-token"
-            hint="Paste the token from the previous step"
+            hint="Paste the token from your reset link"
             required
           >
             <Input
