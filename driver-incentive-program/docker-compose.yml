@@ -14,6 +14,9 @@ services:
       DB_SSL_REJECT_UNAUTHORIZED: "${DB_SSL_REJECT_UNAUTHORIZED:-true}"
       EBAY_CLIENT_ID: "${EBAY_CLIENT_ID}"
       EBAY_CLIENT_SECRET: "${EBAY_CLIENT_SECRET}"
+      RESEND_API_KEY: "${RESEND_API_KEY}"
+      RESEND_FROM: "${RESEND_FROM:-Good Driver <onboarding@resend.dev>}"
+      APP_BASE_URL: "${APP_BASE_URL:-http://localhost}"
     expose:
       - "5000"
     restart: unless-stopped

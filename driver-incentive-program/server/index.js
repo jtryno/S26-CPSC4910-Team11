@@ -8,6 +8,7 @@ import { Buffer } from 'buffer';
 import cors from 'cors';
 import crypto from 'crypto'; // For generating reset tokens
 import pool from './db.js';
+import { sendPasswordResetEmail, sendTwoFaCodeEmail } from './email.js';
 import cookieParser from 'cookie-parser';
 import process from 'process';
 
@@ -530,17 +531,23 @@ async function findAvailableUsername(connection, desiredBase, reservedUsernames 
     }
 }
 
+function hashSecret(value) {
+    return crypto.createHash('sha256').update(String(value ?? '')).digest('hex');
+}
+
 // Creates the password reset token we reuse for onboarding links and normal resets.
 async function createPasswordResetToken(userId, connection = pool) {
     const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashSecret(token);
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    await connection.query(
+    const queryResult = await connection.query(
         'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
-        [userId, token, expiresAt]
+        [userId, tokenHash, expiresAt]
     );
+    const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
 
-    return { token, expiresAt };
+    return { token, expiresAt, tokenId: result?.insertId };
 }
 
 // Creates a consistent error object so helper functions can bubble clean 4xx responses back up.
@@ -803,6 +810,31 @@ async function insertOrganizationMembership(connection, userId, sponsorOrgId, us
 // Builds the frontend password setup link that imported users can follow to finish onboarding.
 function createOnboardingPath(token) {
     return `/password-reset?token=${encodeURIComponent(token)}&mode=onboarding`;
+}
+
+function getAppBaseUrl() {
+    const configuredUrl = process.env.APP_BASE_URL || process.env.FRONTEND_URL;
+    const baseUrl = configuredUrl || (process.env.NODE_ENV === 'test' ? 'http://localhost:5173' : null);
+    if (!baseUrl) {
+        throw new Error('APP_BASE_URL or FRONTEND_URL must be configured');
+    }
+
+    const parsedUrl = new URL(baseUrl);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        throw new Error('APP_BASE_URL or FRONTEND_URL must use http or https');
+    }
+
+    return parsedUrl.toString().replace(/\/+$/, '');
+}
+
+function createPasswordResetUrl(token, appBaseUrl) {
+    if (typeof appBaseUrl !== 'string' || appBaseUrl.trim() === '') {
+        throw new Error('App base URL is required to create password reset URL');
+    }
+
+    const resetUrl = new URL(`${appBaseUrl}/password-reset`);
+    resetUrl.searchParams.set('token', token);
+    return resetUrl.toString();
 }
 
 // Creates onboarding details only for imports where the CSV did not provide a password.
@@ -1971,27 +2003,40 @@ app.post('/api/login', async (req, res) => {
         }
 
         // if the user has 2FA turned on, don't finish logging them
-        // gen random 6 digit code and send it back so the
-        // frontend can show a second step asking the user to enter the code
+        // gen random 6 digit code and email it to the user
         if (user.two_fa_enabled) {
             // picks a random number between 100000 and 999999 (always 6 digits)
-            const code = Math.floor(100000 + Math.random() * 900000).toString();
+            const code = crypto.randomInt(100000, 1000000).toString();
 
             // hash code before storing it in the DB
-            const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+            const codeHash = hashSecret(code);
 
             // code expires after 10 mins
             const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
             // save the hashed code to the two_fa_codes table
-            await pool.query(
+            const [codeInsertResult] = await pool.query(
                 'INSERT INTO two_fa_codes (user_id, code_hash, expires_at) VALUES (?, ?, ?)',
                 [user.user_id, codeHash, expiresAt]
             );
 
-            // frontend 2FA is required and send the plain code so
-            // UI can display it to user (like how password reset shows token)
-            return res.json({ requiresTwoFa: true, userId: user.user_id, twoFaCode: code });
+            try {
+                await sendTwoFaCodeEmail({ to: user.email, code });
+            } catch (emailError) {
+                console.error('2FA email send error:', emailError);
+                if (codeInsertResult.insertId) {
+                    await pool.query('UPDATE two_fa_codes SET used_at = NOW() WHERE code_id = ?', [codeInsertResult.insertId]);
+                }
+                return res.status(502).json({
+                    error: 'Unable to send 2FA code email. Please try again later.'
+                });
+            }
+
+            return res.json({
+                requiresTwoFa: true,
+                userId: user.user_id,
+                message: '2FA code sent to your email.'
+            });
         }
 
         const { password_hash: _, ...userNoPassword } = user;
@@ -2018,14 +2063,30 @@ app.post('/api/login', async (req, res) => {
 // --- Password Reset Request ---
 app.post('/api/password-reset/request', async (req, res) => {
     const { email } = req.body;
+    const resetRequestMessage = 'If an account exists for that email, a reset link has been sent.';
     try {
-        const [users] = await pool.query('SELECT user_id FROM users WHERE email = ?', [email]);
-        if (users.length === 0) return res.status(404).json({ message: 'User not found' });
+        const [users] = await pool.query('SELECT user_id, email FROM users WHERE email = ?', [email]);
+        if (users.length === 0) return res.json({ message: resetRequestMessage });
 
-        const { token } = await createPasswordResetToken(users[0].user_id);
+        const appBaseUrl = getAppBaseUrl();
+        const { token, tokenId } = await createPasswordResetToken(users[0].user_id);
+        const resetUrl = createPasswordResetUrl(token, appBaseUrl);
 
-        res.json({ message: 'Reset token generated', token }); 
+        try {
+            await sendPasswordResetEmail({ to: users[0].email, resetUrl });
+        } catch (emailError) {
+            console.error('Password reset email send error:', emailError);
+            if (tokenId) {
+                await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_id = ?', [tokenId]);
+            }
+            return res.status(502).json({
+                error: 'Unable to send password reset email. Please try again later.'
+            });
+        }
+
+        res.json({ message: resetRequestMessage }); 
     } catch (error) {
+        console.error('Password reset request error:', error);
         res.status(500).json({ error: 'Failed to generate reset link' });
     }
 });
@@ -2034,15 +2095,20 @@ app.post('/api/password-reset/request', async (req, res) => {
 app.post('/api/password-reset/confirm', async (req, res) => {
     const { token, newPassword } = req.body;
 
+    if (typeof token !== 'string' || token.trim() === '') {
+        return res.status(400).json({ message: 'Reset token is required.' });
+    }
+
     // Enforce complexity on reset
     if (!isPasswordComplex(newPassword)) {
         return res.status(400).json({ message: 'Password does not meet complexity requirements.' });
     }
 
     try {
+        const tokenHash = hashSecret(token);
         const [tokens] = await pool.query(
             'SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL',
-            [token]
+            [tokenHash]
         );
 
         if (tokens.length === 0) return res.status(400).json({ message: 'Invalid or used token' });
@@ -2944,10 +3010,14 @@ app.post('/api/sponsor/points', async (req, res) => {
 app.post('/api/2fa/verify', async (req, res) => {
     const { userId, code, rememberMe } = req.body;
 
+    if (typeof code !== 'string' || code.trim() === '') {
+        return res.status(400).json({ message: '2FA code is required.' });
+    }
+
     try {
         // hash the code the user submitted so can compare it to what is in DB
         // plain code never stored, only hash
-        const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+        const codeHash = hashSecret(code);
 
         // look up a matching & unused code for curr user
         const [rows] = await pool.query(
@@ -3761,10 +3831,6 @@ app.put('/api/catalog/items/:itemId/sale-price', async (req, res) => {
                 [itemId]
             );
             if(favoriteDrivers.length > 0) {
-                let from_price = parseFloat(currentItem.last_price_value);
-                if(currentItem.sale_price !== null) {
-                    from_price = parseFloat(currentItem.sale_price);
-                }
                 const notifValues = favoriteDrivers.map(d => [
                     d.driver_user_id, 'price_drop',
                     `Price drop on "${currentItem.title}"! Now on sale.`,

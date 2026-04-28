@@ -11,7 +11,6 @@ const Login = () => {
 
   const [requiresTwoFa, setRequiresTwoFa] = useState(false);
   const [pendingUserId, setPendingUserId] = useState(null);
-  const [twoFaCode, setTwoFaCode] = useState('');
   const [twoFaInput, setTwoFaInput] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -33,7 +32,6 @@ const Login = () => {
       if (response.ok) {
         if (data.requiresTwoFa) {
           setPendingUserId(data.userId);
-          setTwoFaCode(data.twoFaCode);
           setRequiresTwoFa(true);
           setLoading(false);
           return;
@@ -93,24 +91,8 @@ const Login = () => {
       <div className="auth-card">
         <h2 className="auth-card__title">Two-Factor Authentication</h2>
         <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-5)' }}>
-          Your account has 2FA enabled. Enter the code below to complete sign in.
+          Your account has 2FA enabled. Enter the code we sent to your email to complete sign in.
         </p>
-
-        <div style={{
-          background: 'var(--color-surface-alt)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-lg)',
-          padding: 'var(--space-4)',
-          textAlign: 'center',
-          marginBottom: 'var(--space-6)',
-        }}>
-          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', margin: '0 0 var(--space-1)' }}>
-            Your 2FA code
-          </p>
-          <p style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 'var(--font-weight-bold)', letterSpacing: '0.2em', color: 'var(--color-text)', margin: 0 }}>
-            {twoFaCode}
-          </p>
-        </div>
 
         {error && <Alert tone="danger" className="auth-card__form" style={{ marginBottom: 'var(--space-4)' }}>{error}</Alert>}
 
@@ -132,7 +114,7 @@ const Login = () => {
             type="button"
             variant="secondary"
             fullWidth
-            onClick={() => { setRequiresTwoFa(false); setTwoFaCode(''); setTwoFaInput(''); setPendingUserId(null); }}
+            onClick={() => { setRequiresTwoFa(false); setTwoFaInput(''); setPendingUserId(null); }}
           >
             Back to Sign In
           </Button>
