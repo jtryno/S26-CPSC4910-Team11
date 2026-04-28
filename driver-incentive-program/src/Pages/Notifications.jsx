@@ -1,422 +1,241 @@
 import React, { useState, useEffect } from 'react';
-import { fetchNotifications, markNotificationRead, markAllNotificationsRead, fetchNotificationPreferences, updateNotificationPreferences } from '../api/NotificationApi';
+import {
+  fetchNotifications, markNotificationRead, markAllNotificationsRead,
+  fetchNotificationPreferences, updateNotificationPreferences,
+} from '../api/NotificationApi';
+import { PageHeader, Button, Badge, Tabs, EmptyState, Card } from '../components/ui';
 
-const notificationTypes = {
-    dropped: {label: 'Removed from Org', color: '#c62828'},
-    points_changed: {label: 'Points Changed', color: '#1565c0'},
-    order_placed: {label: 'Order Placed', color: '#2e7d32'},
-    password_changed: {label: 'Password Changed', color: '#e65100'},
-    application_status: {label: 'Application', color: '#6a1b9a'},
-    ticket_updated: {label: 'Support Ticket', color: '#0a94fd'},
-    catalog_item_removed: {label: 'Catalog Update', color: '#ff0095'}, 
-    price_drop: {label: 'Price Drop', color: '#2e7d32'}, 
+const NOTIFICATION_TYPES = {
+  dropped:             { label: 'Removed from Org', tone: 'danger' },
+  points_changed:      { label: 'Points Changed',   tone: 'info' },
+  order_placed:        { label: 'Order Placed',     tone: 'success' },
+  password_changed:    { label: 'Password Changed', tone: 'warning' },
+  application_status:  { label: 'Application',      tone: 'neutral' },
+  ticket_updated:      { label: 'Support Ticket',   tone: 'info' },
+  catalog_item_removed:{ label: 'Catalog Update',   tone: 'warning' },
+  price_drop:          { label: 'Price Drop',        tone: 'success' },
 };
 
 function formatDate(dateStr) {
-    if(!dateStr) return '';
-    return new Date(dateStr).toLocaleString('en-US', {month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true});
+  if (!dateStr) return '';
+  return new Date(dateStr).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
 }
 
 const NotificationCard = ({ notification, onRead }) => {
-    const nType = notificationTypes[notification.category] || { label: notification.category, color: '#666' };
-    const isUnread = !notification.read_at;
+  const nType = NOTIFICATION_TYPES[notification.category] || { label: notification.category, tone: 'neutral' };
+  const isUnread = !notification.read_at;
 
-    let cardBorder;
-    if(isUnread) {
-        cardBorder = '1px solid #7db2f8';
-    } else {
-        cardBorder = '1px solid #e0e0e0';
-    }
+  return (
+    <div
+      onClick={() => isUnread && onRead(notification.notification_id)}
+      style={{
+        display: 'flex',
+        gap: 'var(--space-4)',
+        padding: 'var(--space-4)',
+        marginBottom: 'var(--space-2)',
+        borderRadius: 'var(--radius-lg)',
+        border: isUnread ? '1px solid var(--color-info-border)' : '1px solid var(--color-border-light)',
+        background: isUnread ? 'var(--color-info-light)' : 'var(--color-surface)',
+        cursor: isUnread ? 'pointer' : 'default',
+        transition: 'background var(--transition-base)',
+      }}
+    >
+      <div style={{
+        width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 7,
+        background: isUnread ? 'var(--color-primary)' : 'var(--color-border)',
+      }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ marginBottom: 'var(--space-2)' }}>
+          <Badge tone={nType.tone}>{nType.label}</Badge>
+        </div>
+        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text)', margin: '0 0 var(--space-1)', lineHeight: 'var(--line-height-relaxed)' }}>
+          {notification.message}
+        </p>
+        <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-faint)', margin: 0 }}>
+          {formatDate(notification.created_at)}
+          {notification.read_at && (
+            <span style={{ marginLeft: 'var(--space-3)' }}>
+              · Read {formatDate(notification.read_at)}
+            </span>
+          )}
+        </p>
+      </div>
+      {isUnread && (
+        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 'var(--font-weight-medium)', flexShrink: 0, alignSelf: 'center' }}>
+          Mark read
+        </span>
+      )}
+    </div>
+  );
+};
 
-    let cardBackground;
-    if(isUnread) {
-        cardBackground = '#f0f7ff';
-    } else {
-        cardBackground = '#f9f9f9';
-    }
-
-    let cardCursor;
-    if(isUnread) {
-        cardCursor = 'pointer';
-    } else {
-        cardCursor = 'default';
-    }
-
-    let dotBackground;
-    if(isUnread) {
-        dotBackground = '#1565c0';
-    } else {
-        dotBackground = '#f9f9f9';
-    }
-
-    const handleClick = () => {
-        if(isUnread) {
-            onRead(notification.notification_id);
-        }
-    };
-
-    return (
-        <div
-            onClick={handleClick}
-            style={{
-                display: 'flex',
-                gap: '14px',
-                padding: '16px',
-                marginBottom: '10px',
-                borderRadius: '8px',
-                border: cardBorder,
-                background: cardBackground,
-                cursor: cardCursor,
-            }}
+const PreferenceRow = ({ label, enabled, mandatory, onToggle }) => (
+  <div style={{
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: 'var(--space-3) 0',
+    borderBottom: '1px solid var(--color-border-light)',
+  }}>
+    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text)' }}>
+      {label}
+      {mandatory && (
+        <span style={{ marginLeft: 'var(--space-2)', fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)', fontWeight: 'var(--font-weight-semibold)' }}>
+          Required
+        </span>
+      )}
+    </div>
+    {mandatory
+      ? <span style={{ color: 'var(--color-success)', fontWeight: 'var(--font-weight-semibold)', fontSize: 'var(--font-size-sm)' }}>Always On</span>
+      : (
+        <Button
+          variant={enabled ? 'success' : 'secondary'}
+          size="sm"
+          onClick={onToggle}
         >
-            <div style={{
-                width: '10px', height: '10px', borderRadius: '50%',
-                background: dotBackground,
-                marginTop: '6px', flexShrink: 0,
-            }} />
-            <div style={{ flex: 1 }}>
-                <span style={{
-                    display: 'inline-block',
-                    background: nType.color,
-                    color: '#fff',
-                    fontSize: '12px',
-                    fontWeight: '600',
-                    padding: '2px 8px',
-                    borderRadius: '12px',
-                    marginBottom: '6px',
-                }}>
-                    {nType.label}
-                </span>
-                <div style={{ fontSize: '14px', color: '#1a1a1a', lineHeight: '1.5', marginBottom: '6px' }}>
-                    {notification.message}
-                </div>
-                <div style={{ fontSize: '12px', color: '#888' }}>
-                    {formatDate(notification.created_at)}
-                    {notification.read_at && (
-                        <span style={{ marginLeft: '10px', color: '#bbb' }}>
-                            · Read {formatDate(notification.read_at)}
-                        </span>
-                    )}
-                </div>
-            </div>
-            {isUnread && (
-                <div style={{ fontSize: '12px', color: '#1565c0', alignSelf: 'center', flexShrink: 0 }}>
-                    Mark read
-                </div>
-            )}
-        </div>
-    );
-};
-
-const PreferenceRow = ({ label, enabled, mandatory, onToggle }) => {
-    let buttonBorder;
-    if(enabled) {
-        buttonBorder = '1px solid #2e7d32';
-    } else {
-        buttonBorder = '1px solid #e0e0e0';
-    }
-
-    let buttonBackground;
-    if(enabled) {
-        buttonBackground = '#e8f5e9';
-    } else {
-        buttonBackground = '#f9f9f9';
-    }
-
-    let buttonColor;
-    if(enabled) {
-        buttonColor = '#2e7d32';
-    } else {
-        buttonColor = '#888';
-    }
-
-    let buttonLabel;
-    if(enabled) {
-        buttonLabel = 'Enabled';
-    } else {
-        buttonLabel = 'Disabled';
-    }
-
-    return (
-        <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '12px 0', borderBottom: '1px solid #e0e0e0',
-        }}>
-            <div style={{ fontSize: '14px', color: '#1a1a1a' }}>
-                {label}
-                {mandatory && (
-                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#c62828', fontWeight: '600' }}>
-                        Required
-                    </span>
-                )}
-            </div>
-            {mandatory && <span style={{ color: '#2e7d32', fontWeight: '600', fontSize: '13px' }}>Always On</span>}
-            {!mandatory && (
-                <button
-                    onClick={onToggle}
-                    style={{
-                        padding: '5px 16px',
-                        fontSize: '13px',
-                        borderRadius: '4px',
-                        border: buttonBorder,
-                        cursor: 'pointer',
-                        fontWeight: '600',
-                        background: buttonBackground,
-                        color: buttonColor,
-                    }}
-                >
-                    {buttonLabel}
-                </button>
-            )}
-        </div>
-    );
-};
+          {enabled ? 'Enabled' : 'Disabled'}
+        </Button>
+      )}
+  </div>
+);
 
 const Notifications = () => {
-    const userData = JSON.parse(localStorage.getItem('user') || sessionStorage.getItem('user') || 'null');
-    const userId = userData?.user_id;
-    const isDriver = userData?.user_type === 'driver';
+  const userData = JSON.parse(localStorage.getItem('user') || sessionStorage.getItem('user') || 'null');
+  const userId = userData?.user_id;
+  const isDriver = userData?.user_type === 'driver';
 
-    const [notifications, setNotifications] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [prefs, setPrefs] = useState({points_changed_enabled: 1, order_placed_enabled: 1});
-    const [activeTab, setActiveTab] = useState('all');
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [prefs, setPrefs] = useState({ points_changed_enabled: 1, order_placed_enabled: 1 });
+  const [tabIndex, setTabIndex] = useState(0);
 
-    useEffect(() => {
-        if (!userId) return;
-        const load = async () => {
-            let preferencesPromise;
-            if(isDriver) {
-                preferencesPromise = fetchNotificationPreferences(userId);
-            } else {
-                preferencesPromise = Promise.resolve(null);
-            }
-            const [notifs, preferences] = await Promise.all([
-                fetchNotifications(userId),
-                preferencesPromise,
-            ]);
-            setNotifications(notifs);
-            if(preferences) {
-                setPrefs(preferences);
-            }
-            setLoading(false);
-        };
-        load();
-    }, [userId]);
-
-    const handleMarkRead = async (notificationId) => {
-        await markNotificationRead(notificationId);
-        setNotifications(prev =>
-            prev.map(n => {
-                if(n.notification_id === notificationId) {
-                    return {...n, read_at: new Date().toISOString()};
-                }
-                return n;
-            })
-        );
+  useEffect(() => {
+    if (!userId) return;
+    const load = async () => {
+      const [notifs, preferences] = await Promise.all([
+        fetchNotifications(userId),
+        isDriver ? fetchNotificationPreferences(userId) : Promise.resolve(null),
+      ]);
+      setNotifications(notifs);
+      if (preferences) setPrefs(preferences);
+      setLoading(false);
     };
+    load();
+  }, [userId]);
 
-    const handleMarkAllRead = async () => {
-        await markAllNotificationsRead(userId);
-        const now = new Date().toISOString();
-        setNotifications(prev => prev.map(n => {
-            if(n.read_at) {
-                return n;
-            }
-            return {...n, read_at: now};
-        }));
-    };
-
-    const handleTogglePref = async (key) => {
-        let newVal;
-        if(prefs[key] === 1) {
-            newVal = 0;
-        } else {
-            newVal = 1;
-        }
-        const newPrefs = {...prefs, [key]: newVal};
-        setPrefs(newPrefs);
-        await updateNotificationPreferences(userId, newPrefs);
-    };
-
-    const handleToggleAll = async () => {
-        const anyEnabled = prefs.points_changed_enabled === 1 || prefs.order_placed_enabled === 1;
-        let newVal;
-        if(anyEnabled) {
-            newVal = 0;
-        } else {
-            newVal = 1;
-        }
-        const newPrefs = {points_changed_enabled: newVal, order_placed_enabled: newVal};
-        setPrefs(newPrefs);
-        await updateNotificationPreferences(userId, newPrefs);
-    };
-
-    const unreadCount = notifications.filter(n => !n.read_at).length;
-
-    let displayed;
-    if(activeTab === 'unread') {
-        displayed = notifications.filter(n => !n.read_at);
-    } else {
-        displayed = notifications;
-    }
-
-    const allDisabled = prefs.points_changed_enabled === 0 && prefs.order_placed_enabled === 0;
-
-    let unreadText;
-    if(unreadCount > 0) {
-        unreadText = `${unreadCount} unread`;
-    } else {
-        unreadText = 'Caught Up';
-    }
-
-    let toggleAllLabel;
-    if(allDisabled) {
-        toggleAllLabel = 'Enable All';
-    } else {
-        toggleAllLabel = 'Disable All';
-    }
-
-    let emptyMessage;
-    if(activeTab === 'unread') {
-        emptyMessage = 'No unread notifications.';
-    } else {
-        emptyMessage = 'No notifications yet.';
-    }
-
-    if (!userData) return <div style={{padding: '40px'}}>Please log in.</div>;
-    if (loading) return <div style={{padding: '40px', color: '#888'}}>Loading notifications</div>;
-
-    return (
-        <div style={{maxWidth: '800px', margin: '0 auto'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
-                <div>
-                    <h1 style={{margin: '0 0 4px 0', color: '#1a1a1a'}}>Notifications</h1>
-                    <div style={{fontSize: '13px', color: '#888'}}>
-                        {unreadText}
-                    </div>
-                </div>
-                {unreadCount > 0 && (
-                    <button
-                        onClick={handleMarkAllRead}
-                        style={{
-                            padding: '6px 16px',
-                            borderRadius: '4px',
-                            border: '1px solid #e0e0e0',
-                            background: '#f9f9f9',
-                            color: '#1a1a1a',
-                            cursor: 'pointer',
-                            fontSize: '13px',
-                        }}
-                    >
-                        Mark all read
-                    </button>
-                )}
-            </div>
-
-            <div style={{display: 'flex', borderBottom: '2px solid #f9f9f9', marginBottom: '20px'}}>
-                {['all', 'unread'].map(tab => {
-                    let tabBorderBottom;
-                    if(activeTab === tab) {
-                        tabBorderBottom = '2px solid #1565c0';
-                    } else {
-                        tabBorderBottom = '2px solid transparent';
-                    }
-
-                    let tabFontWeight;
-                    if(activeTab === tab) {
-                        tabFontWeight = '600';
-                    } else {
-                        tabFontWeight = '400';
-                    }
-
-                    let tabColor;
-                    if(activeTab === tab) {
-                        tabColor = '#1565c0';
-                    } else {
-                        tabColor = '#666';
-                    }
-
-                    let tabLabel;
-                    if(tab === 'unread' && unreadCount > 0) {
-                        tabLabel = `${tab} (${unreadCount})`;
-                    } else {
-                        tabLabel = tab;
-                    }
-
-                    return (
-                        <button
-                            key={tab}
-                            onClick={() => setActiveTab(tab)}
-                            style={{
-                                padding: '8px 20px',
-                                border: 'none',
-                                borderBottom: tabBorderBottom,
-                                marginBottom: '-2px',
-                                background: 'none',
-                                cursor: 'pointer',
-                                fontWeight: tabFontWeight,
-                                color: tabColor,
-                                fontSize: '14px',
-                                textTransform: 'capitalize',
-                            }}
-                        >
-                            {tabLabel}
-                        </button>
-                    );
-                })}
-            </div>
-
-            <div style={{marginBottom: '40px'}}>
-                {displayed.length === 0 && (
-                    <div style={{textAlign: 'center', padding: '60px 0', color: '#888', fontSize: '14px'}}>
-                        {emptyMessage}
-                    </div>
-                )}
-                {displayed.length > 0 && (
-                    displayed.map(n => (
-                        <NotificationCard key={n.notification_id} notification={n} onRead={handleMarkRead} />
-                    ))
-                )}
-            </div>
-
-            {isDriver && (
-                <div style={{background: '#f9f9f9', borderRadius: '8px', border: '1px solid #e0e0e0', padding: '20px 24px'}}>
-                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
-                        <h2 style={{margin: 0, fontSize: '16px', color: '#1a1a1a'}}>Notification Preferences</h2>
-                        <button
-                            onClick={handleToggleAll}
-                            style={{
-                                padding: '5px 14px',
-                                fontSize: '13px',
-                                borderRadius: '4px',
-                                border: '1px solid #e0e0e0',
-                                background: '#f9f9f9',
-                                cursor: 'pointer',
-                                color: '#1a1a1a',
-                            }}
-                        >
-                            {toggleAllLabel}
-                        </button>
-                    </div>
-                    <PreferenceRow label="Removed from organization" enabled={true} mandatory={true} />
-                    <PreferenceRow label="Password changed" enabled={true} mandatory={true} />
-                    <PreferenceRow
-                        label="Points added or removed"
-                        enabled={prefs.points_changed_enabled === 1}
-                        mandatory={false}
-                        onToggle={() => handleTogglePref('points_changed_enabled')}
-                    />
-                    <PreferenceRow
-                        label="Order placed"
-                        enabled={prefs.order_placed_enabled === 1}
-                        mandatory={false}
-                        onToggle={() => handleTogglePref('order_placed_enabled')}
-                    />
-                </div>
-            )}
-        </div>
+  const handleMarkRead = async (notificationId) => {
+    await markNotificationRead(notificationId);
+    setNotifications(prev =>
+      prev.map(n => n.notification_id === notificationId
+        ? { ...n, read_at: new Date().toISOString() }
+        : n)
     );
+  };
+
+  const handleMarkAllRead = async () => {
+    await markAllNotificationsRead(userId);
+    const now = new Date().toISOString();
+    setNotifications(prev => prev.map(n => n.read_at ? n : { ...n, read_at: now }));
+  };
+
+  const handleTogglePref = async (key) => {
+    const newPrefs = { ...prefs, [key]: prefs[key] === 1 ? 0 : 1 };
+    setPrefs(newPrefs);
+    await updateNotificationPreferences(userId, newPrefs);
+  };
+
+  const handleToggleAll = async () => {
+    const anyEnabled = prefs.points_changed_enabled === 1 || prefs.order_placed_enabled === 1;
+    const newVal = anyEnabled ? 0 : 1;
+    const newPrefs = { points_changed_enabled: newVal, order_placed_enabled: newVal };
+    setPrefs(newPrefs);
+    await updateNotificationPreferences(userId, newPrefs);
+  };
+
+  if (!userData) return <div style={{ padding: 'var(--space-10)' }}>Please log in.</div>;
+  if (loading)   return <div style={{ padding: 'var(--space-10)', color: 'var(--color-text-muted)' }}>Loading…</div>;
+
+  const unreadCount = notifications.filter(n => !n.read_at).length;
+  const allDisabled = prefs.points_changed_enabled === 0 && prefs.order_placed_enabled === 0;
+
+  const tabs = [
+    {
+      label: 'All',
+      content: (
+        <NotificationList
+          items={notifications}
+          emptyMessage="No notifications yet."
+          onRead={handleMarkRead}
+        />
+      ),
+    },
+    {
+      label: unreadCount > 0 ? `Unread (${unreadCount})` : 'Unread',
+      content: (
+        <NotificationList
+          items={notifications.filter(n => !n.read_at)}
+          emptyMessage="No unread notifications."
+          onRead={handleMarkRead}
+        />
+      ),
+    },
+  ];
+
+  return (
+    <div style={{ maxWidth: 760, margin: '0 auto' }}>
+      <PageHeader
+        title="Notifications"
+        subtitle={unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
+        actions={
+          unreadCount > 0 && (
+            <Button variant="secondary" size="sm" onClick={handleMarkAllRead}>
+              Mark all read
+            </Button>
+          )
+        }
+      />
+
+      <Tabs tabs={tabs} activeIndex={tabIndex} onChange={setTabIndex} />
+
+      {isDriver && (
+        <Card style={{ marginTop: 'var(--space-8)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+            <h3 style={{ margin: 0, fontSize: 'var(--font-size-base)' }}>Notification Preferences</h3>
+            <Button variant="secondary" size="sm" onClick={handleToggleAll}>
+              {allDisabled ? 'Enable All' : 'Disable All'}
+            </Button>
+          </div>
+          <PreferenceRow label="Removed from organization" enabled mandatory />
+          <PreferenceRow label="Password changed" enabled mandatory />
+          <PreferenceRow
+            label="Points added or removed"
+            enabled={prefs.points_changed_enabled === 1}
+            onToggle={() => handleTogglePref('points_changed_enabled')}
+          />
+          <PreferenceRow
+            label="Order placed"
+            enabled={prefs.order_placed_enabled === 1}
+            onToggle={() => handleTogglePref('order_placed_enabled')}
+          />
+        </Card>
+      )}
+    </div>
+  );
+};
+
+const NotificationList = ({ items, emptyMessage, onRead }) => {
+  if (items.length === 0) {
+    return (
+      <EmptyState
+        title={emptyMessage}
+        message="Check back later for new activity."
+      />
+    );
+  }
+  return items.map(n => (
+    <NotificationCard key={n.notification_id} notification={n} onRead={onRead} />
+  ));
 };
 
 export default Notifications;

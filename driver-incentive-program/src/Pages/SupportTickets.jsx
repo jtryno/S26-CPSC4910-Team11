@@ -19,12 +19,13 @@ import {
     addTicketComment,
     fetchPurchasedItems,
 } from '../api/SupportTicketApi';
+import { PageHeader, Badge, Button, Alert, Card, EmptyState } from '../components/ui';
 
-const STATUS_STYLES = {
-    open: { background: '#fff3e0', color: '#e65100', label: 'Open' },
-    in_progress: { background: '#e3f2fd', color: '#1565c0', label: 'In Progress' },
-    resolved: { background: '#e8f5e9', color: '#2e7d32', label: 'Resolved' },
-    archived: { background: '#f5f5f5', color: '#616161', label: 'Archived' },
+const STATUS_TONE = {
+    open: 'warning', in_progress: 'info', resolved: 'success', archived: 'neutral',
+};
+const STATUS_LABEL = {
+    open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', archived: 'Archived',
 };
 
 const SECURITY_ISSUE_TYPES = {
@@ -36,22 +37,11 @@ const SECURITY_ISSUE_TYPES = {
     other: 'Other',
 };
 
-// current status of a ticket
-const StatusBadge = ({ status }) => {
-    const style = STATUS_STYLES[status] || STATUS_STYLES.open;
-    return (
-        <span style={{
-            background: style.background,
-            color: style.color,
-            padding: '2px 10px',
-            borderRadius: '12px',
-            fontSize: '0.85em',
-            fontWeight: 600,
-        }}>
-            {style.label}
-        </span>
-    );
-};
+const StatusBadge = ({ status }) => (
+    <Badge tone={STATUS_TONE[status] || 'neutral'}>
+        {STATUS_LABEL[status] || status}
+    </Badge>
+);
 
 // displaying user role next to a comment author's name
 const USER_TYPE_LABEL = { driver: 'Driver', sponsor: 'Sponsor', admin: 'Admin' };
@@ -1462,7 +1452,7 @@ const AdminView = ({ user }) => {
 // main, decides which view to show based on user role
 const SupportTickets = ({ userData }) => {
     if (!userData) {
-        return <p style={{ padding: '30px', color: '#666' }}>Please log in to view support tickets.</p>;
+        return <div style={{ padding: 'var(--space-8)', color: 'var(--color-text-muted)' }}>Please log in to view support tickets.</div>;
     }
 
     if (userData.user_type === 'admin') {

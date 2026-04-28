@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Link, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import './App.css'
 import Home from './Pages/Home'
 import About from './Pages/About'
@@ -14,11 +14,12 @@ import Catalog from './Pages/Catalog'
 import SupportTickets from './Pages/SupportTickets'
 import InactivityModal from './components/InactivityModal'
 import Reports from './Pages/Reports/Reports'
-import { FaUser } from 'react-icons/fa';
+import { FaUser, FaBell, FaCommentDots } from 'react-icons/fa';
 import Notifications from './Pages/Notifications'
 import Messages from './Pages/Messages'
 import ImpersonationBanner from './components/ImpersonationBanner'
 import AdminSettings from './Pages/AdminSettings'
+import { ToastProvider } from './components/ui'
 import {
   getActiveSponsorOrgId,
   getDriverSponsors,
@@ -353,79 +354,99 @@ useEffect(() => {
   };
 
   return (
-    <>
+    <ToastProvider>
       <ImpersonationBanner />
       <nav className="navbar">
         <div className="nav-brand">
           <Link to="/">Driver Incentive</Link>
         </div>
+
         <div className="nav-center">
           <ul className="nav-links">
-            <li><Link to="/">Home</Link></li>
-            <li><Link to="/about">About</Link></li>
-            {isLoggedIn && <li><Link to="/organization">Organizations</Link></li>}
-            {isLoggedIn && (
-              <>
-                <li><Link to="/dashboard">Dashboard</Link></li>
-                <li><Link to="/catalog">Catalog</Link></li>
-                <li><Link to="/notifications">Notifications</Link></li>
-                <li><Link to="/support-tickets">Support</Link></li>
-                <li><Link to="/messages">Messages</Link></li>
-              </>
+            <li><NavLink to="/" end>Home</NavLink></li>
+            <li><NavLink to="/about">About</NavLink></li>
+            {isLoggedIn && <li><NavLink to="/organization">Organizations</NavLink></li>}
+            {isLoggedIn && <li><NavLink to="/dashboard">Dashboard</NavLink></li>}
+            {isLoggedIn && <li><NavLink to="/catalog">Catalog</NavLink></li>}
+            {isLoggedIn && <li><NavLink to="/support-tickets">Support</NavLink></li>}
+            {userData?.user_type !== 'driver' && isLoggedIn && (
+              <li><NavLink to={`/reports/${userData?.user_type}`}>Reports</NavLink></li>
             )}
-            {userData?.user_type != "driver" && isLoggedIn && <li><Link to={`/reports/${userData?.user_type}`}>Reports</Link></li>}
-            {userData?.user_type === 'admin' && isLoggedIn && <li><Link to="/settings">Settings</Link></li>}
+            {userData?.user_type === 'admin' && isLoggedIn && (
+              <li><NavLink to="/settings">Settings</NavLink></li>
+            )}
           </ul>
         </div>
+
         <ul className="nav-auth">
-          {!isLoggedIn && <li><Link to="/login">Login</Link></li>}
-          {!isLoggedIn && <li><Link to="/driver-signup">Sign Up</Link></li>}
+          {!isLoggedIn && (
+            <>
+              <li><Link to="/login">Log In</Link></li>
+              <li>
+                <Link to="/driver-signup" style={{
+                  padding: 'var(--space-1) var(--space-3)',
+                  background: 'var(--color-primary)',
+                  color: '#fff',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: 'var(--font-size-sm)',
+                  fontWeight: 'var(--font-weight-medium)',
+                }}>
+                  Sign Up
+                </Link>
+              </li>
+            </>
+          )}
           {isLoggedIn && (
-            <div style={{display: 'flex', alignItems: 'center', gap: '20px'}}>
+            <>
               {userData?.user_type === 'driver' && driverSponsors.length > 0 && (
                 driverSponsors.length === 1 ? (
-                  <span style={{ color: '#2f2f2f', fontSize: '14px' }}>
-                    {driverSponsors[0].name}
-                  </span>
+                  <li>
+                    <span className="nav-sponsor-label">{driverSponsors[0].name}</span>
+                  </li>
                 ) : (
-                  <select
-                    aria-label="Active sponsor"
-                    value={activeSponsorOrgId ?? ''}
-                    onChange={(e) => setActiveSponsorOrgId(Number(e.target.value))}
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      border: '1px solid #c0c0c0',
-                      fontSize: '14px',
-                      background: '#fff',
-                    }}
-                  >
-                    {driverSponsors.map(s => (
-                      <option key={s.sponsor_org_id} value={s.sponsor_org_id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  <li>
+                    <select
+                      className="nav-sponsor-select"
+                      aria-label="Active sponsor"
+                      value={activeSponsorOrgId ?? ''}
+                      onChange={(e) => setActiveSponsorOrgId(Number(e.target.value))}
+                    >
+                      {driverSponsors.map(s => (
+                        <option key={s.sponsor_org_id} value={s.sponsor_org_id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </li>
                 )
               )}
-              <Link to="/account" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
-                <FaUser size={20} />
-                <span className="nav-username">
-                  {userData?.username || 'User'}
-                </span>
-              </Link>
               <li>
-                <a href="#" onClick={(e) => {
-                  e.preventDefault();
-                  handleLogout();
-                }} style={{ cursor: 'pointer' }}>
-                  Logout
-                </a>
+                <NavLink to="/notifications" className="nav-user-link" title="Notifications">
+                  <FaBell size={16} />
+                </NavLink>
               </li>
-            </div>
+              <li>
+                <NavLink to="/messages" className="nav-user-link" title="Messages">
+                  <FaCommentDots size={16} />
+                </NavLink>
+              </li>
+              <li aria-hidden="true"><div className="nav-divider" /></li>
+              <li>
+                <NavLink to="/account" className="nav-user-link">
+                  <FaUser size={14} />
+                  <span className="nav-username">{userData?.username || 'Account'}</span>
+                </NavLink>
+              </li>
+              <li>
+                <button className="nav-logout-btn" onClick={handleLogout}>
+                  Log out
+                </button>
+              </li>
+            </>
           )}
         </ul>
       </nav>
+
       <main className="main-content">
         <Routes>
           <Route path="/" element={<Home />} />
@@ -451,7 +472,7 @@ useEffect(() => {
         onStayLoggedIn={handleStayLoggedIn}
         onLogoutNow={handleLogoutNow}
       />
-    </>
+    </ToastProvider>
   )
 }
 
