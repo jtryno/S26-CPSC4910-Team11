@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - justin-reworks
     types:
       - opened
       - synchronize
@@ -17,10 +18,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      DB_HOST: ${{ secrets.DB_HOST }}
-      DB_USER: ${{ secrets.DB_USER }}
-      DB_PASS: ${{ secrets.DB_PASS }}
-      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_HOST: ${{ secrets.AIVEN_DB_HOST }}
+      DB_USER: ${{ secrets.AIVEN_DB_USER }}
+      DB_PASS: ${{ secrets.AIVEN_DB_PASS }}
+      DB_NAME: ${{ secrets.AIVEN_DB_NAME }}
+      DB_PORT: "26042"
+      DB_SSL: "true"
+      DB_SSL_CA: ${{ secrets.AIVEN_DB_SSL_CA }}
     defaults:
       run:
         working-directory: driver-incentive-program
