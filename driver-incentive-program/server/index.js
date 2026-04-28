@@ -327,7 +327,7 @@ async function createNotification(userId, category, message, extras = {}) {
 async function getSponsorOrgId(userId, userType) {
     if (userType === 'driver') {
         const [rows] = await pool.query(
-            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active" AND is_archived = 0',
+            `SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = 'active' AND is_archived = 0`,
             [userId]
         );
         return rows.length > 0 ? rows[0].sponsor_org_id : null;
@@ -1085,8 +1085,8 @@ app.post('/api/application', async (req, res) => {
     const { user_id, org_id } = req.body;
     try {
         const [result] = await pool.query(
-            'INSERT INTO driver_applications (driver_user_id, sponsor_org_id, status) VALUES (?, ?, "pending")',
-            [user_id, org_id]
+            'INSERT INTO driver_applications (driver_user_id, sponsor_org_id, status) VALUES (?, ?, ?)',
+            [user_id, org_id, 'pending']
         );
         res.json({ message: 'Driver application submitted successfully', application_id: result.insertId });
     } catch (error) {
@@ -1101,8 +1101,8 @@ app.delete('/api/application/:application_id', async (req, res) => {
     try {
         // Only withdraw if still pending — prevents canceling already-reviewed applications
         const [result] = await pool.query(
-            'UPDATE driver_applications SET status = "withdrawn" WHERE application_id = ? AND status = "pending"',
-            [application_id]
+            'UPDATE driver_applications SET status = ? WHERE application_id = ? AND status = ?',
+            ['withdrawn', application_id, 'pending']
         );
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Application not found or already reviewed' });
@@ -1193,7 +1193,7 @@ app.get('/api/organization/:sponsor_org_id/count', async (req, res) => {
 
     try {
         const [[{ driverCount }]] = await pool.query(
-            'SELECT COUNT(*) AS driverCount FROM driver_sponsor WHERE sponsor_org_id = ? AND driver_status = "active"',
+            `SELECT COUNT(*) AS driverCount FROM driver_sponsor WHERE sponsor_org_id = ? AND driver_status = 'active'`,
             [sponsor_org_id]
         );
         const [[{ sponsorCount }]] = await pool.query(
@@ -2062,7 +2062,7 @@ app.post('/api/password-reset/confirm', async (req, res) => {
         await createNotification(tokens[0].user_id, 'password_changed', 'Your password was successfully changed. If you did not initiate this, please contact support.');
 
         const [user] = await pool.query('SELECT username FROM users WHERE user_id = ?', [tokens[0].user_id]); 
-        await pool.query('INSERT INTO password_change_log (user_id, change_type, username) VALUES (?, "reset", ?)', [tokens[0].user_id, user[0].username]);
+        await pool.query('INSERT INTO password_change_log (user_id, change_type, username) VALUES (?, ?, ?)', [tokens[0].user_id, 'reset', user[0].username]);
 
         res.json({ message: 'Password reset successfully' });
     } catch (error) {
@@ -2522,7 +2522,7 @@ app.post('/api/user/leave-organization', async (req, res) => {
             let sponsor_org_id = requestedOrgId ? Number(requestedOrgId) : null;
             if (sponsor_org_id) {
                 const [check] = await pool.query(
-                    'SELECT 1 FROM driver_sponsor WHERE driver_user_id = ? AND sponsor_org_id = ? AND driver_status = "active"',
+                    `SELECT 1 FROM driver_sponsor WHERE driver_user_id = ? AND sponsor_org_id = ? AND driver_status = 'active'`,
                     [user_id, sponsor_org_id]
                 );
                 if (check.length === 0) {
@@ -2530,7 +2530,7 @@ app.post('/api/user/leave-organization', async (req, res) => {
                 }
             } else {
                 const [rows] = await pool.query(
-                    'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
+                    `SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = 'active'`,
                     [user_id]
                 );
                 if (rows.length === 0) {
@@ -2539,12 +2539,12 @@ app.post('/api/user/leave-organization', async (req, res) => {
                 sponsor_org_id = rows[0].sponsor_org_id;
             }
             await pool.query(
-                'UPDATE driver_sponsor SET driver_status = "dropped", dropped_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ?',
-                [user_id, sponsor_org_id]
+                'UPDATE driver_sponsor SET driver_status = ?, dropped_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ?',
+                ['dropped', user_id, sponsor_org_id]
             );
             await pool.query(
-                'UPDATE driver_applications SET status = "withdrawn", reviewed_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = "approved"',
-                [user_id, sponsor_org_id]
+                'UPDATE driver_applications SET status = ?, reviewed_at = NOW() WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = ?',
+                ['withdrawn', user_id, sponsor_org_id, 'approved']
             );
         } else if (user_type === 'sponsor') {
             const [rows] = await pool.query(
@@ -3032,8 +3032,8 @@ app.delete('/api/admin/user/:userId', async (req, res) => {
 
         if (user_type === 'driver') {
             await pool.query(
-                'UPDATE driver_sponsor SET driver_status = "dropped", dropped_at = NOW() WHERE driver_user_id = ? AND driver_status = "active"',
-                [userId]
+                'UPDATE driver_sponsor SET driver_status = ?, dropped_at = NOW() WHERE driver_user_id = ? AND driver_status = ?',
+                ['dropped', userId, 'active']
             );
         }
 
@@ -3137,7 +3137,7 @@ app.post('/api/driver/drop', async (req, res) => {
     try {
         //get users active org id so we can get org name to show who dropped them
         const [orgIdArray] = await pool.query(
-            'SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"',
+            `SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = 'active'`,
             [driverId]
         );
 
@@ -3152,8 +3152,8 @@ app.post('/api/driver/drop', async (req, res) => {
         const orgName = orgRows[0].name;
 
         await pool.query(
-            'UPDATE driver_sponsor SET driver_status = "dropped", dropped_at = NOW(), drop_reason = ? WHERE driver_user_id = ? AND sponsor_org_id = ?',
-            [drop_reason || null, driverId, sponsor_org_id]
+            'UPDATE driver_sponsor SET driver_status = ?, dropped_at = NOW(), drop_reason = ? WHERE driver_user_id = ? AND sponsor_org_id = ?',
+            ['dropped', drop_reason || null, driverId, sponsor_org_id]
         );
 
         let msg;
@@ -3282,8 +3282,8 @@ app.post('/api/point-contest', async (req, res) => {
 
         // Prevent duplicate pending contests for the same transaction
         const [existing] = await pool.query(
-            'SELECT contest_id FROM point_contests WHERE transaction_id = ? AND status = "pending"',
-            [transaction_id]
+            'SELECT contest_id FROM point_contests WHERE transaction_id = ? AND status = ?',
+            [transaction_id, 'pending']
         );
         if (existing.length > 0) {
             return res.status(409).json({ error: 'A pending contest already exists for this transaction' });
@@ -3406,8 +3406,8 @@ app.put('/api/point-contest/:contest_id', async (req, res) => {
 
     try {
         const [contestRows] = await pool.query(
-            'SELECT * FROM point_contests WHERE contest_id = ? AND status = "pending"',
-            [contest_id]
+            'SELECT * FROM point_contests WHERE contest_id = ? AND status = ?',
+            [contest_id, 'pending']
         );
         if (contestRows.length === 0) {
             return res.status(404).json({ error: 'Contest not found or already reviewed' });
@@ -3656,7 +3656,7 @@ app.delete('/api/catalog/items/:itemId', async (req, res) => {
         );
         if(item) {
             const [drivers] = await pool.query(
-                'SELECT driver_user_id AS user_id FROM driver_sponsor WHERE sponsor_org_id = ? AND driver_status = "active"',
+                `SELECT driver_user_id AS user_id FROM driver_sponsor WHERE sponsor_org_id = ? AND driver_status = 'active'`,
                 [item.sponsor_org_id]
             );
             for (const driver of drivers) {
@@ -3975,15 +3975,15 @@ app.post('/api/cart', async (req, res) => {
     }
     try {
         const [existing] = await pool.query(
-            'SELECT cart_id FROM carts WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = "active" LIMIT 1',
-            [driverUserId, sponsorOrgId]
+            'SELECT cart_id FROM carts WHERE driver_user_id = ? AND sponsor_org_id = ? AND status = ? LIMIT 1',
+            [driverUserId, sponsorOrgId, 'active']
         );
         if (existing.length > 0) {
             return res.json({ cart_id: existing[0].cart_id });
         }
         const [result] = await pool.query(
-            'INSERT INTO carts (driver_user_id, sponsor_org_id, created_by_user_id, status) VALUES (?, ?, ?, "active")',
-            [driverUserId, sponsorOrgId, createdByUserId || driverUserId]
+            'INSERT INTO carts (driver_user_id, sponsor_org_id, created_by_user_id, status) VALUES (?, ?, ?, ?)',
+            [driverUserId, sponsorOrgId, createdByUserId || driverUserId, 'active']
         );
         res.status(201).json({ cart_id: result.insertId });
     } catch (error) {
@@ -4073,8 +4073,8 @@ app.post('/api/orders', async (req, res) => {
 
         // 1. Verify cart belongs to driver and is still active
         const [[cartRow]] = await conn.query(
-            'SELECT cart_id FROM carts WHERE cart_id = ? AND driver_user_id = ? AND status = "active"',
-            [cartId, driverUserId]
+            'SELECT cart_id FROM carts WHERE cart_id = ? AND driver_user_id = ? AND status = ?',
+            [cartId, driverUserId, 'active']
         );
         if (!cartRow) {
             await conn.rollback();
@@ -4120,8 +4120,8 @@ app.post('/api/orders', async (req, res) => {
 
         // 6. Create order record
         const [orderResult] = await conn.query(
-            'INSERT INTO orders (driver_user_id, sponsor_org_id, placed_by_user_id, cart_id, status) VALUES (?, ?, ?, ?, "placed")',
-            [driverUserId, sponsorOrgId, placedByUserId || driverUserId, cartId]
+            'INSERT INTO orders (driver_user_id, sponsor_org_id, placed_by_user_id, cart_id, status) VALUES (?, ?, ?, ?, ?)',
+            [driverUserId, sponsorOrgId, placedByUserId || driverUserId, cartId, 'placed']
         );
         const orderId = orderResult.insertId;
 
@@ -4144,8 +4144,8 @@ app.post('/api/orders', async (req, res) => {
 
         // 9. Mark cart as checked out
         await conn.query(
-            'UPDATE carts SET status = "checked_out", updated_at = NOW() WHERE cart_id = ?',
-            [cartId]
+            'UPDATE carts SET status = ?, updated_at = NOW() WHERE cart_id = ?',
+            ['checked_out', cartId]
         );
 
         await conn.commit();
@@ -4714,8 +4714,8 @@ app.put('/api/orders/:orderId/cancel', async (req, res) => {
 
         // Find the original point deduction for this order
         const [[tx]] = await conn.query(
-            'SELECT transaction_id, point_amount FROM point_transactions WHERE driver_user_id = ? AND sponsor_org_id = ? AND source = "order" AND reason = ? AND point_amount < 0',
-            [driverUserId, order.sponsor_org_id, `Order #${orderId}`]
+            'SELECT transaction_id, point_amount FROM point_transactions WHERE driver_user_id = ? AND sponsor_org_id = ? AND source = ? AND reason = ? AND point_amount < 0',
+            [driverUserId, order.sponsor_org_id, 'order', `Order #${orderId}`]
         );
 
         // Cancel the order
@@ -5333,7 +5333,7 @@ app.get('/api/messages/announcements/:userId', async (req, res) => {
         const userType = userRows[0].user_type;
         let orgIds = [];
         if (userType === 'driver') {
-            const [rows] = await pool.query('SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = "active"', [userId]);
+            const [rows] = await pool.query(`SELECT sponsor_org_id FROM driver_sponsor WHERE driver_user_id = ? AND driver_status = 'active'`, [userId]);
             orgIds = rows.map(row => row.sponsor_org_id);
         } 
         else if (userType === 'sponsor') {
@@ -5655,7 +5655,7 @@ app.get('/api/sales', async(req, res) => {
 app.get('/api/sales/items', async(req, res) => {
     const { orderId, orgId, dateRange } = req.query;
     try {
-        let query = 'SELECT order_items.*, orders.sponsor_org_id, orders.created_at FROM order_items JOIN orders ON order_items.order_id = orders.order_id WHERE orders.status != "cancelled"';
+        let query = `SELECT order_items.*, orders.sponsor_org_id, orders.created_at FROM order_items JOIN orders ON order_items.order_id = orders.order_id WHERE orders.status != 'cancelled'`;
         const conditions = [];
         const params = [];
 
