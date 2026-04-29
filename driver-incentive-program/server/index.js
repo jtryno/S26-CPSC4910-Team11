@@ -219,11 +219,29 @@ app.get('/api/catalog', async (req, res) => {
 });
 
 // Image proxy endpoint to handle CORS issues with third-party seller images
+const ALLOWED_PROXY_HOSTS = [
+    'i.ebayimg.com',
+    'ir.ebaystatic.com',
+    'thumbs.ebaystatic.com',
+    'i.ebayimg.com',
+];
+
 app.get('/api/proxy-image', async (req, res) => {
     const { url } = req.query;
-    
+
     if (!url) {
         return res.status(400).json({ error: 'url parameter is required' });
+    }
+
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(url);
+    } catch {
+        return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !ALLOWED_PROXY_HOSTS.includes(parsedUrl.hostname)) {
+        return res.status(400).json({ error: 'URL host not permitted' });
     }
 
     try {
@@ -1094,6 +1112,9 @@ app.get('/api/application/organization/:org_id', async (req, res) => {
 });
 
 app.put('/api/application/:application_id', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     try {
         const { application_id } = req.params;
         const { status, decision_reason, user_id } = req.body;
@@ -1138,6 +1159,9 @@ app.put('/api/application/:application_id', async (req, res) => {
 });
 
 app.post('/api/application', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     const { user_id, org_id } = req.body;
     try {
         const [result] = await pool.query(
@@ -1191,6 +1215,9 @@ app.get('/api/application/user/:user_id', async (req, res) => {
 });
 //-- Organization Route ---
 app.post('/api/organization', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     try {
         const { name, point_value } = req.body;
         const [result] = await pool.query(
@@ -1204,7 +1231,10 @@ app.post('/api/organization', async (req, res) => {
     }
 });
 
-app.delete('/api/organization/:sponsor_org_id', async (req, res) => { 
+app.delete('/api/organization/:sponsor_org_id', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     try {
         const { sponsor_org_id } = req.params;
         const [result] = await pool.query('DELETE FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
@@ -1267,10 +1297,15 @@ app.put('/api/organization/:sponsor_org_id', async (req, res) => {
     const { sponsor_org_id } = req.params;
     const { field, value } = req.body;
 
+    const ALLOWED_ORG_FIELDS = ['name', 'point_value'];
+    if (!field || !ALLOWED_ORG_FIELDS.includes(field)) {
+        return res.status(400).json({ error: `Invalid field. Allowed fields: ${ALLOWED_ORG_FIELDS.join(', ')}` });
+    }
+
     try {
         const [result] = await pool.query(
-            `UPDATE sponsor_organization SET ${field} = ? WHERE sponsor_org_id = ?`,
-            [value, sponsor_org_id]
+            'UPDATE sponsor_organization SET ?? = ? WHERE sponsor_org_id = ?',
+            [field, value, sponsor_org_id]
         );
 
         if (result.affectedRows === 0) {

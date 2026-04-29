@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import SortableTable from '../../../components/SortableTable';
 import {fetchApplicationsOrg, reviewApplication} from '../../../api/ApplicationApi';
 import Modal from '../../../components/Modal';
@@ -24,12 +24,12 @@ const OrganizationApplicationsTab = ({userData, setUserData, orgId, fetchOrg}) =
     const [status, setStatus] = useState('');
     const [decisionReason, setDecisionReason] = useState('');
 
-    function handleOnClose() {
-        setIsModalOpen(false)
+    const handleOnClose = useCallback(() => {
+        setIsModalOpen(false);
         setSelectedApplication(null);
         setDecisionReason('');
         setStatus('');
-    }
+    }, []);
 
     return (
         <div>
