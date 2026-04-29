@@ -367,7 +367,7 @@ useEffect(() => {
             <li><NavLink to="/about">About</NavLink></li>
             {isLoggedIn && <li><NavLink to="/organization">Organizations</NavLink></li>}
             {isLoggedIn && <li><NavLink to="/dashboard">Dashboard</NavLink></li>}
-            {isLoggedIn && <li><NavLink to="/catalog">Catalog</NavLink></li>}
+            {isLoggedIn && userData?.user_type !== 'admin' && <li><NavLink to="/catalog">Catalog</NavLink></li>}
             {isLoggedIn && <li><NavLink to="/support-tickets">Support</NavLink></li>}
             {userData?.user_type !== 'driver' && isLoggedIn && (
               <li><NavLink to={`/reports/${userData?.user_type}`}>Reports</NavLink></li>
