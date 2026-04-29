@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import pool from '../../server/db.js'; // Ensure this path points correctly to your db.js
 
-describe('Database Infrastructure Connection', () => {
+const hasDbCredentials = !!(process.env.DB_HOST && process.env.DB_USER && process.env.DB_PASS);
+
+describe.skipIf(!hasDbCredentials)('Database Infrastructure Connection', () => {
   
   // 1. Check if the module is even loading correctly
   it('should initialize the connection pool', () => {

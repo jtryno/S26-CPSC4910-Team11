@@ -14,7 +14,7 @@ import Catalog from './Pages/Catalog'
 import SupportTickets from './Pages/SupportTickets'
 import InactivityModal from './components/InactivityModal'
 import Reports from './Pages/Reports/Reports'
-import { FaUser, FaBell, FaCommentDots } from 'react-icons/fa';
+import { FaUser, FaBell, FaCommentDots, FaTruck } from 'react-icons/fa';
 import Notifications from './Pages/Notifications'
 import Messages from './Pages/Messages'
 import ImpersonationBanner from './components/ImpersonationBanner'
@@ -358,7 +358,10 @@ useEffect(() => {
       <ImpersonationBanner />
       <nav className="navbar">
         <div className="nav-brand">
-          <Link to="/">Driver Incentive</Link>
+          <Link to="/">
+            <FaTruck style={{ marginRight: '6px', verticalAlign: 'middle', color: 'var(--color-primary)' }} />
+            <span className="nav-brand-text">Puttin' in Mile</span>
+          </Link>
         </div>
 
         <div className="nav-center">
