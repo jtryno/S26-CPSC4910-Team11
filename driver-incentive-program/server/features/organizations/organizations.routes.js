@@ -1,14 +1,10 @@
 import { Router } from 'express';
 import pool from '../../db.js';
-import { resolveSession } from '../../services/session.service.js';
 import { importOrganizationUsersFromCsv, importUsersFromPipeFile } from '../../services/import.service.js';
 
 const router = Router();
 
 router.post('/organization', async (req, res) => {
-    const actorUserId = await resolveSession(req.cookies.remember_me);
-    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
-
     try {
         const { name, point_value } = req.body;
         const [result] = await pool.query(
@@ -262,9 +258,6 @@ router.put('/organization/:sponsor_org_id', async (req, res) => {
 });
 
 router.delete('/organization/:sponsor_org_id', async (req, res) => {
-    const actorUserId = await resolveSession(req.cookies.remember_me);
-    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
-
     try {
         const { sponsor_org_id } = req.params;
         const [result] = await pool.query(

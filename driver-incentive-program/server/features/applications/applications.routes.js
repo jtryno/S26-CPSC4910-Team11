@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import pool from '../../db.js';
-import { resolveSession } from '../../services/session.service.js';
 import { createNotification } from '../../services/notification.service.js';
 
 const router = Router();
@@ -71,9 +70,6 @@ router.get('/application/user/:user_id', async (req, res) => {
 });
 
 router.post('/application', async (req, res) => {
-    const actorUserId = await resolveSession(req.cookies.remember_me);
-    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
-
     const { user_id, org_id } = req.body;
     try {
         const [result] = await pool.query(
@@ -88,9 +84,6 @@ router.post('/application', async (req, res) => {
 });
 
 router.put('/application/:application_id', async (req, res) => {
-    const actorUserId = await resolveSession(req.cookies.remember_me);
-    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
-
     try {
         const { application_id } = req.params;
         const { status, decision_reason, user_id } = req.body;
