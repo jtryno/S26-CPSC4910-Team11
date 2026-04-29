@@ -2013,7 +2013,7 @@ const AdminDashboard = ({ user }) => {
             const res = await fetch('/api/user', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: searchedUser.email, field, value }),
+                body: JSON.stringify({ user_id: searchedUser.user_id, field, value }),
             });
             if (res.ok) {
                 setSearchedUser(prev => ({ ...prev, [field]: value }));

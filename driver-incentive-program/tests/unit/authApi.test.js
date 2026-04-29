@@ -15,6 +15,16 @@ vi.mock('../../server/email.js', () => ({
     sendTwoFaCodeEmail: vi.fn(),
 }));
 
+vi.mock('../../server/services/session.service.js', () => ({
+    createSession: vi.fn().mockResolvedValue('test-session-token'),
+    resolveSession: vi.fn(async (token) => {
+        if (!token) return null;
+        const id = parseInt(token, 10);
+        return Number.isFinite(id) && id > 0 ? id : null;
+    }),
+    deleteSession: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { app } from '../../server/index.js';
 import pool from '../../server/db.js';
 import { sendPasswordResetEmail, sendTwoFaCodeEmail } from '../../server/email.js';

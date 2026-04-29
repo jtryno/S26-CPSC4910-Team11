@@ -236,7 +236,7 @@ describe('GET /api/proxy-image', () => {
         global.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 404 });
 
         const res = await request(app)
-            .get('/api/proxy-image?url=https://example.com/missing.jpg');
+            .get('/api/proxy-image?url=https://i.ebayimg.com/missing.jpg');
 
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toContain('image/svg+xml');
@@ -251,7 +251,7 @@ describe('GET /api/proxy-image', () => {
         });
 
         const res = await request(app)
-            .get('/api/proxy-image?url=https://example.com/img.jpg');
+            .get('/api/proxy-image?url=https://i.ebayimg.com/img.jpg');
 
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toContain('image/jpeg');
@@ -263,7 +263,7 @@ describe('GET /api/proxy-image', () => {
         global.fetch = vi.fn().mockRejectedValueOnce(new Error('Network failure'));
 
         const res = await request(app)
-            .get('/api/proxy-image?url=https://example.com/img.jpg');
+            .get('/api/proxy-image?url=https://i.ebayimg.com/img.jpg');
 
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toContain('image/svg+xml');
