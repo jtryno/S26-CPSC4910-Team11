@@ -31,6 +31,30 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 
+async function createSession(userId, maxAgeMs) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + maxAgeMs);
+    await pool.query(
+        'INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)',
+        [token, userId, expiresAt]
+    );
+    return token;
+}
+
+async function resolveSession(token) {
+    if (!token) return null;
+    const [rows] = await pool.query(
+        'SELECT user_id FROM sessions WHERE token = ? AND expires_at > NOW()',
+        [token]
+    );
+    return rows.length > 0 ? rows[0].user_id : null;
+}
+
+async function deleteSession(token) {
+    if (!token) return;
+    await pool.query('DELETE FROM sessions WHERE token = ?', [token]);
+}
+
 // eBay API Configuration
 const EBAY_SANDBOX_TOKEN_URL = 'https://api.ebay.com/identity/v1/oauth2/token';
 const EBAY_SANDBOX_BROWSE_URL = 'https://api.ebay.com/buy/browse/v1/item_summary/search';
@@ -195,11 +219,29 @@ app.get('/api/catalog', async (req, res) => {
 });
 
 // Image proxy endpoint to handle CORS issues with third-party seller images
+const ALLOWED_PROXY_HOSTS = [
+    'i.ebayimg.com',
+    'ir.ebaystatic.com',
+    'thumbs.ebaystatic.com',
+    'i.ebayimg.com',
+];
+
 app.get('/api/proxy-image', async (req, res) => {
     const { url } = req.query;
-    
+
     if (!url) {
         return res.status(400).json({ error: 'url parameter is required' });
+    }
+
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(url);
+    } catch {
+        return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !ALLOWED_PROXY_HOSTS.includes(parsedUrl.hostname)) {
+        return res.status(400).json({ error: 'URL host not permitted' });
     }
 
     try {
@@ -1070,6 +1112,9 @@ app.get('/api/application/organization/:org_id', async (req, res) => {
 });
 
 app.put('/api/application/:application_id', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     try {
         const { application_id } = req.params;
         const { status, decision_reason, user_id } = req.body;
@@ -1114,6 +1159,9 @@ app.put('/api/application/:application_id', async (req, res) => {
 });
 
 app.post('/api/application', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     const { user_id, org_id } = req.body;
     try {
         const [result] = await pool.query(
@@ -1167,6 +1215,9 @@ app.get('/api/application/user/:user_id', async (req, res) => {
 });
 //-- Organization Route ---
 app.post('/api/organization', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     try {
         const { name, point_value } = req.body;
         const [result] = await pool.query(
@@ -1180,7 +1231,10 @@ app.post('/api/organization', async (req, res) => {
     }
 });
 
-app.delete('/api/organization/:sponsor_org_id', async (req, res) => { 
+app.delete('/api/organization/:sponsor_org_id', async (req, res) => {
+    const actorUserId = await resolveSession(req.cookies.remember_me);
+    if (!actorUserId) return res.status(401).json({ error: 'Not authenticated' });
+
     try {
         const { sponsor_org_id } = req.params;
         const [result] = await pool.query('DELETE FROM sponsor_organization WHERE sponsor_org_id = ?', [sponsor_org_id]);
@@ -1243,10 +1297,15 @@ app.put('/api/organization/:sponsor_org_id', async (req, res) => {
     const { sponsor_org_id } = req.params;
     const { field, value } = req.body;
 
+    const ALLOWED_ORG_FIELDS = ['name', 'point_value'];
+    if (!field || !ALLOWED_ORG_FIELDS.includes(field)) {
+        return res.status(400).json({ error: `Invalid field. Allowed fields: ${ALLOWED_ORG_FIELDS.join(', ')}` });
+    }
+
     try {
         const [result] = await pool.query(
-            `UPDATE sponsor_organization SET ${field} = ? WHERE sponsor_org_id = ?`,
-            [value, sponsor_org_id]
+            'UPDATE sponsor_organization SET ?? = ? WHERE sponsor_org_id = ?',
+            [field, value, sponsor_org_id]
         );
 
         if (result.affectedRows === 0) {
@@ -2041,10 +2100,12 @@ app.post('/api/login', async (req, res) => {
 
         const { password_hash: _, ...userNoPassword } = user;
         if (req.body.rememberMe) {
-            res.cookie('remember_me', user.user_id, { 
-                maxAge: 10 * 24 * 60 * 60 * 1000, // this is 10 daysm, time is just measured in ms
-                httpOnly: true, 
-                sameSite: 'lax' //basic security to make sure cookie can't be stolen
+            const maxAge = 10 * 24 * 60 * 60 * 1000;
+            const sessionToken = await createSession(user.user_id, maxAge);
+            res.cookie('remember_me', sessionToken, {
+                maxAge,
+                httpOnly: true,
+                sameSite: 'lax'
             });
         }
 
@@ -2139,7 +2200,7 @@ app.post('/api/password-reset/confirm', async (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.get('/api/session', async (req, res) => {
-    const userId = req.cookies.remember_me;
+    const userId = await resolveSession(req.cookies.remember_me);
 
     if (!userId) {
         return res.status(401).json({ loggedIn: false });
@@ -2228,7 +2289,8 @@ app.post('/api/signup', async (req, res) => {
 });
 
 // --- Logout Route ---
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', async (req, res) => {
+    await deleteSession(req.cookies.remember_me);
     res.clearCookie('remember_me');
     res.clearCookie('impersonating');
     res.json({ message: 'Logged out successfully' });
@@ -2237,7 +2299,7 @@ app.post('/api/logout', (req, res) => {
 // --- Impersonation Routes ---
 // Start impersonation: admin can assume driver/sponsor, sponsor can assume driver in same org
 app.post('/api/impersonate', async (req, res) => {
-    const realUserId = req.cookies.remember_me || req.body.actorUserId;
+    const realUserId = await resolveSession(req.cookies.remember_me) || req.body.actorUserId;
     if (!realUserId) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
@@ -2311,7 +2373,7 @@ app.post('/api/impersonate', async (req, res) => {
 
 // Exit impersonation: restore original identity
 app.post('/api/impersonate/exit', async (req, res) => {
-    const realUserId = req.cookies.remember_me || req.body.actorUserId;
+    const realUserId = await resolveSession(req.cookies.remember_me) || req.body.actorUserId;
     if (!realUserId) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
@@ -2368,12 +2430,21 @@ app.get('/api/user/:user_id', async (req, res) => {
     }
 });
 
+const ALLOWED_USER_FIELDS = new Set([
+    'username', 'email', 'phone_number', 'first_name', 'last_name',
+    'profile_picture', 'bio', 'address', 'city', 'state', 'zip'
+]);
+
 // --- Update User Route ---
 app.put('/api/user', async (req, res) => {
     const {user_id, field, value } = req.body;
 
     if (field === 'sponsor_org_id') {
         return res.status(400).json({ error: 'Use dedicated org membership endpoints to manage organization membership.' });
+    }
+
+    if (!ALLOWED_USER_FIELDS.has(field)) {
+        return res.status(400).json({ error: 'Invalid field' });
     }
 
     try {
@@ -3045,8 +3116,10 @@ app.post('/api/2fa/verify', async (req, res) => {
 
         // Set the remember me cookie now that 2FA passed (same as login)
         if (rememberMe) {
-            res.cookie('remember_me', user.user_id, {
-                maxAge: 10 * 24 * 60 * 60 * 1000,
+            const maxAge = 10 * 24 * 60 * 60 * 1000;
+            const sessionToken = await createSession(user.user_id, maxAge);
+            res.cookie('remember_me', sessionToken, {
+                maxAge,
                 httpOnly: true,
                 sameSite: 'lax'
             });
